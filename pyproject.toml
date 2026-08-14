@@ -1,0 +1,35 @@
+[project]
+name = "smfs-catalog"
+version = "1.3.0"
+description = "Catalog and analysis pipeline for single-molecule force spectroscopy (SMFS) AFM force curves."
+authors = [
+    { name = "Joseph Hamill", email = "joseph.hamill@live.com" },
+]
+license = { text = "GPL-3.0-or-later" }
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Dependencies are declared ONCE, in environment.yml, which the build workflow
+# and both machines install from.  Deliberately no `dependencies` key here:
+# two lists of the same packages is the one-decision-two-copies fault this
+# codebase has been bitten by for palettes, spin boxes and axis labels.
+
+[tool.pytest.ini_options]
+# WHY THIS BLOCK EXISTS.  Without it pytest guessed its rootdir from wherever
+# it was invoked, and the suite gave DIFFERENT ANSWERS depending on the
+# directory you were standing in: `pytest tests/` from the package directory
+# collected everything, while the same files addressed by absolute path from
+# the repo root collected nothing from ten of them and reported success.  A
+# suite whose result depends on your shell's cwd cannot be the thing CI
+# trusts.
+testpaths = ["tests"]
+# The repo root so `import smfs_catalog` resolves; the tests dir so the
+# shared `checkstyle` helper does.  This replaces the sys.path.insert() each
+# test file still does for the benefit of anyone running it directly.
+pythonpath = [".", "tests"]
+# -r a: summarise every non-passing outcome at the end.  These guards are read
+# by someone who wants to know WHICH invariant broke without scrolling.
+addopts = "-r a"
+
+[tool.pyinstaller]
+# Packaging config to be filled in as part of the PyInstaller packaging issue.

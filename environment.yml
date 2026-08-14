@@ -1,0 +1,79 @@
+# SMFS Catalog — the development and build environment.
+#
+#     conda env create -f environment.yml
+#     conda activate smfs-catalog
+#     python run_dashboard.py
+#
+# HAND-WRITTEN, AND IT MUST STAY THAT WAY.  Until 2026-08-07 this file was a
+# raw `conda env export` dump: 268 lines, 260 build-pinned packages, and a
+# `prefix: C:\Users\<name>\anaconda3\envs\force-spectro` naming one particular
+# machine.  It could not recreate the environment anywhere — which matters
+# directly, because the catalog runs on two machines with independent
+# databases, and because code_version is stored in the analysis cache key
+# precisely so a figure can be re-derived later.  A version stamp is worth
+# very little if the environment that produced it cannot be rebuilt.
+#
+# NEVER regenerate this with `conda env export`.  Add a dependency by hand.  A
+# dump records everything conda happened to pull in, which buries the six
+# packages this app actually imports among ~250 it does not, and pins them to
+# builds that exist on one platform.
+#
+# THIS IS THE ONE DEPENDENCY LIST.  The PyInstaller build workflow creates its
+# environment from this same file on each OS, so there is no second list in a
+# requirements.txt or a workflow step to drift out of step with it — the same
+# one-decision-two-copies fault this codebase has been bitten by for palettes,
+# spin-box precision and axis labels.  pyproject.toml deliberately declares no
+# `dependencies` key for that reason.
+#
+# WHY ALMOST EVERYTHING COMES FROM pip, WHICH LOOKS WRONG IN A CONDA FILE.
+# conda-forge's `pyqt` package is PyQt **5** — it tops out at 5.15.11 and has
+# never shipped PyQt6.  The 6.x builds on the `main` channel exist only for
+# Python 3.12+, so no conda channel can supply this app's actual GUI toolkit
+# on Python 3.11.  PyQt6 therefore has to come from PyPI, and once the largest
+# binary dependency is a wheel there is nothing to gain by splitting the other
+# five across two resolvers that then have to agree about numpy's ABI.  This
+# mirrors what the working environment already does: of the packages the app
+# imports, every single one is currently pip-installed.  conda's job here is
+# to pin the interpreter and isolate the environment; pip's is the stack.
+#
+# WHAT IS DELIBERATELY ABSENT, and do not add it back without checking:
+#   rich, questionary  — the terminal CLI (run_catalog.py / app.py) was
+#                        deleted 2026-07-31.  scanner.py kept a rich progress
+#                        bar that every caller drove with console=None until
+#                        2026-08-07; that is gone too.
+#   anthropic          — the .txt metadata auto-extraction was retired (#110)
+#                        and its module is parked under legacy/ at the root.
+#   matplotlib, pandas — used only by legacy/reports/ and standalone_hist_fit/,
+#                        neither of which is part of the app or ships with it.
+# Checked, not assumed: the whole package imports cleanly with all five of
+# those blocked at the import hook.  tests/test_frozen_build.py holds the
+# packaging invariants that go with this.
+#
+# Lower bounds rather than exact pins: these are the versions the app is
+# developed and tested against, and floors let a fresh solve take security
+# fixes.  The one real ceiling is Python — see the PyQt6 note above.
+
+name: smfs-catalog
+
+channels:
+  - conda-forge
+
+dependencies:
+  # Keep in step with requires-python in pyproject.toml.
+  - python >=3.11,<3.13
+  - pip
+
+  - pip:
+      # ── Runtime: the six packages the app actually imports ──────────────
+      - pyqt6 >=6.6
+      - numpy >=1.26
+      - scipy >=1.11
+      - pyqtgraph >=0.13     # the ONLY plotting library — see CLAUDE.md §4's
+                             # style entry; there is no matplotlib in the app
+      - scikit-learn >=1.3   # PCA, KMeans and GaussianMixture only; scipy
+                             # covers everything else and the two do not overlap
+      - igor2 >=0.5.6        # the .ibw reader — the only way curves get in
+
+      # ── Development and packaging ───────────────────────────────────────
+      - pytest >=8.0
+      - pyinstaller >=6.3    # builds the standalone executables (#111)

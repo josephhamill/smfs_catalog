@@ -1,0 +1,30 @@
+# Python build artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Test and tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# PyInstaller
+*.spec.bak
+# Written at build time from the current commit; never committed, because a
+# stale one would make a checkout claim it was built from a different commit.
+smfs_catalog/_build_stamp.py
+
+# Databases and local data
+*.db
+*.db-wal
+*.db-shm
+
+# Editor / OS / tooling
+.DS_Store
+*.swp
+.vscode/
+.claude/
+.venv/
+venv/
