@@ -50,6 +50,17 @@ python run_dashboard.py /path/to/smfs_catalog.db
 With no argument it uses a per-user default location, which `$SMFS_DB_PATH`
 overrides.
 
+It's possible to connect to the app headless via xpra, with the following:
+
+    # Start an xpra display on the machine with the app
+    xpra start :100
+
+    # start the app on that display
+    DISPLAY=:100 python run_dashboard.py
+
+    # connect to that display on your local machine
+    Xpra attach ssh://[user]@[hostname]/100
+
 ### Prebuilt applications
 
 Standalone builds for Windows, macOS and Linux are attached to each
