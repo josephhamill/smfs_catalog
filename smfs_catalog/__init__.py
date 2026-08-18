@@ -17,4 +17,4 @@
 # installed package, and a PyInstaller bundle (no pyproject.toml shipped).
 # It MUST match pyproject.toml's `version`; tests/test_export_convention.py
 # fails if the two drift apart.
-__version__ = "1.3.0"
+__version__ = "1.4.0"
