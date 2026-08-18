@@ -22,6 +22,7 @@
 # first if needed. View it remotely with:
 #   xpra attach ssh://<user>@<this-host>/100
 
+import atexit
 import getpass
 from pathlib import Path
 import os
@@ -39,6 +40,12 @@ from smfs_catalog import db as _db
 from smfs_catalog.dashboard_window import DashboardWindow
 
 XPRA_DISPLAY = ":100"
+
+# Set only by the branch of _ensure_display() that actually runs `xpra start`.
+# A session we merely FOUND already live belongs to whoever started it — reusing
+# it is the whole point of a persistent display, and stopping it on our way out
+# would take somebody else's windows down with it.
+_xpra_started_by_us = False
 
 
 def _frozen() -> bool:
@@ -59,6 +66,44 @@ def resource_path(*parts: str) -> Path:
     """
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base.joinpath(*parts)
+
+
+def _stop_xpra_session() -> None:
+    """
+    Stop the xpra session this process started, if it started one (#33).
+
+    WHY ATEXIT AND NOT AN XPRA FLAG.  The two flags that look right are both
+    wrong here.  `--exit-with-children` requires xpra to launch the dashboard,
+    but Qt reads DISPLAY once at QApplication construction, so the display has
+    to exist before the app does — the app cannot be xpra's child.
+    `--exit-with-client` stops the server whenever the viewer detaches, which
+    is precisely what happens when the operator disconnects and goes home
+    partway through an unattended run; it would kill the session out from
+    under a job that is still working.  The session must outlive a detached
+    client and die with the application, and only a hook in this process
+    expresses that.
+
+    KNOWN LIMIT: atexit covers a normal exit and an unhandled exception, but
+    not SIGKILL or os._exit().  `xpra stop :100` by hand remains the backstop
+    for a hard kill.  This is why the orphan is a leak and not a corruption —
+    the worst case is a session that outlives us, exactly as before.
+    """
+    global _xpra_started_by_us
+    if not _xpra_started_by_us:
+        return
+    _xpra_started_by_us = False        # never attempt the stop twice
+    stopped = subprocess.run(
+        ["xpra", "stop", XPRA_DISPLAY], capture_output=True, text=True)
+    if stopped.returncode == 0:
+        print(f"Stopped xpra session {XPRA_DISPLAY}.")
+    else:
+        # Not fatal: we are on the way out, and a session we failed to stop is
+        # the status quo ante, not a new problem.  Say so rather than dying in
+        # an atexit handler, where the traceback would bury the real exit.
+        print(
+            f"Warning: could not stop xpra session {XPRA_DISPLAY}: "
+            f"{stopped.stderr.strip()}",
+            file=sys.stderr)
 
 
 def _ensure_display() -> None:
@@ -84,6 +129,13 @@ def _ensure_display() -> None:
         started = subprocess.run(["xpra", "start", XPRA_DISPLAY], capture_output=True, text=True)
         if started.returncode != 0:
             sys.exit(f"'xpra start {XPRA_DISPLAY}' failed:\n{started.stderr.strip()}")
+        # Claim it BEFORE the socket wait below, not after.  That wait can
+        # sys.exit() on timeout, and by then the server may well be up — the
+        # timeout is on the socket appearing, not on the start succeeding.
+        # Registering here means even that exit path takes the session with it.
+        global _xpra_started_by_us
+        _xpra_started_by_us = True
+        atexit.register(_stop_xpra_session)
         # xpra daemonizes immediately; wait for the X socket before letting Qt try.
         socket_path = "/tmp/.X11-unix/X" + XPRA_DISPLAY.lstrip(":")
         deadline = time.monotonic() + 15
