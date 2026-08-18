@@ -12,9 +12,6 @@
 # app_version) so an exported figure can be traced back to the code that
 # produced it.
 #
-# Declared here rather than read from pyproject.toml at runtime because it
-# has to work in all three cases: a git checkout (no package metadata), an
-# installed package, and a PyInstaller bundle (no pyproject.toml shipped).
-# It MUST match pyproject.toml's `version`; tests/test_export_convention.py
-# fails if the two drift apart.
+# The only declaration of the version. A literal because the PyInstaller
+# bundle ships no pyproject.toml and a checkout has no package metadata.
 __version__ = "1.4.0"
