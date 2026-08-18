@@ -13,13 +13,7 @@ requires-python = ">=3.11"
 # two lists of the same packages is the one-decision-two-copies fault this
 # codebase has been bitten by for palettes, spin boxes and axis labels.
 #
-# `version` is absent for the same reason.  It lives in smfs_catalog/__init__.py
-# and only there.  That copy cannot be removed -- the PyInstaller bundle ships
-# no pyproject.toml, so a literal in the package is the only thing the running
-# app can read.  A copy here would have no reader: nothing builds a package
-# from this file (there is no [build-system]), and the app is distributed as a
-# one-file executable.  It existed solely to be compared against the real one,
-# and drifted from it for three months in 2026.
+# No `version` key either: it lives in smfs_catalog/__init__.py and only there.
 
 [tool.pytest.ini_options]
 # WHY THIS BLOCK EXISTS.  Without it pytest guessed its rootdir from wherever

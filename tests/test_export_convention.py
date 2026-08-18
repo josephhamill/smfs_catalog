@@ -147,12 +147,7 @@ check("(c) manifest carries the window's settings",
       man.get("setting_one") == "x" and man.get("k") == 3)
 check("(c) manifest records the app version", bool(man.get("app_version")))
 
-# smfs_catalog.__version__ is the ONLY declaration of the version, so there is
-# nothing to check it against and no way for two copies to disagree.  What is
-# checked instead is that a second copy has not crept back into pyproject.toml:
-# that file has no [build-system] and the app ships as a one-file executable,
-# so a `version` key there would have no reader other than a test comparing it
-# to this one.  That arrangement drifted for three months in 2026.
+# One declaration only; guard against a second reappearing in pyproject.toml.
 import tomllib                                          # noqa: E402
 with open(ROOT / "pyproject.toml", "rb") as _f:
     _pyproject = tomllib.load(_f)["project"]
