@@ -96,14 +96,27 @@ def declared() -> tuple[int, int, int]:
     return _parse(PKG_VERSION)
 
 
-def test_pyproject_and_package_agree(declared):
+def test_no_second_version_declaration_exists(declared):
     """
-    The check that already existed, kept here so this file states the whole
-    rule in one place.  It is necessary and it is not sufficient -- on its own
-    it passed for three months while both copies were wrong.
+    There is one declaration, in smfs_catalog/__init__.py, and this guards
+    against a second one reappearing.
+
+    The check this replaces compared pyproject.toml against the package and
+    required them to agree.  It could not have caught the 2026-07-31 fault it
+    was written for -- both copies said 1.0.0, so they agreed, and agreeing on
+    a wrong answer passes.  The duplication was what made that possible, and
+    removing it removes the failure rather than watching for it.
+
+    pyproject.toml has no [build-system] and the app ships as a one-file
+    PyInstaller executable, so a `version` key there has no reader at all.
+    The package literal cannot be removed -- the bundle ships no
+    pyproject.toml, so it is the only thing the running app can read.
     """
     data = tomllib.loads((_REPO / "pyproject.toml").read_text(encoding="utf-8"))
-    assert _parse(data["project"]["version"]) == declared
+    assert "version" not in data["project"], (
+        f"pyproject.toml declares version={data['project']['version']!r}. "
+        f"The version belongs in smfs_catalog/__init__.py and only there; a "
+        f"copy here has no reader and can only drift.")
 
 
 def test_declared_version_is_not_behind_the_newest_release_tag(declared):

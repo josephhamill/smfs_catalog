@@ -147,16 +147,19 @@ check("(c) manifest carries the window's settings",
       man.get("setting_one") == "x" and man.get("k") == 3)
 check("(c) manifest records the app version", bool(man.get("app_version")))
 
-# smfs_catalog.__version__ is declared in the package (so it works from a
-# checkout, an install, and a PyInstaller bundle alike) rather than read from
-# pyproject.toml at runtime. That means two declarations, so check they agree —
-# a manifest stating the wrong version is worse than one stating none.
+# smfs_catalog.__version__ is the ONLY declaration of the version, so there is
+# nothing to check it against and no way for two copies to disagree.  What is
+# checked instead is that a second copy has not crept back into pyproject.toml:
+# that file has no [build-system] and the app ships as a one-file executable,
+# so a `version` key there would have no reader other than a test comparing it
+# to this one.  That arrangement drifted for three months in 2026.
 import tomllib                                          # noqa: E402
 with open(ROOT / "pyproject.toml", "rb") as _f:
-    _pyproject_version = tomllib.load(_f)["project"]["version"]
-check("(c) __version__ matches pyproject.toml",
-      man.get("app_version") == _pyproject_version,
-      f"manifest says {man.get('app_version')}, pyproject says {_pyproject_version}")
+    _pyproject = tomllib.load(_f)["project"]
+check("(c) pyproject.toml declares no second version",
+      "version" not in _pyproject,
+      f"pyproject.toml declares version={_pyproject.get('version')!r}; "
+      "the version belongs in smfs_catalog/__init__.py and only there")
 check("(c) manifest records the schema version",
       man.get("schema_version") == _db.SCHEMA_VERSION)
 check("(c) manifest records the exact database",
