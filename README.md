@@ -61,6 +61,19 @@ It's possible to connect to the app headless via xpra, with the following:
     # connect to that display on your local machine
     Xpra attach ssh://[user]@[hostname]/100
 
+    # when you are finished, stop the session
+    xpra stop :100
+
+Detaching the viewer does **not** end the session — an xpra server is meant to
+survive a client disconnect, so it keeps running (along with its Xvfb) until it
+is stopped explicitly.  Left overnight it costs several hundred MB of RAM and
+can push a busy machine into swap.
+
+Because the recipe above sets `DISPLAY` itself, `run_dashboard.py` treats the
+session as yours and will not stop it for you.  Launching without a `DISPLAY`
+instead lets the script start `:100` on your behalf, and it then stops that
+session when the app exits.
+
 ### Prebuilt applications
 
 Standalone builds for Windows, macOS and Linux are attached to each
