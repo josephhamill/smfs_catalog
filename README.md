@@ -13,6 +13,9 @@ It is built for the working pattern of a lab: point it at a directory of
 curves, let it work through them, then spend your time on the curves and the
 statistics rather than on bookkeeping.
 
+**[Watch a walkthrough](https://github.com/josephhamill/smfs_catalog/releases/download/v1.3.0/smfs_catalog_walkthrough_v1-3-0.mp4)**
+(~30 min, ~490 MB, v1.3.0).
+
 ## What it does
 
 - **Catalogues curves.** Registers `.ibw` files with their metadata, tracks
