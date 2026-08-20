@@ -13,6 +13,7 @@ from pathlib import Path
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -24,7 +25,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .curve_loader import ForceCurve, LoadError, load_force_curve
+from .curve_loader import (
+    ForceCurve, LoadError, RawTrace, UnusableCurveError, load_force_curve,
+    load_raw_trace,
+)
 from . import db as _db
 from .provenance import cache_version
 from .decomposition_window import DecompositionWindow
@@ -65,6 +69,20 @@ _META_ROWS: list[tuple[str, str, str]] = [
     ("sample_rate",   "Sample rate", "Hz"),
 ]
 
+
+
+# ── Axis choices ──────────────────────────────────────────────────────────────
+# (label, key, x-quantity, y-quantity).  Deflection against piezo is the force
+# curve; the two time axes are the only way to see a segment held at constant
+# position, where the piezo axis collapses the whole hold onto one x value.
+_AXES: list[tuple[str, str, str, str]] = [
+    ("Defl vs Piezo", "defl_piezo", "piezo", "defl"),
+    ("Defl vs Time",  "defl_time",  "time",  "defl"),
+    ("Piezo vs Time", "piezo_time", "time",  "piezo"),
+]
+_AXIS_LABEL = {"piezo": ("Piezo", _quant.NM),
+               "defl":  ("Deflection", _quant.NM),
+               "time":  ("Time", _quant.S)}
 
 
 # ── Raw curve window ───────────────────────────────────────────────────────────
@@ -121,6 +139,11 @@ class RawCurveWindow(QWidget):
         self._decomp_win:  DecompositionWindow  | None = None   # created lazily
         self._fft_win:       FftWindow       | None = None   # created lazily
         self._roi_win:       "ROIWindow"        | None = None
+        # Last thing drawn, so changing axes re-plots without re-reading the
+        # file.  Either a ForceCurve (a ramp, drawn as approach + retract) or a
+        # RawTrace (anything else, drawn as one series).
+        self._drawn: ForceCurve | RawTrace | None = None
+        self._axes                 = _AXES[0][1]
 
         # ── Window ────────────────────────────────────────────────────────────
         self.setWindowTitle("SMFS — raw curves")
@@ -155,6 +178,17 @@ class RawCurveWindow(QWidget):
         self._status_label = QLabel("")
         ctrl_layout.addWidget(self._status_label)
         ctrl_layout.addSpacing(16)
+
+        self._axis_box = QComboBox()
+        for label, key, _x, _y in _AXES:
+            self._axis_box.addItem(label, key)
+        self._axis_box.setToolTip(
+            "Which quantities to plot.  A held segment is flat in piezo, so it "
+            "is only visible against time."
+        )
+        self._axis_box.currentIndexChanged.connect(self._on_axes_changed)
+        ctrl_layout.addWidget(self._axis_box)
+        ctrl_layout.addSpacing(8)
 
         self._btn_decomp = QPushButton("Decomp")
         self._btn_decomp.setFixedWidth(72)
@@ -204,6 +238,10 @@ class RawCurveWindow(QWidget):
         )
         self._curve_retr = self._plot.plot(
             [], [], pen=style.data_pen(style.SIG_RETRACT), name="retract"
+        )
+        # One series for a curve with no approach/retract split to make.
+        self._curve_raw = self._plot.plot(
+            [], [], pen=style.data_pen(style.SIG_RETRACT), name="trace"
         )
         # Contact marker lines — added/removed each draw, None when not shown
         self._contact_appr_line = None   # vertical dashed line: contact onset (approach)
@@ -518,20 +556,25 @@ class RawCurveWindow(QWidget):
 
         try:
             curve = load_force_curve(path)
+        except UnusableCurveError:
+            # Not a ramp — held, indented, or something not yet named.  It is
+            # still a recording, so it is still viewable; only the analysis
+            # overlays below have nothing to say about it.
+            try:
+                curve = load_raw_trace(path)
+            except LoadError:
+                self._show_load_failure(path)
+                return
         except LoadError:
-            self._n_errors += 1
-            self._curve_appr.setData([], [])
-            self._curve_retr.setData([], [])
-            self._meta_vals["filename"].setText(f"✗ {Path(path).name}")
-            self._meta_vals["directory"].setText(str(Path(path).parent))
-            for key in (
-                "date", "spring_k", "velocity", "trigger", "force_dist",
-                "inv_ols", "xy", "sample_rate",
-            ):
-                self._meta_vals[key].setText("—")
+            self._show_load_failure(path)
             return
 
         self._draw(curve)
+        if not isinstance(curve, ForceCurve):
+            self._status_label.setText(
+                f"{curve.curve_type.replace('_', ' ')} — viewing only"
+            )
+            return
 
         # Update spectral window if it is open.  Worker mode: the Decomp window
         # follows the worker itself (its nav bar subscribes to playhead_changed),
@@ -565,6 +608,18 @@ class RawCurveWindow(QWidget):
             else:
                 self._status_label.setText("analysis in progress…")
 
+    def _show_load_failure(self, path: str) -> None:
+        self._n_errors += 1
+        for item in (self._curve_appr, self._curve_retr, self._curve_raw):
+            item.setData([], [])
+        self._meta_vals["filename"].setText(f"✗ {Path(path).name}")
+        self._meta_vals["directory"].setText(str(Path(path).parent))
+        for key in (
+            "date", "spring_k", "velocity", "trigger", "force_dist",
+            "inv_ols", "xy", "sample_rate",
+        ):
+            self._meta_vals[key].setText("—")
+
     def _show_overlay_error(self, exc: Exception) -> None:
         self._status_label.setText(
             f"analysis overlays unavailable: {type(exc).__name__}: "
@@ -575,6 +630,12 @@ class RawCurveWindow(QWidget):
         self, file_id: int, *, event: str | None = None,
     ) -> bool:
         """Read and draw worker-produced landmarks without running analysis."""
+        if self._axes != _AXES[0][1]:
+            # Every landmark here is a piezo position.  On a time axis it would
+            # land at a moment it was never measured at, so none are drawn and
+            # there is nothing missing to report.
+            return True
+
         from .curve_analysis import pipeline_params_from
         from .roi_pipeline import (
             event_map_params_json,
@@ -803,9 +864,79 @@ class RawCurveWindow(QWidget):
                 p.params_cd, p.params_bl, p.params_roi, p.params_invols,
             )
 
-    def _draw(self, curve: ForceCurve) -> None:
-        self._curve_appr.setData(curve.piezo_appr, curve.defl_appr)
-        self._curve_retr.setData(curve.piezo_retr, curve.defl_retr)
+    # ── Axes ──────────────────────────────────────────────────────────────────
+
+    def _on_axes_changed(self) -> None:
+        self._axes = self._axis_box.currentData()
+        if self._drawn is not None:
+            self._plot_axes(self._drawn)
+        # Markers and overlays are positioned in piezo, so they mean nothing on
+        # a time axis.  Redrawing them there would put a landmark at a spot it
+        # was never measured at.
+        self._clear_markers()
+        if (self._axes == _AXES[0][1] and self._worker is not None
+                and self._current_file_id is not None
+                and isinstance(self._drawn, ForceCurve)):
+            try:
+                self._draw_persisted_overlays(self._current_file_id)
+            except Exception as exc:
+                self._show_overlay_error(exc)
+
+    @staticmethod
+    def _ramp_series(curve: ForceCurve, kind: str):
+        """(approach, retract) arrays of one quantity; (None, None) if absent."""
+        if kind == "piezo":
+            return curve.piezo_appr, curve.piezo_retr
+        if kind == "defl":
+            return curve.defl_appr, curve.defl_retr
+        if not curve.sample_rate_hz:
+            return None, None
+        n_a, n_r = len(curve.defl_appr), len(curve.defl_retr)
+        # The turnaround sample sits between the two halves and belongs to
+        # neither, which is why the retract clock starts at n_a + 1.
+        t = np.arange(n_a + n_r + 1, dtype=float) / curve.sample_rate_hz
+        return t[:n_a], t[n_a + 1:]
+
+    @staticmethod
+    def _trace_series(trace: RawTrace, kind: str):
+        return {"piezo": trace.piezo_nm,
+                "defl":  trace.defl_nm,
+                "time":  trace.time_s}.get(kind)
+
+    def _plot_axes(self, obj) -> None:
+        label, _key, xk, yk = next(a for a in _AXES if a[1] == self._axes)
+        if isinstance(obj, ForceCurve):
+            self._curve_raw.setData([], [])
+            xa, xr = self._ramp_series(obj, xk)
+            ya, yr = self._ramp_series(obj, yk)
+            if xa is None or ya is None:
+                self._curve_appr.setData([], [])
+                self._curve_retr.setData([], [])
+                self._status_label.setText(
+                    f"{label}: this curve states no sample rate")
+                return
+            self._curve_appr.setData(xa, ya)
+            self._curve_retr.setData(xr, yr)
+        else:
+            self._curve_appr.setData([], [])
+            self._curve_retr.setData([], [])
+            x, y = self._trace_series(obj, xk), self._trace_series(obj, yk)
+            if x is None or y is None:
+                self._curve_raw.setData([], [])
+                missing = xk if x is None else yk
+                self._status_label.setText(
+                    f"{label}: this file has no {missing} channel")
+                return
+            self._curve_raw.setData(x, y)
+
+        xn, xu = _AXIS_LABEL[xk]
+        yn, yu = _AXIS_LABEL[yk]
+        set_si_label(self._plot, "bottom", xn, xu)
+        set_si_label(self._plot, "left",   yn, yu)
+
+    def _draw(self, curve) -> None:
+        self._drawn = curve
+        self._plot_axes(curve)
 
         p = Path(curve.path)
         self._meta_vals["filename"].setText(p.name)

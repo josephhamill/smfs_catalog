@@ -125,7 +125,11 @@ def channel_map(labels, n_cols: int) -> dict[str, int]:
         names = [b.decode("latin-1", "replace") if isinstance(b, bytes) else str(b)
                  for b in labels[1][1:]]
     if len(names) != n_cols:
-        names = list(_POSITIONAL[:n_cols])
+        names = list(_POSITIONAL[:n_cols]) if n_cols <= len(_POSITIONAL) else []
+    if len(names) != n_cols:
+        # Neither labelled nor a shape the positional order covers.  No name is
+        # better than a guessed one: an unnamed channel is simply not offered.
+        return {}
     return {name: i for i, name in enumerate(names) if name}
 
 
@@ -286,11 +290,14 @@ def qualify_wave(
     The checks run in a fixed order and each one may assume its predecessors
     passed.  That ordering is load-bearing, not stylistic:
 
-      1. modality       — is this even a continuous-stretch acquisition?
+      1. modality       — which experiment produced this?
       2. finite         — are the samples numbers at all?
       3. varies         — does anything actually change?
       4. turnaround     — is there an approach and a retract?
       5. retract real   — was the retract buffer written?
+
+    Steps 2 and 3 apply to every wave with channels; 4 and 5 only to a
+    continuous stretch, being questions about a ramp.
 
     Steps 4 and 5 are reductions (argmax, any) that CANNOT fail: they return an
     answer for every input, including inputs where the question is meaningless.
@@ -305,12 +312,12 @@ def qualify_wave(
     absent; an unusual-but-real curve is not this function's business (see
     CLAUDE.md §4 on informing rather than gating).
     """
-    channels = channel_map(labels, wdata.shape[1] if wdata.ndim > 1 else 1)
+    channels = channel_map(labels, wdata.shape[1]) if wdata.ndim == 2 else {}
     curve_type = _modality(wdata, channels, indent_mode, hold_z, spring_constant)
-    if curve_type != "continuous_stretch":
-        # Nothing else in the app analyses these, so there is no "usable"
-        # judgement to make about them.  Saying otherwise would be inventing a
-        # verdict for files we never touch.
+    if CH_DEFL not in channels or piezo_column(channels) is None:
+        # An image, a bare spectrum, a wave with no deflection: there are no
+        # channels to make any statement about.  Inventing a pass/fail here
+        # would be claiming a judgement we never made.
         return Qualification(curve_type)
 
     n = wdata.shape[0]
@@ -340,6 +347,13 @@ def qualify_wave(
                 f"{name}: constant at {float(wdata[0, col]):.6g} for all {n:,} samples",
             )
 
+    if curve_type != "continuous_stretch":
+        # Steps 4 and 5 ask about an approach and a retract.  A held or indented
+        # acquisition has neither, so the questions do not apply to it — unlike
+        # steps 2 and 3, which ask whether the channels recorded anything and
+        # are worth asking of every wave.
+        return Qualification(curve_type)
+
     # 4. Turnaround — the piezo ramp reverses, with real data on both sides.
     idx_turn = int(np.argmax(wdata[:, col_piezo]))
     if idx_turn == 0 or idx_turn >= n - 1:
@@ -358,6 +372,65 @@ def qualify_wave(
         )
 
     return Qualification(curve_type, None, None, idx_turn)
+
+
+def _note_float(note: bytes, pattern: bytes, scale: float = 1.0) -> float | None:
+    m = re.search(pattern, note)
+    if m is None:
+        return None
+    try:
+        return float(m.group(1)) * scale
+    except (ValueError, IndexError):
+        return None
+
+
+def _note_fields(note: bytes, header) -> dict:
+    """
+    The wave-note and header values every viewer shows, parsed once.
+
+    Shared by both loaders so a curve the analysis pipeline refuses still
+    reports the same numbers, from the same parse, as one it accepts.
+    """
+    xpos = _note_float(note, rb"XLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", 1e6)
+    ypos = _note_float(note, rb"YLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", 1e6)
+
+    try:
+        sfa = header["sfA"][0]
+        sample_rate_hz = float(1.0 / sfa) if sfa > 0 else 0.0
+    except (KeyError, IndexError, ZeroDivisionError):
+        sample_rate_hz = 0.0
+
+    date_m = re.search(rb"\rDate:([^\r]+)\r", note)
+
+    return {
+        "xpos": xpos,
+        "ypos": ypos,
+        "sample_rate_hz": sample_rate_hz,
+        "measured_date": (date_m.group(1).decode("latin-1").strip()
+                          if date_m else None),
+        "velocity_nm_s": _note_float(
+            note, rb"Velocity: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        # TriggerPoint is stored in Newtons (SI) in the Asylum Research wave
+        # note.  scale=1e9 converts N → nN.  The field is trigger_point_nn — a
+        # FORCE (nN), not a distance.  Confirmed: trigger(nN) × (1/k) =
+        # max_deflection(nm).
+        "trigger_point_nn": _note_float(
+            note, rb"TriggerPoint: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        "force_dist_nm": _note_float(
+            note, rb"ForceDist: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        "inv_ols_nm_v": _note_float(
+            note, rb"InvOLS: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        # Hz already in the wave note — no scaling.  Same key the scanner
+        # promotes to files.force_filter_bw_hz; parsed here too so a loaded
+        # curve knows its own bandwidth without a lookup.
+        "force_filter_bw_hz": _note_float(
+            note, rb"ForceFilterBW: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r"),
+        # The operator-set acquisition rate.  Preferred over the header for the
+        # time axis because some panels leave sfA at 1 s/point, which would
+        # date a 6-second curve at 30 hours.
+        "pts_per_sec": _note_float(
+            note, rb"NumPtsPerSec: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r"),
+    }
 
 
 @dataclass
@@ -415,6 +488,113 @@ class ForceCurve:
     @property
     def filename(self) -> str:
         return Path(self.path).name
+
+
+@dataclass(frozen=True)
+class RawTrace:
+    """
+    One wave's channels in display units, carrying no verdict about what they
+    show.  The viewer's counterpart to ForceCurve.
+
+    A held, indented or otherwise non-ramp acquisition has no approach/retract
+    split to make, so ForceCurve cannot represent one — but it is still a
+    recording somebody needs to look at.  Field names match ForceCurve's where
+    they mean the same thing, so one metadata panel serves both.
+
+    piezo_nm is None when the wave saved no position channel, time_s when
+    neither a Time channel nor a stated sample rate establishes one.  A viewer
+    offers the axes it actually has.
+    """
+    path:            str
+    curve_type:      str
+    defl_nm:         np.ndarray
+    piezo_nm:        np.ndarray | None
+    time_s:          np.ndarray | None
+    spring_constant: float | None
+    xpos:            float | None = None
+    ypos:            float | None = None
+    sample_rate_hz:  float = 0.0
+    measured_date:   str | None = None
+    velocity_nm_s:   float | None = None
+    trigger_point_nn: float | None = None
+    force_dist_nm:   float | None = None
+    inv_ols_nm_v:    float | None = None
+
+    @property
+    def filename(self) -> str:
+        return Path(self.path).name
+
+    @property
+    def force_pn(self) -> np.ndarray | None:
+        """Deflection as force, or None when the wave states no k."""
+        if self.spring_constant is None:
+            return None
+        return self.defl_nm * self.spring_constant
+
+
+def load_raw_trace(path: str) -> RawTrace:
+    """
+    Load any channel wave for viewing, whatever experiment produced it.
+
+    Deliberately asks less than load_force_curve: it needs a deflection channel
+    and nothing else.  No turnaround, no spring constant, no verdict about
+    whether the science is usable — those are questions for analysis, and a
+    curve must not become unviewable because the answer to one of them is no.
+
+    Raises UnusableCurveError only when there is no trace to draw at all: an
+    image, or a wave with no deflection channel.
+    """
+    try:
+        wave   = load_ibw(path)
+        wdata  = wave["wave"]["wData"]
+        note   = wave["wave"]["note"]
+        header = wave["wave"]["wave_header"]
+        labels = wave["wave"]["labels"]
+    except Exception as exc:
+        raise LoadError(f"Could not read {path}: {exc}") from exc
+
+    k = _spring_constant(note)
+    q = qualify_wave(wdata, labels=labels, indent_mode=None,
+                     hold_z=_hold_z_sensor(note), spring_constant=k)
+
+    channels = channel_map(labels, wdata.shape[1]) if wdata.ndim == 2 else {}
+    if CH_DEFL not in channels:
+        raise UnusableCurveError(
+            f"{Path(path).name}: no deflection channel to plot "
+            f"(wData shape {wdata.shape} → {q.curve_type})",
+            UNUSABLE_NOT_FE,
+        )
+
+    n          = wdata.shape[0]
+    deflection = wdata[:, channels[CH_DEFL]]
+    defl_nm    = (deflection - deflection[0]) * 1e9
+
+    col_piezo = piezo_column(channels)
+    piezo_nm  = wdata[:, col_piezo] * -1e9 if col_piezo is not None else None
+
+    meta = _note_fields(note, header)
+    if CH_TIME in channels:
+        time_s = wdata[:, channels[CH_TIME]].astype(float)
+    else:
+        rate = meta["pts_per_sec"] or meta["sample_rate_hz"]
+        time_s = np.arange(n, dtype=float) / rate if rate else None
+
+    return RawTrace(
+        path             = normalize_path(path),
+        curve_type       = q.curve_type,
+        defl_nm          = defl_nm,
+        piezo_nm         = piezo_nm,
+        time_s           = time_s,
+        spring_constant  = k,
+        xpos             = meta["xpos"],
+        ypos             = meta["ypos"],
+        sample_rate_hz   = meta["sample_rate_hz"],
+        measured_date    = meta["measured_date"],
+        velocity_nm_s    = meta["velocity_nm_s"],
+        trigger_point_nn = meta["trigger_point_nn"],
+        force_dist_nm    = meta["force_dist_nm"],
+        inv_ols_nm_v     = meta["inv_ols_nm_v"],
+    )
 
 
 # ── Loader ────────────────────────────────────────────────────────────────────
@@ -505,45 +685,17 @@ def load_force_curve(path: str) -> ForceCurve:
 
     # ── Wave note fields ──────────────────────────────────────────────────────
     # k was already read and validated by the qualification above — a wave
-    # without one is not classified 'force_extension' and never reaches here.
+    # without one is not classified as a stretch and never reaches here.
     spring_constant = k
-
-    xpos_m = re.search(rb"XLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", note)
-    ypos_m = re.search(rb"YLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", note)
-    xpos = float(xpos_m.group(1)) * 1e6 if xpos_m else None
-    ypos = float(ypos_m.group(1)) * 1e6 if ypos_m else None
-
-    try:
-        sfa = header["sfA"][0]
-        sample_rate_hz = float(1.0 / sfa) if sfa > 0 else 0.0
-    except (KeyError, IndexError, ZeroDivisionError):
-        sample_rate_hz = 0.0
-
-    date_m = re.search(rb"\rDate:([^\r]+)\r", note)
-    measured_date = (
-        date_m.group(1).decode("latin-1").strip() if date_m else None
-    )
-
-    def _safe(pattern: bytes, scale: float = 1.0) -> float | None:
-        m = re.search(pattern, note)
-        if m is None:
-            return None
-        try:
-            return float(m.group(1)) * scale
-        except (ValueError, IndexError):
-            return None
-
-    velocity_nm_s    = _safe(rb"Velocity: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r",    1e9)
-    # TriggerPoint is stored in Newtons (SI) in the Asylum Research wave note.
-    # scale=1e9 converts N → nN.  The field is trigger_point_nn — a FORCE (nN),
-    # not a distance.  Confirmed: trigger(nN) × (1/k) = max_deflection(nm).
-    trigger_point_nn = _safe(rb"TriggerPoint: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9)
-    force_dist_nm    = _safe(rb"ForceDist: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r",    1e9)
-    inv_ols_nm_v     = _safe(rb"InvOLS: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r",      1e9)
-    # Hz already in the wave note — no scaling.  Same key the scanner promotes
-    # to files.force_filter_bw_hz; parsed here too so a loaded curve knows its
-    # own bandwidth without a lookup.
-    force_filter_bw_hz = _safe(rb"ForceFilterBW: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r")
+    meta = _note_fields(note, header)
+    xpos, ypos             = meta["xpos"], meta["ypos"]
+    sample_rate_hz         = meta["sample_rate_hz"]
+    measured_date          = meta["measured_date"]
+    velocity_nm_s          = meta["velocity_nm_s"]
+    trigger_point_nn       = meta["trigger_point_nn"]
+    force_dist_nm          = meta["force_dist_nm"]
+    inv_ols_nm_v           = meta["inv_ols_nm_v"]
+    force_filter_bw_hz     = meta["force_filter_bw_hz"]
 
     return ForceCurve(
         path             = normalize_path(path),
