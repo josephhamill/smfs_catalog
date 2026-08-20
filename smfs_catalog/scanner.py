@@ -24,7 +24,7 @@ from datetime import datetime
 from igor2.binarywave import load as load_ibw
 
 from . import db
-from .curve_loader import _spring_constant, qualify_wave
+from .curve_loader import _hold_z_sensor, _spring_constant, qualify_wave
 
 # Files per scan transaction (#125).  Commit is what makes a batch durable, so
 # this is also the most work an interrupted scan can lose — and that work is
@@ -285,7 +285,9 @@ def _parse_ibw(path: str) -> dict:
         # the same content qualification rules.
         q = qualify_wave(
             wdata,
+            labels=wave["wave"]["labels"],
             indent_mode=result["indent_mode"],
+            hold_z=_hold_z_sensor(note),
             spring_constant=result["spring_constant_pn_nm"],
         )
         result["curve_type"]      = q.curve_type
@@ -729,7 +731,9 @@ def requalify_catalog(
                 wave = load_ibw(io.BytesIO(raw))
                 q = qualify_wave(
                     wave["wave"]["wData"],
+                    labels=wave["wave"]["labels"],
                     indent_mode=_safe_bool(rb"IndentMode: ([0-1])\r", wave["wave"]["note"]),
+                    hold_z=_hold_z_sensor(wave["wave"]["note"]),
                     spring_constant=_spring_constant(wave["wave"]["note"]),
                 )
             except Exception as exc:                       # noqa: BLE001
