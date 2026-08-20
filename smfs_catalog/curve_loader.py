@@ -96,18 +96,52 @@ UNUSABLE_REASON_TEXT = {
     UNUSABLE_NOT_FE:        "not a force-extension curve — see its Type",
 }
 
-# Column layout (Asylum Research MFP3D convention):
-#   0 = read-back piezo position (m)   — FFT view only
-#   1 = deflection               (m)   — REQUIRED: every force the app reports
-#   2 = requested piezo position (m)   — REQUIRED: the x-axis of everything
-#   3 = time                     (s)   — not read by the loader
-COL_PIEZO_READ = 0
-COL_DEFLECTION = 1
-COL_PIEZO_REQ  = 2
+# Channel names, as the wave writes them in its own dimension labels.
+#   Defl    deflection (m) — every force the app reports
+#   ZSnsr   measured Z sensor (m); Raw is the commanded position (m)
+#   Time    seconds; saved by some panels, absent from others
+CH_DEFL  = "Defl"
+CH_RAW   = "Raw"
+CH_ZSNSR = "ZSnsr"
+CH_TIME  = "Time"
 
-# Only these two disqualify a file.  A dead col 0 costs the FFT view and
-# nothing else, so it must not reject a curve whose science is intact.
-REQUIRED_COLUMNS = ((COL_DEFLECTION, "deflection"), (COL_PIEZO_REQ, "requested piezo"))
+# Fallback order for a wave carrying no labels, which here is only ever an
+# image or a bare spectrum.  Position is NOT a substitute for a label: waves
+# with the same channel count exist in different orders (Raw,Defl,ZSnsr from
+# the Force panel against Defl,Raw,Lateral from the Force Clamp panel), so a
+# fixed index reads a different quantity depending on which panel wrote it.
+_POSITIONAL = (CH_RAW, CH_DEFL, CH_ZSNSR, CH_TIME)
+
+
+def channel_map(labels, n_cols: int) -> dict[str, int]:
+    """
+    Channel name -> column index for one wave.
+
+    `labels` is igor2's ``wave["labels"]``; its second entry holds the column
+    names preceded by the dimension's own (empty) label.
+    """
+    names: list[str] = []
+    if len(labels) > 1 and len(labels[1]) > 1:
+        names = [b.decode("latin-1", "replace") if isinstance(b, bytes) else str(b)
+                 for b in labels[1][1:]]
+    if len(names) != n_cols:
+        names = list(_POSITIONAL[:n_cols]) if n_cols <= len(_POSITIONAL) else []
+    if len(names) != n_cols:
+        # Neither labelled nor a shape the positional order covers.  No name is
+        # better than a guessed one: an unnamed channel is simply not offered.
+        return {}
+    return {name: i for i, name in enumerate(names) if name}
+
+
+def piezo_column(channels: dict[str, int]) -> int | None:
+    """
+    The column carrying tip-sample position: the measured sensor when the wave
+    saved one, else the commanded position.  None when the wave has neither.
+    """
+    for name in (CH_ZSNSR, CH_RAW):
+        if name in channels:
+            return channels[name]
+    return None
 
 
 @dataclass(frozen=True)
@@ -172,15 +206,30 @@ def _spring_constant(note: bytes) -> float | None:
         return None
 
 
+def _hold_z_sensor(note: bytes) -> int | None:
+    """
+    ``FCPHoldZSensor`` from the wave note: 1 held Z, 0 held force, None when
+    the Force Clamp panel did not write this note at all.
+
+    The panel stamping its own keys is what makes the distinction a statement
+    by the file rather than an inference from its shape.
+    """
+    m = re.search(rb"FCPHoldZSensor: ?([0-1])\r", note)
+    return int(m.group(1)) if m else None
+
+
 def _modality(
     wdata: np.ndarray,
+    channels: dict[str, int],
     indent_mode: int | None,
+    hold_z: int | None,
     spring_constant: float | None,
 ) -> str:
     """
-    What kind of acquisition is this?  Shape, the wave note's IndentMode flag,
-    and whether a spring constant exists — this asks what the file IS, never
-    whether it is any good.  Returns one of the files.curve_type values.
+    Which experiment is this?  Every panel in the AFM software stamps its own
+    keys in the wave note, so the file states its own modality and nothing here
+    infers one from how many channels the operator chose to save.  This asks
+    what the file IS, never whether it is any good.
 
     **A missing spring constant is a classification, not a defect.**  Without k
     a deflection trace cannot be expressed as force, so whatever the file
@@ -191,36 +240,46 @@ def _modality(
     later job, and nothing is lost meanwhile because the empty
     `spring_constant_pn_nm` column says exactly why the file is there.
     """
-    if indent_mode == 1:
-        return "indentation"
-    if wdata.ndim == 2:
-        if wdata.shape[1] == 2:
-            return "force_clamp"
-        usable_k = (spring_constant is not None
-                    and np.isfinite(spring_constant) and spring_constant > 0)
-        return "force_extension" if usable_k else "unknown"
     if wdata.ndim == 3:
         if wdata.shape[2] == 4:
             return "image_ac"
         if wdata.shape[2] == 3:
             return "image_contact"
-    return "unknown"
+        return "unknown"
+    if wdata.ndim != 2:
+        return "unknown"
+
+    usable_k = (spring_constant is not None
+                and np.isfinite(spring_constant) and spring_constant > 0)
+    if not usable_k:
+        return "unknown"
+    if CH_DEFL not in channels or piezo_column(channels) is None:
+        return "unknown"
+
+    if hold_z is not None:
+        return "stretch_hold" if hold_z else "force_clamp"
+    if indent_mode == 1:
+        return "indentation"
+    return "continuous_stretch"
 
 
 def qualify_wave(
     wdata: np.ndarray,
     *,
+    labels,
     indent_mode:     int | None,
+    hold_z:          int | None,
     spring_constant: float | None,
 ) -> Qualification:
     """
     Decide whether one already-read wave can be analysed, and say why not.
 
-    Both keyword arguments are REQUIRED and have no defaults, deliberately. A
+    Every keyword argument is REQUIRED and has no default, deliberately. A
     default would let a caller skip a check by omission and never know — which
     is precisely how the scanner and the loader came to disagree in the first
     place. `spring_constant=None` means "the wave note has no usable one",
-    which is a rejection, not "don't check".
+    which is a rejection, not "don't check"; `hold_z=None` means "no Force
+    Clamp panel wrote this note", which is what makes a ramp a ramp.
 
     THE one implementation.  The scanner calls it at import (where wData is
     already in memory, so it is free) and the loader calls it on every load;
@@ -231,11 +290,14 @@ def qualify_wave(
     The checks run in a fixed order and each one may assume its predecessors
     passed.  That ordering is load-bearing, not stylistic:
 
-      1. modality       — is this even a force-extension acquisition?
+      1. modality       — which experiment produced this?
       2. finite         — are the samples numbers at all?
       3. varies         — does anything actually change?
       4. turnaround     — is there an approach and a retract?
       5. retract real   — was the retract buffer written?
+
+    Steps 2 and 3 apply to every wave with channels; 4 and 5 only to a
+    continuous stretch, being questions about a ramp.
 
     Steps 4 and 5 are reductions (argmax, any) that CANNOT fail: they return an
     answer for every input, including inputs where the question is meaningless.
@@ -250,17 +312,24 @@ def qualify_wave(
     absent; an unusual-but-real curve is not this function's business (see
     CLAUDE.md §4 on informing rather than gating).
     """
-    curve_type = _modality(wdata, indent_mode, spring_constant)
-    if curve_type != "force_extension":
-        # Nothing else in the app analyses these, so there is no "usable"
-        # judgement to make about them.  Saying otherwise would be inventing a
-        # verdict for files we never touch.
+    channels = channel_map(labels, wdata.shape[1]) if wdata.ndim == 2 else {}
+    curve_type = _modality(wdata, channels, indent_mode, hold_z, spring_constant)
+    if CH_DEFL not in channels or piezo_column(channels) is None:
+        # An image, a bare spectrum, a wave with no deflection: there are no
+        # channels to make any statement about.  Inventing a pass/fail here
+        # would be claiming a judgement we never made.
         return Qualification(curve_type)
 
     n = wdata.shape[0]
+    col_defl  = channels[CH_DEFL]
+    col_piezo = piezo_column(channels)
+    # A dead position READ-back costs the FFT view and nothing else, so it is
+    # absent here: rejecting a curve whose science is intact would be a worse
+    # answer than one missing viewer.
+    required = ((col_defl, "deflection"), (col_piezo, "piezo"))
 
     # 2. Finite — every sample in the channels we depend on is a real number.
-    for col, name in REQUIRED_COLUMNS:
+    for col, name in required:
         bad = ~np.isfinite(wdata[:, col])
         n_bad = int(bad.sum())
         if n_bad:
@@ -271,24 +340,31 @@ def qualify_wave(
 
     # 3. Varies — a channel that never changes recorded nothing.  ptp is safe
     #    here only because step 2 established there are no NaNs.
-    for col, name in REQUIRED_COLUMNS:
+    for col, name in required:
         if float(np.ptp(wdata[:, col])) == 0.0:
             return Qualification(
                 curve_type, UNUSABLE_CONSTANT,
                 f"{name}: constant at {float(wdata[0, col]):.6g} for all {n:,} samples",
             )
 
+    if curve_type != "continuous_stretch":
+        # Steps 4 and 5 ask about an approach and a retract.  A held or indented
+        # acquisition has neither, so the questions do not apply to it — unlike
+        # steps 2 and 3, which ask whether the channels recorded anything and
+        # are worth asking of every wave.
+        return Qualification(curve_type)
+
     # 4. Turnaround — the piezo ramp reverses, with real data on both sides.
-    idx_turn = int(np.argmax(wdata[:, COL_PIEZO_REQ]))
+    idx_turn = int(np.argmax(wdata[:, col_piezo]))
     if idx_turn == 0 or idx_turn >= n - 1:
         return Qualification(
             curve_type, UNUSABLE_NO_TURNAROUND,
-            f"requested piezo peaks at sample {idx_turn:,} of {n:,} "
+            f"piezo peaks at sample {idx_turn:,} of {n:,} "
             f"— no approach and retract either side of it",
         )
 
     # 5. Retract real — the buffer was actually written.
-    if _is_truncated(wdata[:, COL_DEFLECTION], idx_turn):
+    if _is_truncated(wdata[:, col_defl], idx_turn):
         return Qualification(
             curve_type, UNUSABLE_TRUNCATED,
             f"all {n - idx_turn - 1:,} retract samples are exactly zero",
@@ -296,6 +372,65 @@ def qualify_wave(
         )
 
     return Qualification(curve_type, None, None, idx_turn)
+
+
+def _note_float(note: bytes, pattern: bytes, scale: float = 1.0) -> float | None:
+    m = re.search(pattern, note)
+    if m is None:
+        return None
+    try:
+        return float(m.group(1)) * scale
+    except (ValueError, IndexError):
+        return None
+
+
+def _note_fields(note: bytes, header) -> dict:
+    """
+    The wave-note and header values every viewer shows, parsed once.
+
+    Shared by both loaders so a curve the analysis pipeline refuses still
+    reports the same numbers, from the same parse, as one it accepts.
+    """
+    xpos = _note_float(note, rb"XLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", 1e6)
+    ypos = _note_float(note, rb"YLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", 1e6)
+
+    try:
+        sfa = header["sfA"][0]
+        sample_rate_hz = float(1.0 / sfa) if sfa > 0 else 0.0
+    except (KeyError, IndexError, ZeroDivisionError):
+        sample_rate_hz = 0.0
+
+    date_m = re.search(rb"\rDate:([^\r]+)\r", note)
+
+    return {
+        "xpos": xpos,
+        "ypos": ypos,
+        "sample_rate_hz": sample_rate_hz,
+        "measured_date": (date_m.group(1).decode("latin-1").strip()
+                          if date_m else None),
+        "velocity_nm_s": _note_float(
+            note, rb"Velocity: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        # TriggerPoint is stored in Newtons (SI) in the Asylum Research wave
+        # note.  scale=1e9 converts N → nN.  The field is trigger_point_nn — a
+        # FORCE (nN), not a distance.  Confirmed: trigger(nN) × (1/k) =
+        # max_deflection(nm).
+        "trigger_point_nn": _note_float(
+            note, rb"TriggerPoint: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        "force_dist_nm": _note_float(
+            note, rb"ForceDist: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        "inv_ols_nm_v": _note_float(
+            note, rb"InvOLS: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        # Hz already in the wave note — no scaling.  Same key the scanner
+        # promotes to files.force_filter_bw_hz; parsed here too so a loaded
+        # curve knows its own bandwidth without a lookup.
+        "force_filter_bw_hz": _note_float(
+            note, rb"ForceFilterBW: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r"),
+        # The operator-set acquisition rate.  Preferred over the header for the
+        # time axis because some panels leave sfA at 1 s/point, which would
+        # date a 6-second curve at 30 hours.
+        "pts_per_sec": _note_float(
+            note, rb"NumPtsPerSec: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r"),
+    }
 
 
 @dataclass
@@ -355,6 +490,113 @@ class ForceCurve:
         return Path(self.path).name
 
 
+@dataclass(frozen=True)
+class RawTrace:
+    """
+    One wave's channels in display units, carrying no verdict about what they
+    show.  The viewer's counterpart to ForceCurve.
+
+    A held, indented or otherwise non-ramp acquisition has no approach/retract
+    split to make, so ForceCurve cannot represent one — but it is still a
+    recording somebody needs to look at.  Field names match ForceCurve's where
+    they mean the same thing, so one metadata panel serves both.
+
+    piezo_nm is None when the wave saved no position channel, time_s when
+    neither a Time channel nor a stated sample rate establishes one.  A viewer
+    offers the axes it actually has.
+    """
+    path:            str
+    curve_type:      str
+    defl_nm:         np.ndarray
+    piezo_nm:        np.ndarray | None
+    time_s:          np.ndarray | None
+    spring_constant: float | None
+    xpos:            float | None = None
+    ypos:            float | None = None
+    sample_rate_hz:  float = 0.0
+    measured_date:   str | None = None
+    velocity_nm_s:   float | None = None
+    trigger_point_nn: float | None = None
+    force_dist_nm:   float | None = None
+    inv_ols_nm_v:    float | None = None
+
+    @property
+    def filename(self) -> str:
+        return Path(self.path).name
+
+    @property
+    def force_pn(self) -> np.ndarray | None:
+        """Deflection as force, or None when the wave states no k."""
+        if self.spring_constant is None:
+            return None
+        return self.defl_nm * self.spring_constant
+
+
+def load_raw_trace(path: str) -> RawTrace:
+    """
+    Load any channel wave for viewing, whatever experiment produced it.
+
+    Deliberately asks less than load_force_curve: it needs a deflection channel
+    and nothing else.  No turnaround, no spring constant, no verdict about
+    whether the science is usable — those are questions for analysis, and a
+    curve must not become unviewable because the answer to one of them is no.
+
+    Raises UnusableCurveError only when there is no trace to draw at all: an
+    image, or a wave with no deflection channel.
+    """
+    try:
+        wave   = load_ibw(path)
+        wdata  = wave["wave"]["wData"]
+        note   = wave["wave"]["note"]
+        header = wave["wave"]["wave_header"]
+        labels = wave["wave"]["labels"]
+    except Exception as exc:
+        raise LoadError(f"Could not read {path}: {exc}") from exc
+
+    k = _spring_constant(note)
+    q = qualify_wave(wdata, labels=labels, indent_mode=None,
+                     hold_z=_hold_z_sensor(note), spring_constant=k)
+
+    channels = channel_map(labels, wdata.shape[1]) if wdata.ndim == 2 else {}
+    if CH_DEFL not in channels:
+        raise UnusableCurveError(
+            f"{Path(path).name}: no deflection channel to plot "
+            f"(wData shape {wdata.shape} → {q.curve_type})",
+            UNUSABLE_NOT_FE,
+        )
+
+    n          = wdata.shape[0]
+    deflection = wdata[:, channels[CH_DEFL]]
+    defl_nm    = (deflection - deflection[0]) * 1e9
+
+    col_piezo = piezo_column(channels)
+    piezo_nm  = wdata[:, col_piezo] * -1e9 if col_piezo is not None else None
+
+    meta = _note_fields(note, header)
+    if CH_TIME in channels:
+        time_s = wdata[:, channels[CH_TIME]].astype(float)
+    else:
+        rate = meta["pts_per_sec"] or meta["sample_rate_hz"]
+        time_s = np.arange(n, dtype=float) / rate if rate else None
+
+    return RawTrace(
+        path             = normalize_path(path),
+        curve_type       = q.curve_type,
+        defl_nm          = defl_nm,
+        piezo_nm         = piezo_nm,
+        time_s           = time_s,
+        spring_constant  = k,
+        xpos             = meta["xpos"],
+        ypos             = meta["ypos"],
+        sample_rate_hz   = meta["sample_rate_hz"],
+        measured_date    = meta["measured_date"],
+        velocity_nm_s    = meta["velocity_nm_s"],
+        trigger_point_nn = meta["trigger_point_nn"],
+        force_dist_nm    = meta["force_dist_nm"],
+        inv_ols_nm_v     = meta["inv_ols_nm_v"],
+    )
+
+
 # ── Loader ────────────────────────────────────────────────────────────────────
 
 def load_force_curve(path: str) -> ForceCurve:
@@ -395,8 +637,11 @@ def load_force_curve(path: str) -> ForceCurve:
     # viewers over a label rather than over the data.  Same function, different
     # question, the information each caller actually has.
     k = _spring_constant(note)
-    q = qualify_wave(wdata, indent_mode=None, spring_constant=k)
-    if q.curve_type != "force_extension":
+    q = qualify_wave(
+        wdata, labels=wave["wave"]["labels"], indent_mode=None,
+        hold_z=_hold_z_sensor(note), spring_constant=k,
+    )
+    if q.curve_type != "continuous_stretch":
         # Durable, so UnusableCurveError and not a plain LoadError: a file that
         # is a force-clamp trace, an image, or a wave with no spring constant
         # will still be all of those things next pass.  Raised as a plain
@@ -414,8 +659,9 @@ def load_force_curve(path: str) -> ForceCurve:
         raise (TruncatedCurveError(msg) if q.reason == UNUSABLE_TRUNCATED
                else UnusableCurveError(msg, q.reason))
 
-    deflection = wdata[:, COL_DEFLECTION]
-    piezo      = wdata[:, COL_PIEZO_REQ]
+    channels   = channel_map(wave["wave"]["labels"], wdata.shape[1])
+    deflection = wdata[:, channels[CH_DEFL]]
+    piezo      = wdata[:, piezo_column(channels)]
     idx_turn   = q.idx_turn
 
     # ── Scale and split ───────────────────────────────────────────────────────
@@ -429,55 +675,27 @@ def load_force_curve(path: str) -> ForceCurve:
     defl_retr  = (deflection[idx_turn + 1:]  - baseline) * 1e9
 
     # ── Raw unsplit arrays for FFT inspection ─────────────────────────────────
-    # col 0 = real (read-back) piezo position in metres
     raw_defl_full       = (deflection - baseline) * 1e9        # nm, full trace
-    # col 0 = read-back piezo.  Deliberately NOT a required channel (see
-    # REQUIRED_COLUMNS): it feeds the FFT view alone, so when it is damaged the
-    # honest cost is one viewer, not a rejected curve.  It may therefore hold
-    # NaNs here where the two required channels do not.
-    raw_piezo_read_full = wdata[:, COL_PIEZO_READ] * -1e9       # nm, sign-matched
+    # The commanded position.  Deliberately not a channel qualification
+    # depends on: it feeds the FFT view alone, so when it is damaged the honest
+    # cost is one viewer, not a rejected curve.  It may therefore hold NaNs
+    # here where the qualified channels do not.
+    raw_piezo_read_full = (
+        wdata[:, channels.get(CH_RAW, piezo_column(channels))] * -1e9)  # nm, sign-matched
 
     # ── Wave note fields ──────────────────────────────────────────────────────
     # k was already read and validated by the qualification above — a wave
-    # without one is not classified 'force_extension' and never reaches here.
+    # without one is not classified as a stretch and never reaches here.
     spring_constant = k
-
-    xpos_m = re.search(rb"XLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", note)
-    ypos_m = re.search(rb"YLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", note)
-    xpos = float(xpos_m.group(1)) * 1e6 if xpos_m else None
-    ypos = float(ypos_m.group(1)) * 1e6 if ypos_m else None
-
-    try:
-        sfa = header["sfA"][0]
-        sample_rate_hz = float(1.0 / sfa) if sfa > 0 else 0.0
-    except (KeyError, IndexError, ZeroDivisionError):
-        sample_rate_hz = 0.0
-
-    date_m = re.search(rb"\rDate:([^\r]+)\r", note)
-    measured_date = (
-        date_m.group(1).decode("latin-1").strip() if date_m else None
-    )
-
-    def _safe(pattern: bytes, scale: float = 1.0) -> float | None:
-        m = re.search(pattern, note)
-        if m is None:
-            return None
-        try:
-            return float(m.group(1)) * scale
-        except (ValueError, IndexError):
-            return None
-
-    velocity_nm_s    = _safe(rb"Velocity: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r",    1e9)
-    # TriggerPoint is stored in Newtons (SI) in the Asylum Research wave note.
-    # scale=1e9 converts N → nN.  The field is trigger_point_nn — a FORCE (nN),
-    # not a distance.  Confirmed: trigger(nN) × (1/k) = max_deflection(nm).
-    trigger_point_nn = _safe(rb"TriggerPoint: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9)
-    force_dist_nm    = _safe(rb"ForceDist: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r",    1e9)
-    inv_ols_nm_v     = _safe(rb"InvOLS: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r",      1e9)
-    # Hz already in the wave note — no scaling.  Same key the scanner promotes
-    # to files.force_filter_bw_hz; parsed here too so a loaded curve knows its
-    # own bandwidth without a lookup.
-    force_filter_bw_hz = _safe(rb"ForceFilterBW: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r")
+    meta = _note_fields(note, header)
+    xpos, ypos             = meta["xpos"], meta["ypos"]
+    sample_rate_hz         = meta["sample_rate_hz"]
+    measured_date          = meta["measured_date"]
+    velocity_nm_s          = meta["velocity_nm_s"]
+    trigger_point_nn       = meta["trigger_point_nn"]
+    force_dist_nm          = meta["force_dist_nm"]
+    inv_ols_nm_v           = meta["inv_ols_nm_v"]
+    force_filter_bw_hz     = meta["force_filter_bw_hz"]
 
     return ForceCurve(
         path             = normalize_path(path),

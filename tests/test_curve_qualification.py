@@ -36,35 +36,47 @@ from smfs_catalog import curve_loader as cl
 
 # ── Wave builders ─────────────────────────────────────────────────────────────
 
+# The Force panel's four-channel wave, labelled as it labels itself.
+_LABELS = [[], [b"", b"Raw", b"Defl", b"ZSnsr", b"Time"], [], []]
+C_RAW, C_DEFL, C_ZSNSR = 0, 1, 2
+
+
+def _labels(*names: str):
+    """igor2's labels structure for a wave with these channels, in this order."""
+    return [[], [b""] + [n.encode() for n in names], [], []]
+
+
 def _good_wave(n: int = 2000) -> np.ndarray:
-    """A minimal but valid force-extension wave: ramp up, ramp down."""
+    """A minimal but valid continuous-stretch wave: ramp up, ramp down."""
     w = np.zeros((n, 4), dtype=float)
     half = n // 2
     piezo = np.concatenate([np.linspace(0.0, 1e-6, half),
                             np.linspace(1e-6, 0.0, n - half)])
-    w[:, cl.COL_PIEZO_READ] = piezo
-    w[:, cl.COL_PIEZO_REQ]  = piezo
+    w[:, C_RAW]   = piezo
+    w[:, C_ZSNSR] = piezo
     # deflection: flat baseline with a dip, so it is neither constant nor zero
-    w[:, cl.COL_DEFLECTION] = -1e-8 * np.sin(np.linspace(0, np.pi, n)) - 1e-9
+    w[:, C_DEFL]  = -1e-8 * np.sin(np.linspace(0, np.pi, n)) - 1e-9
     w[:, 3] = np.linspace(0, 1, n)
     return w
 
 
-def _qualify(w, *, indent_mode=None, spring_constant=29.0):
+def _qualify(w, *, labels=_LABELS, indent_mode=None, hold_z=None,
+             spring_constant=29.0):
     """qualify_wave with healthy defaults, so each test varies one thing.
 
     The defaults are supplied HERE and not in qualify_wave itself: a default on
     the real function would let a production caller skip a check by omission,
     which is exactly how the scanner and loader drifted apart before.
     """
-    return cl.qualify_wave(w, indent_mode=indent_mode, spring_constant=spring_constant)
+    return cl.qualify_wave(w, labels=labels, indent_mode=indent_mode,
+                           hold_z=hold_z, spring_constant=spring_constant)
 
 
 # ── (a) each defect is caught, and named by the check that measures it ────────
 
 def test_a_healthy_wave_qualifies():
     q = _qualify(_good_wave())
-    assert q.curve_type == "force_extension"
+    assert q.curve_type == "continuous_stretch"
     assert q.usable and q.reason is None
     # A qualified wave hands the turnaround forward, so the loader never has to
     # recompute it — recomputing is how two answers to one question appear.
@@ -76,11 +88,11 @@ def test_all_nan_channel_is_diagnosed_as_nonfinite_not_as_a_bad_turnaround():
     read as 'turnaround at index 0 — truncated or malformed'. The finiteness
     check must get there first, or the message describes the wrong problem."""
     w = _good_wave()
-    w[:, cl.COL_PIEZO_REQ] = np.nan
+    w[:, C_ZSNSR] = np.nan
 
     q = _qualify(w)
     assert q.reason == cl.UNUSABLE_NONFINITE
-    assert "requested piezo" in q.detail and "2,000" in q.detail
+    assert "piezo" in q.detail and "2,000" in q.detail
     # The defect is NOT reported as a turnaround problem, which is the whole
     # regression: same file, same argmax, different (correct) diagnosis.
     assert q.reason != cl.UNUSABLE_NO_TURNAROUND
@@ -93,11 +105,11 @@ def test_partial_nan_is_caught_even_though_every_later_check_would_pass():
     argmax (the first NaN's index), so nothing downstream would ever object —
     the curve would be split at the wrong sample and analysed as if fine."""
     w = _good_wave()
-    w[300:800, cl.COL_DEFLECTION] = np.nan
+    w[300:800, C_DEFL] = np.nan
 
     # Demonstrate the trap this check exists to close, so the test fails if the
     # ordering is ever relaxed on the theory that "argmax would catch it".
-    assert 0 < int(np.argmax(w[:, cl.COL_PIEZO_REQ])) < len(w) - 1
+    assert 0 < int(np.argmax(w[:, C_ZSNSR])) < len(w) - 1
 
     q = _qualify(w)
     assert q.reason == cl.UNUSABLE_NONFINITE
@@ -108,18 +120,18 @@ def test_a_constant_channel_is_diagnosed_as_constant_not_as_no_turnaround():
     """A flat piezo also drives argmax to 0. Same wrong message, different
     cause — which is why 'varies' is its own check with its own reason."""
     w = _good_wave()
-    w[:, cl.COL_PIEZO_REQ] = 5e-7
+    w[:, C_ZSNSR] = 5e-7
 
     q = _qualify(w)
     assert q.reason == cl.UNUSABLE_CONSTANT
-    assert "requested piezo" in q.detail
+    assert "piezo" in q.detail
 
 
 def test_no_turnaround_is_reported_when_that_really_is_the_problem():
     """The pre-existing guard, now meaning what it says: finite, varying, and
     genuinely monotonic — an approach with no retract."""
     w = _good_wave()
-    w[:, cl.COL_PIEZO_REQ] = np.linspace(0.0, 1e-6, len(w))
+    w[:, C_ZSNSR] = np.linspace(0.0, 1e-6, len(w))
 
     q = _qualify(w)
     assert q.reason == cl.UNUSABLE_NO_TURNAROUND
@@ -129,13 +141,13 @@ def test_truncated_still_detected_and_no_longer_fooled_by_nan():
     turn = _qualify(_good_wave()).idx_turn   # ask, don't assume
 
     w = _good_wave()
-    w[turn + 1:, cl.COL_DEFLECTION] = 0.0
+    w[turn + 1:, C_DEFL] = 0.0
     assert _qualify(w).reason == cl.UNUSABLE_TRUNCATED
 
     # `retr.any()` is True for NaN, so before the finiteness check ran first an
     # all-NaN retract slipped past this test and was analysed.
     w2 = _good_wave()
-    w2[turn + 1:, cl.COL_DEFLECTION] = np.nan
+    w2[turn + 1:, C_DEFL] = np.nan
     assert _qualify(w2).reason == cl.UNUSABLE_NONFINITE
 
 
@@ -144,17 +156,19 @@ def test_a_damaged_read_back_channel_does_not_reject_the_curve():
     intact because one optional viewer lost its input would be over-reach —
     and in #122's own file col 0 is damaged while the retract is perfect."""
     w = _good_wave()
-    w[100:900, cl.COL_PIEZO_READ] = np.nan
+    w[100:900, C_RAW] = np.nan
     assert _qualify(w).usable
 
 
-def test_non_force_extension_modalities_get_no_usability_verdict():
+def test_modalities_other_than_continuous_stretch_get_no_usability_verdict():
     """We do not analyse these, so inventing a pass/fail for them would be
     claiming a judgement we never made."""
-    assert _qualify(np.zeros((100, 2))).curve_type == "force_clamp"
-    assert _qualify(np.zeros((100, 2))).reason is None
+    w = _good_wave()
+    assert _qualify(w, hold_z=1).curve_type == "stretch_hold"
+    assert _qualify(w, hold_z=1).reason is None
+    assert _qualify(w, hold_z=0).curve_type == "force_clamp"
     assert _qualify(np.zeros((10, 10, 4))).curve_type == "image_ac"
-    assert _qualify(_good_wave(), indent_mode=1).curve_type == "indentation"
+    assert _qualify(w, indent_mode=1).curve_type == "indentation"
     # ...and none of them are labelled unusable despite being all-zero.
     assert _qualify(np.zeros((10, 10, 4))).reason is None
 
@@ -173,7 +187,7 @@ def test_no_spring_constant_is_classified_not_rejected():
             f"spring_constant={k!r} is a classification, not a defect — "
             f"nothing about this file is broken"
         )
-    assert _qualify(w, spring_constant=29.0).curve_type == "force_extension"
+    assert _qualify(w, spring_constant=29.0).curve_type == "continuous_stretch"
 
 
 def test_a_file_the_force_pipeline_cannot_use_is_never_retried_forever():
@@ -298,14 +312,17 @@ def test_the_loader_does_not_reject_a_curve_over_its_intent_label():
     loader passing indent_mode would have broken that over a label."""
     import inspect
     src = inspect.getsource(cl.load_force_curve)
-    assert "qualify_wave(wdata, indent_mode=None," in src, (
+    assert "indent_mode=None" in src, (
         "load_force_curve must qualify on structure alone — passing "
         "indent_mode here rejects loadable waves over their intent label"
     )
+    # hold_z is the opposite case and IS passed: a held curve is not a ramp,
+    # so the ramp pipeline must not be handed one.
+    assert "hold_z=_hold_z_sensor(note)" in src
 
     w = _good_wave()
     assert _qualify(w, indent_mode=1).curve_type == "indentation"
-    assert _qualify(w).curve_type == "force_extension"
+    assert _qualify(w).curve_type == "continuous_stretch"
 
 
 # ── (d) content identity: duplicates are derived, never stored ────────────────
@@ -316,7 +333,7 @@ def _seed(db, p, path, sha=None, first_seen="2026-01-01"):
         conn.execute(
             "INSERT INTO files (path, filename, curve_type, parse_ok, "
             "first_seen, last_seen, content_sha256) VALUES (?,?,?,?,?,?,?)",
-            (path, path.rsplit("/", 1)[-1], "force_extension", 1,
+            (path, path.rsplit("/", 1)[-1], "continuous_stretch", 1,
              first_seen, first_seen, sha))
     conn.close()
 
