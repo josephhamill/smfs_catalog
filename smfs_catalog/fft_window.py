@@ -20,7 +20,9 @@ from PyQt6.QtWidgets import (
 )
 from scipy.signal import sosfiltfilt, tf2sos
 
+from . import sample_marks
 from . import style
+from .widgets import SampleMarksToggle
 from . import quantities as _quant
 from .qt_utils import (
     fit_on_screen,
@@ -129,6 +131,7 @@ class FftWindow(QWidget):
         ctrl_layout.addWidget(self._roi_label)
 
         ctrl_layout.addStretch()
+        ctrl_layout.addWidget(SampleMarksToggle())
         root.addWidget(ctrl)
 
         # ── GraphicsLayoutWidget — 4 stacked panels ───────────────────────────
@@ -170,19 +173,21 @@ class FftWindow(QWidget):
         root.addWidget(_glw, stretch=1)
 
         # ── Data curves ───────────────────────────────────────────────────────
-        _pen_d = style.data_pen(_COLOR_DEFL, width=1.0)   # blue — deflection
-        _pen_p = style.data_pen(_COLOR_PIEZO, width=1.0)  # orange — piezo
+        # Finer than W_DATA: four stacked panels of whole-curve samples.
+        _W = 1.0
 
-        self._trace_defl  = self._plt_defl.plot([], [], pen=_pen_d)
-        self._trace_piezo = self._plt_piezo.plot([], [], pen=_pen_p)
-        self._fft_defl    = self._plt_fft_d.plot([], [], pen=_pen_d)
-        self._fft_piezo   = self._plt_fft_p.plot([], [], pen=_pen_p)
+        def _trace(plot, color):
+            return sample_marks.trace(plot, color=color, width=_W)
+
+        self._trace_defl  = _trace(self._plt_defl,  _COLOR_DEFL)   # blue
+        self._trace_piezo = _trace(self._plt_piezo, _COLOR_PIEZO)  # orange
+        self._fft_defl    = _trace(self._plt_fft_d, _COLOR_DEFL)
+        self._fft_piezo   = _trace(self._plt_fft_p, _COLOR_PIEZO)
 
         # Filtered overlays — deflection only (analysis uses written piezo, so
         # filtering the read-piezo trace is decorative).  Initially hidden.
-        _pen_df = style.data_pen(style.SIG_FILTERED, width=1.0)   # violet — filtered defl
-        self._trace_defl_f = self._plt_defl.plot([],  [], pen=_pen_df)
-        self._fft_defl_f   = self._plt_fft_d.plot([], [], pen=_pen_df)
+        self._trace_defl_f = _trace(self._plt_defl,  style.SIG_FILTERED)  # violet
+        self._fft_defl_f   = _trace(self._plt_fft_d, style.SIG_FILTERED)
         for item in (self._trace_defl_f, self._fft_defl_f):
             item.setVisible(False)
 

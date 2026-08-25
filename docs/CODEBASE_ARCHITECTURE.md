@@ -58,7 +58,7 @@ The straight path exists, but persistence is shared rather than layered: `db.py`
 
 ### Cross-cutting infrastructure
 
-`__init__.py`, `bandwidth_warning.py`, `crashlog.py`, `date_picker_dialog.py`, `qt_utils.py`, `quantities.py`, `scope.py`, `style.py`
+`__init__.py`, `bandwidth_warning.py`, `crashlog.py`, `date_picker_dialog.py`, `qt_utils.py`, `quantities.py`, `sample_marks.py`, `scope.py`, `style.py`
 
 ### Unclassified
 
@@ -70,6 +70,7 @@ The straight path exists, but persistence is shared rather than layered: `db.py`
 graph TD
   run_dashboard --> crashlog
   run_dashboard --> db
+  run_dashboard --> sample_marks
   add_data_dialog --> db
   add_data_dialog --> qt_utils
   add_data_dialog --> scanner
@@ -102,7 +103,9 @@ graph TD
   class_lineplot_window --> navigator_bar
   class_lineplot_window --> qt_utils
   class_lineplot_window --> quantities
+  class_lineplot_window --> sample_marks
   class_lineplot_window --> style
+  class_lineplot_window --> widgets
   criteria_dialog --> criteria_gate
   criteria_dialog --> db
   criteria_dialog --> qt_utils
@@ -164,6 +167,7 @@ graph TD
   decomposition_window --> provenance
   decomposition_window --> qt_utils
   decomposition_window --> quantities
+  decomposition_window --> sample_marks
   decomposition_window --> signal_processing
   decomposition_window --> style
   decomposition_window --> widgets
@@ -175,6 +179,7 @@ graph TD
   display_roi --> qt_utils
   display_roi --> quantities
   display_roi --> roi_pipeline
+  display_roi --> sample_marks
   display_roi --> style
   display_roi --> widgets
   dist_fit_window --> db
@@ -208,7 +213,9 @@ graph TD
   fft_window --> curve_loader
   fft_window --> qt_utils
   fft_window --> quantities
+  fft_window --> sample_marks
   fft_window --> style
+  fft_window --> widgets
   gmm_fit_core --> style
   gmm_fit_window --> db
   gmm_fit_window --> export_utils
@@ -224,7 +231,9 @@ graph TD
   isoforce_window --> qt_utils
   isoforce_window --> quantities
   isoforce_window --> roi_pipeline
+  isoforce_window --> sample_marks
   isoforce_window --> style
+  isoforce_window --> widgets
   mean_curve_window --> dist_fit_core
   mean_curve_window --> export_utils
   mean_curve_window --> models
@@ -263,7 +272,9 @@ graph TD
   rawcurve_window --> quantities
   rawcurve_window --> roi_events
   rawcurve_window --> roi_pipeline
+  rawcurve_window --> sample_marks
   rawcurve_window --> style
+  rawcurve_window --> widgets
   remove_files_dialog --> db
   remove_files_dialog --> qt_utils
   remove_files_dialog --> style
@@ -284,6 +295,8 @@ graph TD
   roi_pipeline --> roi_selection
   roi_pipeline --> signal_processing
   roi_selection --> db
+  sample_marks --> db
+  sample_marks --> style
   scanner --> curve_loader
   scanner --> db
   scatter_window --> clustering
@@ -312,6 +325,7 @@ graph TD
   variables --> quantities
   variables --> roi_pipeline
   widgets --> clustering
+  widgets --> sample_marks
   widgets --> style
   wlc_view_window --> clustering
   wlc_view_window --> curve_loader
@@ -323,24 +337,26 @@ graph TD
   wlc_view_window --> qt_utils
   wlc_view_window --> quantities
   wlc_view_window --> roi_pipeline
+  wlc_view_window --> sample_marks
   wlc_view_window --> style
+  wlc_view_window --> widgets
 ```
 
 ## Module and callable inventory
 
 Line ranges refer to the current source. `Direct app calls` lists statically visible calls into major app services; an empty cell does not mean the callable has no effect.
 
-### `run_dashboard.py` (179 lines)
+### `run_dashboard.py` (183 lines)
 
-Imports app modules: `crashlog`, `db`. Top-level classes: none.
+Imports app modules: `crashlog`, `db`, `sample_marks`. Top-level classes: none.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `_frozen` | 51–53 | helper/control flow | — |
-| `resource_path` | 56–68 | helper/control flow | — |
-| `_stop_xpra_session` | 71–106 | helper/control flow | — |
-| `_ensure_display` | 109–151 | helper/control flow | — |
-| `main` | 154–174 | helper/control flow | `_db.check_db_machine`, `_db.initialise` |
+| `_frozen` | 52–54 | helper/control flow | — |
+| `resource_path` | 57–69 | helper/control flow | — |
+| `_stop_xpra_session` | 72–107 | helper/control flow | — |
+| `_ensure_display` | 110–152 | helper/control flow | — |
+| `main` | 155–178 | helper/control flow | `_db.check_db_machine`, `_db.initialise` |
 
 ### `__init__.py` (17 lines)
 
@@ -514,29 +530,29 @@ Imports app modules: `db`, `export_utils`, `qt_utils`, `style`, `variable_window
 | `CategoricalStatsWindow._on_list_row_changed` | 327–328 | UI/event handler | — |
 | `CategoricalStatsWindow._on_double_click` | 330–332 | UI/event handler | — |
 
-### `class_lineplot_window.py` (408 lines)
+### `class_lineplot_window.py` (410 lines)
 
-Imports app modules: `curve_loader`, `db`, `export_utils`, `navigator_bar`, `qt_utils`, `quantities`, `style`. Top-level classes: `ClassLinePlotWindow`.
+Imports app modules: `curve_loader`, `db`, `export_utils`, `navigator_bar`, `qt_utils`, `quantities`, `sample_marks`, `style`, `widgets`. Top-level classes: `ClassLinePlotWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `ClassLinePlotWindow.__init__` | 72–159 | construction/wiring | — |
-| `ClassLinePlotWindow._build_nav_row` | 163–215 | UI/view coordination | — |
-| `ClassLinePlotWindow.export_provenance` | 219–226 | helper/control flow | — |
-| `ClassLinePlotWindow._on_export` | 228–249 | UI/event handler | — |
-| `ClassLinePlotWindow.refresh` | 255–257 | helper/control flow | — |
-| `ClassLinePlotWindow._populate` | 259–303 | UI/view coordination | `_db.list_queue` |
-| `ClassLinePlotWindow._go_prev` | 307–311 | helper/control flow | — |
-| `ClassLinePlotWindow._go_next` | 313–317 | helper/control flow | — |
-| `ClassLinePlotWindow._on_row_changed` | 319–325 | UI/event handler | — |
-| `ClassLinePlotWindow._toggle_auto` | 327–336 | helper/control flow | — |
-| `ClassLinePlotWindow._stop_auto` | 338–341 | helper/control flow | — |
-| `ClassLinePlotWindow._auto_step` | 343–355 | helper/control flow | — |
-| `ClassLinePlotWindow._on_speed_change` | 357–360 | UI/event handler | — |
-| `ClassLinePlotWindow._set_navigation_enabled` | 362–369 | helper/control flow | — |
-| `ClassLinePlotWindow._show_current` | 373–399 | helper/control flow | — |
-| `ClassLinePlotWindow._clear_plot` | 401–403 | helper/control flow | — |
-| `ClassLinePlotWindow._on_double_click` | 405–408 | UI/event handler | — |
+| `ClassLinePlotWindow.__init__` | 73–160 | construction/wiring | — |
+| `ClassLinePlotWindow._build_nav_row` | 164–217 | UI/view coordination | — |
+| `ClassLinePlotWindow.export_provenance` | 221–228 | helper/control flow | — |
+| `ClassLinePlotWindow._on_export` | 230–251 | UI/event handler | — |
+| `ClassLinePlotWindow.refresh` | 257–259 | helper/control flow | — |
+| `ClassLinePlotWindow._populate` | 261–305 | UI/view coordination | `_db.list_queue` |
+| `ClassLinePlotWindow._go_prev` | 309–313 | helper/control flow | — |
+| `ClassLinePlotWindow._go_next` | 315–319 | helper/control flow | — |
+| `ClassLinePlotWindow._on_row_changed` | 321–327 | UI/event handler | — |
+| `ClassLinePlotWindow._toggle_auto` | 329–338 | helper/control flow | — |
+| `ClassLinePlotWindow._stop_auto` | 340–343 | helper/control flow | — |
+| `ClassLinePlotWindow._auto_step` | 345–357 | helper/control flow | — |
+| `ClassLinePlotWindow._on_speed_change` | 359–362 | UI/event handler | — |
+| `ClassLinePlotWindow._set_navigation_enabled` | 364–371 | helper/control flow | — |
+| `ClassLinePlotWindow._show_current` | 375–401 | helper/control flow | — |
+| `ClassLinePlotWindow._clear_plot` | 403–405 | helper/control flow | — |
+| `ClassLinePlotWindow._on_double_click` | 407–410 | UI/event handler | — |
 
 ### `clustering.py` (261 lines)
 
@@ -779,7 +795,7 @@ Imports app modules: `db`, `qt_utils`, `style`. Top-level classes: `DatePickerDi
 | `DatePickerDialog._on_sel_changed` | 136–149 | UI/event handler | — |
 | `DatePickerDialog._on_accept` | 151–156 | UI/event handler | — |
 
-### `db.py` (2402 lines)
+### `db.py` (2403 lines)
 
 Imports app modules: `analysis_params`, `criteria_gate`, `event_processor`, `roi_pipeline`. Top-level classes: none.
 
@@ -846,127 +862,128 @@ Imports app modules: `analysis_params`, `criteria_gate`, `event_processor`, `roi
 | `update_analysis_param` | 1622–1628 | helper/control flow | — |
 | `get_param_set` | 1631–1633 | read/query/resolve | — |
 | `set_setting` | 1636–1649 | state mutation | — |
-| `get_app_setting` | 1655–1666 | read/query/resolve | — |
-| `set_app_setting` | 1669–1681 | state mutation | — |
-| `write_event_histogram` | 1684–1700 | state mutation | — |
-| `write_event_histograms_bulk` | 1703–1721 | state mutation | — |
-| `get_event_histogram` | 1724–1745 | read/query/resolve | — |
-| `write_event_map` | 1748–1770 | state mutation | — |
-| `get_event_map` | 1773–1795 | read/query/resolve | — |
-| `get_latest_event_map` | 1798–1814 | read/query/resolve | — |
-| `get_latest_event_map_params` | 1817–1831 | read/query/resolve | — |
-| `get_event_map_provenance_bulk` | 1834–1861 | read/query/resolve | — |
-| `get_segment_override` | 1864–1886 | read/query/resolve | — |
-| `get_segment_overrides_bulk` | 1889–1919 | read/query/resolve | — |
-| `set_primary_segment_idx` | 1922–1938 | state mutation | — |
-| `set_secondary_segment_idx` | 1941–1957 | state mutation | — |
-| `delete_event_map` | 1960–1972 | state mutation | — |
-| `write_file_metadata` | 1975–2008 | state mutation | — |
-| `_write` | 1985–1998 | helper/control flow | — |
-| `get_file_metadata` | 2011–2032 | read/query/resolve | — |
-| `get_file_columns` | 2035–2062 | read/query/resolve | — |
-| `get_experimentalist_for_file` | 2065–2078 | read/query/resolve | — |
-| `get_experimentalist_profile` | 2081–2098 | read/query/resolve | — |
-| `set_experimentalist_profile` | 2101–2113 | state mutation | — |
-| `merge_experimentalist_profile` | 2116–2132 | helper/control flow | — |
-| `save_distribution_fit` | 2135–2157 | state mutation | — |
-| `get_distribution_fits` | 2160–2172 | read/query/resolve | — |
-| `save_gmm_fit` | 2175–2201 | state mutation | — |
-| `get_gmm_fits` | 2204–2217 | read/query/resolve | — |
-| `set_event` | 2223–2241 | state mutation | — |
-| `set_unusable_reason` | 2244–2261 | state mutation | — |
-| `clear_analysis_queue` | 2264–2269 | state mutation | — |
-| `enqueue_files` | 2272–2287 | state mutation | — |
-| `dequeue_files` | 2290–2303 | state mutation | — |
-| `set_queue_status` | 2306–2324 | state mutation | — |
-| `queue_paths` | 2327–2329 | helper/control flow | — |
-| `import_queue_from_paths` | 2332–2349 | state mutation | — |
-| `list_queue` | 2352–2365 | read/query/resolve | — |
-| `queue_freshness` | 2371–2398 | helper/control flow | — |
-| `_now` | 2401–2402 | helper/control flow | — |
+| `get_app_setting` | 1656–1667 | read/query/resolve | — |
+| `set_app_setting` | 1670–1682 | state mutation | — |
+| `write_event_histogram` | 1685–1701 | state mutation | — |
+| `write_event_histograms_bulk` | 1704–1722 | state mutation | — |
+| `get_event_histogram` | 1725–1746 | read/query/resolve | — |
+| `write_event_map` | 1749–1771 | state mutation | — |
+| `get_event_map` | 1774–1796 | read/query/resolve | — |
+| `get_latest_event_map` | 1799–1815 | read/query/resolve | — |
+| `get_latest_event_map_params` | 1818–1832 | read/query/resolve | — |
+| `get_event_map_provenance_bulk` | 1835–1862 | read/query/resolve | — |
+| `get_segment_override` | 1865–1887 | read/query/resolve | — |
+| `get_segment_overrides_bulk` | 1890–1920 | read/query/resolve | — |
+| `set_primary_segment_idx` | 1923–1939 | state mutation | — |
+| `set_secondary_segment_idx` | 1942–1958 | state mutation | — |
+| `delete_event_map` | 1961–1973 | state mutation | — |
+| `write_file_metadata` | 1976–2009 | state mutation | — |
+| `_write` | 1986–1999 | helper/control flow | — |
+| `get_file_metadata` | 2012–2033 | read/query/resolve | — |
+| `get_file_columns` | 2036–2063 | read/query/resolve | — |
+| `get_experimentalist_for_file` | 2066–2079 | read/query/resolve | — |
+| `get_experimentalist_profile` | 2082–2099 | read/query/resolve | — |
+| `set_experimentalist_profile` | 2102–2114 | state mutation | — |
+| `merge_experimentalist_profile` | 2117–2133 | helper/control flow | — |
+| `save_distribution_fit` | 2136–2158 | state mutation | — |
+| `get_distribution_fits` | 2161–2173 | read/query/resolve | — |
+| `save_gmm_fit` | 2176–2202 | state mutation | — |
+| `get_gmm_fits` | 2205–2218 | read/query/resolve | — |
+| `set_event` | 2224–2242 | state mutation | — |
+| `set_unusable_reason` | 2245–2262 | state mutation | — |
+| `clear_analysis_queue` | 2265–2270 | state mutation | — |
+| `enqueue_files` | 2273–2288 | state mutation | — |
+| `dequeue_files` | 2291–2304 | state mutation | — |
+| `set_queue_status` | 2307–2325 | state mutation | — |
+| `queue_paths` | 2328–2330 | helper/control flow | — |
+| `import_queue_from_paths` | 2333–2350 | state mutation | — |
+| `list_queue` | 2353–2366 | read/query/resolve | — |
+| `queue_freshness` | 2372–2399 | helper/control flow | — |
+| `_now` | 2402–2403 | helper/control flow | — |
 
-### `decomposition_window.py` (1148 lines)
+### `decomposition_window.py` (1154 lines)
 
-Imports app modules: `bandwidth_warning`, `curve_analysis`, `curve_loader`, `db`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `signal_processing`, `style`, `widgets`. Top-level classes: `DecompositionWindow`.
-
-| Callable | Lines | Structural role | Direct app calls |
-|---|---:|---|---|
-| `_thresh_unit` | 66–68 | helper/control flow | — |
-| `_to_shown` | 71–72 | helper/control flow | — |
-| `_to_stored` | 75–76 | helper/control flow | — |
-| `_seed_threshold_box` | 79–95 | helper/control flow | — |
-| `DecompositionWindow.__init__` | 120–506 | construction/wiring | `_db.load_analysis_params` |
-| `DecompositionWindow._cutoff_index` | 512–522 | helper/control flow | — |
-| `DecompositionWindow._cutoff_text` | 524–528 | helper/control flow | — |
-| `DecompositionWindow._refresh_cutoff_limits` | 530–595 | UI/view coordination | — |
-| `DecompositionWindow._set_reach` | 553–563 | helper/control flow | — |
-| `DecompositionWindow._refresh_tau_hint` | 597–625 | UI/view coordination | — |
-| `DecompositionWindow._refresh_acq_filter_warning` | 627–651 | UI/view coordination | — |
-| `DecompositionWindow._on_cutoff_slider` | 653–663 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_trim_spinbox` | 665–672 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_trim_line_moved` | 674–703 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._refresh_threshold_guides` | 705–715 | UI/view coordination | — |
-| `DecompositionWindow._on_thresh_appr_spinbox` | 717–723 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_thresh_retr_spinbox` | 725–731 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_var_win_spinbox` | 733–739 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_thresh_line_moved` | 741–769 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_invols_offset_spinbox` | 771–777 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_invols_window_spinbox` | 779–785 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_anchor_spinbox` | 787–793 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._on_anchor_line_moved` | 795–832 | UI/event handler | `_db.update_analysis_param` |
-| `DecompositionWindow._sync_profile_owner` | 843–868 | helper/control flow | `_db.active_param_owner`, `_db.load_analysis_params` |
-| `DecompositionWindow._apply_profile` | 870–915 | helper/control flow | — |
-| `DecompositionWindow._f` | 877–881 | helper/control flow | — |
-| `DecompositionWindow._save_user_profile` | 923–944 | helper/control flow | `_db.active_param_owner`, `_db.merge_experimentalist_profile` |
-| `DecompositionWindow.update_curve` | 946–1111 | helper/control flow | `_db.active_param_owner`, `_db.get_file_id`, `_db.load_analysis_params`, `analyse_curve` |
-| `DecompositionWindow.showEvent` | 1115–1120 | UI/event handler | — |
-| `DecompositionWindow._on_nav_curve_selected` | 1122–1130 | UI/event handler | — |
-| `DecompositionWindow._clear` | 1132–1148 | helper/control flow | — |
-
-### `display_roi.py` (1133 lines)
-
-Imports app modules: `curve_loader`, `db`, `models`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_pipeline`, `style`, `widgets`. Top-level classes: `ROIWindow`.
+Imports app modules: `bandwidth_warning`, `curve_analysis`, `curve_loader`, `db`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `sample_marks`, `signal_processing`, `style`, `widgets`. Top-level classes: `DecompositionWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `ROIWindow.__init__` | 116–473 | construction/wiring | `_db.load_analysis_params` |
-| `ROIWindow.set_results` | 480–482 | state mutation | — |
-| `ROIWindow.update_curve` | 484–504 | helper/control flow | — |
-| `ROIWindow.showEvent` | 508–513 | UI/event handler | — |
-| `ROIWindow._on_nav_curve_selected` | 515–518 | UI/event handler | — |
-| `ROIWindow._recompute_and_draw` | 520–622 | helper/control flow | `_db.get_file_id`, `_db.load_analysis_params`, `compute_curve_events_coords` |
-| `ROIWindow._clear` | 624–631 | helper/control flow | — |
-| `ROIWindow._clear_multi` | 635–639 | helper/control flow | — |
-| `ROIWindow._draw_multi` | 641–677 | UI/view coordination | — |
-| `ROIWindow._clear_fx` | 681–687 | helper/control flow | — |
-| `ROIWindow._draw_fx` | 689–790 | UI/view coordination | `_db.get_file_id`, `_db.get_latest_event_map_params`, `_db.get_segment_override` |
-| `ROIWindow._on_manual_mode_toggled` | 794–799 | UI/event handler | — |
-| `ROIWindow._on_plot_clicked` | 801–835 | UI/event handler | `_db.get_file_id`, `_db.set_primary_segment_idx`, `_db.set_secondary_segment_idx` |
-| `ROIWindow._multi_status` | 837–850 | helper/control flow | — |
-| `ROIWindow._sync_profile_owner` | 861–896 | helper/control flow | `_db.active_param_owner`, `_db.load_analysis_params` |
-| `ROIWindow._apply_profile` | 898–941 | helper/control flow | — |
-| `ROIWindow._f` | 904–908 | helper/control flow | — |
-| `ROIWindow._save_user_profile` | 949–971 | helper/control flow | `_db.active_param_owner`, `_db.merge_experimentalist_profile` |
-| `ROIWindow._preview_window` | 983–985 | helper/control flow | — |
-| `ROIWindow._commit_window` | 987–991 | helper/control flow | `_db.update_analysis_param` |
-| `ROIWindow._preview_threshold` | 993–995 | helper/control flow | — |
-| `ROIWindow._commit_threshold` | 997–1006 | helper/control flow | `_db.update_analysis_param` |
-| `ROIWindow._preview_inner_threshold` | 1008–1010 | helper/control flow | — |
-| `ROIWindow._commit_inner_threshold` | 1012–1020 | helper/control flow | `_db.update_analysis_param` |
-| `ROIWindow._on_inner_line_moved` | 1022–1033 | UI/event handler | — |
-| `ROIWindow._preview_mask` | 1035–1037 | helper/control flow | — |
-| `ROIWindow._commit_mask` | 1039–1043 | helper/control flow | `_db.update_analysis_param` |
-| `ROIWindow._preview_onset` | 1045–1047 | helper/control flow | — |
-| `ROIWindow._commit_onset` | 1049–1053 | helper/control flow | `_db.update_analysis_param` |
-| `ROIWindow._on_detector_changed` | 1055–1070 | UI/event handler | `_db.update_analysis_param` |
-| `ROIWindow._preview_prominence` | 1072–1074 | helper/control flow | — |
-| `ROIWindow._commit_prominence` | 1076–1081 | helper/control flow | `_db.update_analysis_param` |
-| `ROIWindow._preview_distance` | 1083–1085 | helper/control flow | — |
-| `ROIWindow._commit_distance` | 1087–1092 | helper/control flow | `_db.update_analysis_param` |
-| `ROIWindow._recompute_current` | 1094–1097 | helper/control flow | — |
-| `ROIWindow._on_threshold_line_moved` | 1099–1110 | UI/event handler | — |
-| `ROIWindow._on_onset_line_moved` | 1112–1123 | UI/event handler | — |
-| `ROIWindow._set_file_label` | 1127–1133 | helper/control flow | — |
+| `_thresh_unit` | 67–69 | helper/control flow | — |
+| `_to_shown` | 72–73 | helper/control flow | — |
+| `_to_stored` | 76–77 | helper/control flow | — |
+| `_seed_threshold_box` | 80–96 | helper/control flow | — |
+| `DecompositionWindow.__init__` | 121–512 | construction/wiring | `_db.load_analysis_params` |
+| `DecompositionWindow._trace` | 415–416 | helper/control flow | — |
+| `DecompositionWindow._cutoff_index` | 518–528 | helper/control flow | — |
+| `DecompositionWindow._cutoff_text` | 530–534 | helper/control flow | — |
+| `DecompositionWindow._refresh_cutoff_limits` | 536–601 | UI/view coordination | — |
+| `DecompositionWindow._set_reach` | 559–569 | helper/control flow | — |
+| `DecompositionWindow._refresh_tau_hint` | 603–631 | UI/view coordination | — |
+| `DecompositionWindow._refresh_acq_filter_warning` | 633–657 | UI/view coordination | — |
+| `DecompositionWindow._on_cutoff_slider` | 659–669 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_trim_spinbox` | 671–678 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_trim_line_moved` | 680–709 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._refresh_threshold_guides` | 711–721 | UI/view coordination | — |
+| `DecompositionWindow._on_thresh_appr_spinbox` | 723–729 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_thresh_retr_spinbox` | 731–737 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_var_win_spinbox` | 739–745 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_thresh_line_moved` | 747–775 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_invols_offset_spinbox` | 777–783 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_invols_window_spinbox` | 785–791 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_anchor_spinbox` | 793–799 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._on_anchor_line_moved` | 801–838 | UI/event handler | `_db.update_analysis_param` |
+| `DecompositionWindow._sync_profile_owner` | 849–874 | helper/control flow | `_db.active_param_owner`, `_db.load_analysis_params` |
+| `DecompositionWindow._apply_profile` | 876–921 | helper/control flow | — |
+| `DecompositionWindow._f` | 883–887 | helper/control flow | — |
+| `DecompositionWindow._save_user_profile` | 929–950 | helper/control flow | `_db.active_param_owner`, `_db.merge_experimentalist_profile` |
+| `DecompositionWindow.update_curve` | 952–1117 | helper/control flow | `_db.active_param_owner`, `_db.get_file_id`, `_db.load_analysis_params`, `analyse_curve` |
+| `DecompositionWindow.showEvent` | 1121–1126 | UI/event handler | — |
+| `DecompositionWindow._on_nav_curve_selected` | 1128–1136 | UI/event handler | — |
+| `DecompositionWindow._clear` | 1138–1154 | helper/control flow | — |
+
+### `display_roi.py` (1142 lines)
+
+Imports app modules: `curve_loader`, `db`, `models`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_pipeline`, `sample_marks`, `style`, `widgets`. Top-level classes: `ROIWindow`.
+
+| Callable | Lines | Structural role | Direct app calls |
+|---|---:|---|---|
+| `ROIWindow.__init__` | 120–482 | construction/wiring | `_db.load_analysis_params` |
+| `ROIWindow.set_results` | 489–491 | state mutation | — |
+| `ROIWindow.update_curve` | 493–513 | helper/control flow | — |
+| `ROIWindow.showEvent` | 517–522 | UI/event handler | — |
+| `ROIWindow._on_nav_curve_selected` | 524–527 | UI/event handler | — |
+| `ROIWindow._recompute_and_draw` | 529–631 | helper/control flow | `_db.get_file_id`, `_db.load_analysis_params`, `compute_curve_events_coords` |
+| `ROIWindow._clear` | 633–640 | helper/control flow | — |
+| `ROIWindow._clear_multi` | 644–648 | helper/control flow | — |
+| `ROIWindow._draw_multi` | 650–686 | UI/view coordination | — |
+| `ROIWindow._clear_fx` | 690–696 | helper/control flow | — |
+| `ROIWindow._draw_fx` | 698–799 | UI/view coordination | `_db.get_file_id`, `_db.get_latest_event_map_params`, `_db.get_segment_override` |
+| `ROIWindow._on_manual_mode_toggled` | 803–808 | UI/event handler | — |
+| `ROIWindow._on_plot_clicked` | 810–844 | UI/event handler | `_db.get_file_id`, `_db.set_primary_segment_idx`, `_db.set_secondary_segment_idx` |
+| `ROIWindow._multi_status` | 846–859 | helper/control flow | — |
+| `ROIWindow._sync_profile_owner` | 870–905 | helper/control flow | `_db.active_param_owner`, `_db.load_analysis_params` |
+| `ROIWindow._apply_profile` | 907–950 | helper/control flow | — |
+| `ROIWindow._f` | 913–917 | helper/control flow | — |
+| `ROIWindow._save_user_profile` | 958–980 | helper/control flow | `_db.active_param_owner`, `_db.merge_experimentalist_profile` |
+| `ROIWindow._preview_window` | 992–994 | helper/control flow | — |
+| `ROIWindow._commit_window` | 996–1000 | helper/control flow | `_db.update_analysis_param` |
+| `ROIWindow._preview_threshold` | 1002–1004 | helper/control flow | — |
+| `ROIWindow._commit_threshold` | 1006–1015 | helper/control flow | `_db.update_analysis_param` |
+| `ROIWindow._preview_inner_threshold` | 1017–1019 | helper/control flow | — |
+| `ROIWindow._commit_inner_threshold` | 1021–1029 | helper/control flow | `_db.update_analysis_param` |
+| `ROIWindow._on_inner_line_moved` | 1031–1042 | UI/event handler | — |
+| `ROIWindow._preview_mask` | 1044–1046 | helper/control flow | — |
+| `ROIWindow._commit_mask` | 1048–1052 | helper/control flow | `_db.update_analysis_param` |
+| `ROIWindow._preview_onset` | 1054–1056 | helper/control flow | — |
+| `ROIWindow._commit_onset` | 1058–1062 | helper/control flow | `_db.update_analysis_param` |
+| `ROIWindow._on_detector_changed` | 1064–1079 | UI/event handler | `_db.update_analysis_param` |
+| `ROIWindow._preview_prominence` | 1081–1083 | helper/control flow | — |
+| `ROIWindow._commit_prominence` | 1085–1090 | helper/control flow | `_db.update_analysis_param` |
+| `ROIWindow._preview_distance` | 1092–1094 | helper/control flow | — |
+| `ROIWindow._commit_distance` | 1096–1101 | helper/control flow | `_db.update_analysis_param` |
+| `ROIWindow._recompute_current` | 1103–1106 | helper/control flow | — |
+| `ROIWindow._on_threshold_line_moved` | 1108–1119 | UI/event handler | — |
+| `ROIWindow._on_onset_line_moved` | 1121–1132 | UI/event handler | — |
+| `ROIWindow._set_file_label` | 1136–1142 | helper/control flow | — |
 
 ### `dist_fit_core.py` (727 lines)
 
@@ -1161,22 +1178,23 @@ Imports app modules: `db`, `provenance`, `quantities`. Top-level classes: `Expor
 | `ExportGroup.message` | 291–296 | helper/control flow | — |
 | `export_group` | 300–330 | helper/control flow | — |
 
-### `fft_window.py` (402 lines)
+### `fft_window.py` (407 lines)
 
-Imports app modules: `curve_loader`, `qt_utils`, `quantities`, `style`. Top-level classes: `FftWindow`.
+Imports app modules: `curve_loader`, `qt_utils`, `quantities`, `sample_marks`, `style`, `widgets`. Top-level classes: `FftWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `FftWindow.__init__` | 61–206 | construction/wiring | — |
-| `FftWindow._sync_roi_from_defl` | 210–215 | helper/control flow | — |
-| `FftWindow._sync_roi_from_piezo` | 217–222 | helper/control flow | — |
-| `FftWindow._on_log_toggle` | 226–229 | UI/event handler | — |
-| `FftWindow._on_notch_toggled` | 233–236 | UI/event handler | — |
-| `FftWindow._on_notch_param_changed` | 238–240 | UI/event handler | — |
-| `FftWindow._notch_sos` | 242–279 | helper/control flow | — |
-| `FftWindow.update_curve` | 283–334 | helper/control flow | — |
-| `FftWindow._update_fft` | 338–394 | UI/view coordination | — |
-| `FftWindow._clear` | 396–401 | helper/control flow | — |
+| `FftWindow.__init__` | 63–211 | construction/wiring | — |
+| `FftWindow._trace` | 179–180 | helper/control flow | — |
+| `FftWindow._sync_roi_from_defl` | 215–220 | helper/control flow | — |
+| `FftWindow._sync_roi_from_piezo` | 222–227 | helper/control flow | — |
+| `FftWindow._on_log_toggle` | 231–234 | UI/event handler | — |
+| `FftWindow._on_notch_toggled` | 238–241 | UI/event handler | — |
+| `FftWindow._on_notch_param_changed` | 243–245 | UI/event handler | — |
+| `FftWindow._notch_sos` | 247–284 | helper/control flow | — |
+| `FftWindow.update_curve` | 288–339 | helper/control flow | — |
+| `FftWindow._update_fft` | 343–399 | UI/view coordination | — |
+| `FftWindow._clear` | 401–406 | helper/control flow | — |
 
 ### `gmm_fit_core.py` (147 lines)
 
@@ -1229,31 +1247,31 @@ Imports app modules: none. Top-level classes: `HistogramBins`.
 | `full_range_bins` | 177–229 | helper/control flow | — |
 | `counts_in_range` | 232–244 | helper/control flow | — |
 
-### `isoforce_window.py` (608 lines)
+### `isoforce_window.py` (610 lines)
 
-Imports app modules: `curve_loader`, `db`, `export_utils`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_pipeline`, `style`. Top-level classes: `IsoforceWindow`.
+Imports app modules: `curve_loader`, `db`, `export_utils`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_pipeline`, `sample_marks`, `style`, `widgets`. Top-level classes: `IsoforceWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `IsoforceWindow.__init__` | 91–240 | construction/wiring | — |
-| `IsoforceWindow.update_event_list` | 242–272 | helper/control flow | — |
-| `IsoforceWindow.export_provenance` | 276–283 | helper/control flow | — |
-| `IsoforceWindow._on_export` | 285–329 | UI/event handler | `_db.normalize_path` |
-| `IsoforceWindow._find_dashboard` | 333–338 | helper/control flow | — |
-| `IsoforceWindow._on_go_to_scan` | 340–350 | UI/event handler | — |
-| `IsoforceWindow._on_go_to_roi` | 352–366 | UI/event handler | — |
-| `IsoforceWindow._on_go_to_dashboard` | 368–371 | UI/event handler | — |
-| `IsoforceWindow._warn_no_target` | 373–374 | helper/control flow | — |
-| `IsoforceWindow._go_prev` | 378–382 | helper/control flow | — |
-| `IsoforceWindow._go_next` | 384–388 | helper/control flow | — |
-| `IsoforceWindow._on_track_selected` | 390–395 | UI/event handler | — |
-| `IsoforceWindow._toggle_auto` | 399–408 | helper/control flow | — |
-| `IsoforceWindow._stop_auto` | 410–413 | helper/control flow | — |
-| `IsoforceWindow._auto_step` | 415–429 | helper/control flow | — |
-| `IsoforceWindow._on_speed_change` | 431–434 | UI/event handler | — |
-| `IsoforceWindow._show_current` | 436–451 | helper/control flow | — |
-| `IsoforceWindow._clear_plots` | 453–459 | helper/control flow | — |
-| `IsoforceWindow._load_and_mark` | 463–608 | UI/view coordination | `_db.get_file_id`, `_db.get_latest_event_map_params`, `_db.get_segment_override`, `_db.load_analysis_params`, `compute_curve_events_coords` |
+| `IsoforceWindow.__init__` | 92–242 | construction/wiring | — |
+| `IsoforceWindow.update_event_list` | 244–274 | helper/control flow | — |
+| `IsoforceWindow.export_provenance` | 278–285 | helper/control flow | — |
+| `IsoforceWindow._on_export` | 287–331 | UI/event handler | `_db.normalize_path` |
+| `IsoforceWindow._find_dashboard` | 335–340 | helper/control flow | — |
+| `IsoforceWindow._on_go_to_scan` | 342–352 | UI/event handler | — |
+| `IsoforceWindow._on_go_to_roi` | 354–368 | UI/event handler | — |
+| `IsoforceWindow._on_go_to_dashboard` | 370–373 | UI/event handler | — |
+| `IsoforceWindow._warn_no_target` | 375–376 | helper/control flow | — |
+| `IsoforceWindow._go_prev` | 380–384 | helper/control flow | — |
+| `IsoforceWindow._go_next` | 386–390 | helper/control flow | — |
+| `IsoforceWindow._on_track_selected` | 392–397 | UI/event handler | — |
+| `IsoforceWindow._toggle_auto` | 401–410 | helper/control flow | — |
+| `IsoforceWindow._stop_auto` | 412–415 | helper/control flow | — |
+| `IsoforceWindow._auto_step` | 417–431 | helper/control flow | — |
+| `IsoforceWindow._on_speed_change` | 433–436 | UI/event handler | — |
+| `IsoforceWindow._show_current` | 438–453 | helper/control flow | — |
+| `IsoforceWindow._clear_plots` | 455–461 | helper/control flow | — |
+| `IsoforceWindow._load_and_mark` | 465–610 | UI/view coordination | `_db.get_file_id`, `_db.get_latest_event_map_params`, `_db.get_segment_override`, `_db.load_analysis_params`, `compute_curve_events_coords` |
 
 ### `ledger.py` (256 lines)
 
@@ -1440,17 +1458,18 @@ Imports app modules: `base_2dh_window`, `event_processor`, `mean_curve_window`, 
 | `Physical2DHWindow._on_refresh_extra` | 309–310 | UI/event handler | — |
 | `Physical2DHWindow._open_mean_curve` | 312–365 | helper/control flow | — |
 
-### `provenance.py` (95 lines)
+### `provenance.py` (154 lines)
 
 Imports app modules: `__version__`, `_build_stamp`. Top-level classes: none.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `app_version` | 25–27 | helper/control flow | — |
-| `_frozen_build_commit` | 30–36 | helper/control flow | — |
-| `_checkout_root` | 39–45 | helper/control flow | — |
-| `code_version` | 49–87 | helper/control flow | — |
-| `cache_version` | 90–95 | helper/control flow | — |
+| `app_version` | 26–28 | helper/control flow | — |
+| `_frozen_build_commit` | 31–37 | helper/control flow | — |
+| `_checkout_root` | 40–46 | helper/control flow | — |
+| `code_version` | 50–88 | helper/control flow | — |
+| `_package_source_digest` | 91–123 | helper/control flow | — |
+| `cache_version` | 127–154 | helper/control flow | — |
 
 ### `qt_utils.py` (376 lines)
 
@@ -1501,44 +1520,44 @@ Imports app modules: none. Top-level classes: `SiUnit`, `Quantity`.
 | `configure_spinbox` | 369–394 | helper/control flow | — |
 | `audit_stored_precision` | 399–423 | helper/control flow | — |
 
-### `rawcurve_window.py` (975 lines)
+### `rawcurve_window.py` (979 lines)
 
-Imports app modules: `curve_analysis`, `curve_loader`, `db`, `decomposition_window`, `display_roi`, `fft_window`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_events`, `roi_pipeline`, `style`. Top-level classes: `RawCurveWindow`.
+Imports app modules: `curve_analysis`, `curve_loader`, `db`, `decomposition_window`, `display_roi`, `fft_window`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_events`, `roi_pipeline`, `sample_marks`, `style`, `widgets`. Top-level classes: `RawCurveWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `RawCurveWindow.__init__` | 107–357 | construction/wiring | — |
-| `RawCurveWindow.go_to_path` | 359–379 | helper/control flow | `_db.enqueue_files`, `_db.get_file_id` |
-| `RawCurveWindow._toggle_decomp` | 381–396 | helper/control flow | — |
-| `RawCurveWindow._toggle_fft` | 398–408 | helper/control flow | — |
-| `RawCurveWindow.set_roi_window` | 410–413 | state mutation | — |
-| `RawCurveWindow.open_roi_window` | 415–422 | helper/control flow | — |
-| `RawCurveWindow._show_roi_window` | 424–434 | helper/control flow | — |
-| `RawCurveWindow._on_analysis_params_changed` | 436–439 | UI/event handler | — |
-| `RawCurveWindow._detach_live_work` | 445–455 | helper/control flow | — |
-| `RawCurveWindow._attach_live_work` | 457–469 | helper/control flow | — |
-| `RawCurveWindow.closeEvent` | 471–473 | UI/event handler | — |
-| `RawCurveWindow.showEvent` | 475–477 | UI/event handler | — |
-| `RawCurveWindow._on_worker_playhead` | 481–503 | UI/event handler | `_db.get_connection` |
-| `RawCurveWindow._on_worker_file_done` | 508–522 | UI/event handler | — |
-| `RawCurveWindow._on_worker_file_error` | 524–528 | UI/event handler | — |
-| `RawCurveWindow._on_worker_data_unavailable` | 530–536 | UI/event handler | — |
-| `RawCurveWindow._on_worker_queue_empty` | 538–540 | UI/event handler | — |
-| `RawCurveWindow._show_worker_hint` | 542–547 | helper/control flow | — |
-| `RawCurveWindow._do_draw` | 551–609 | helper/control flow | — |
-| `RawCurveWindow._show_load_failure` | 611–621 | helper/control flow | — |
-| `RawCurveWindow._show_overlay_error` | 623–627 | helper/control flow | — |
-| `RawCurveWindow._draw_persisted_overlays` | 629–686 | UI/view coordination | `_db.get_analysis_result`, `_db.get_analysis_results_multi`, `_db.get_event_map`, `_db.load_analysis_params` |
-| `RawCurveWindow._clear_markers` | 688–701 | helper/control flow | — |
-| `RawCurveWindow._draw_contact_markers` | 703–721 | UI/view coordination | — |
-| `RawCurveWindow._draw_event_markers` | 723–727 | UI/view coordination | — |
-| `RawCurveWindow._draw_event_marker_coords` | 729–748 | UI/view coordination | — |
-| `RawCurveWindow._draw_derived` | 750–865 | UI/view coordination | `_db.get_file_id`, `_db.load_analysis_params`, `analyse_curve`, `compute_curve_events_coords` |
-| `RawCurveWindow._on_axes_changed` | 869–883 | UI/event handler | — |
-| `RawCurveWindow._ramp_series` | 886–898 | helper/control flow | — |
-| `RawCurveWindow._trace_series` | 901–904 | helper/control flow | — |
-| `RawCurveWindow._plot_axes` | 906–935 | helper/control flow | — |
-| `RawCurveWindow._draw` | 937–975 | UI/view coordination | — |
+| `RawCurveWindow.__init__` | 109–361 | construction/wiring | — |
+| `RawCurveWindow.go_to_path` | 363–383 | helper/control flow | `_db.enqueue_files`, `_db.get_file_id` |
+| `RawCurveWindow._toggle_decomp` | 385–400 | helper/control flow | — |
+| `RawCurveWindow._toggle_fft` | 402–412 | helper/control flow | — |
+| `RawCurveWindow.set_roi_window` | 414–417 | state mutation | — |
+| `RawCurveWindow.open_roi_window` | 419–426 | helper/control flow | — |
+| `RawCurveWindow._show_roi_window` | 428–438 | helper/control flow | — |
+| `RawCurveWindow._on_analysis_params_changed` | 440–443 | UI/event handler | — |
+| `RawCurveWindow._detach_live_work` | 449–459 | helper/control flow | — |
+| `RawCurveWindow._attach_live_work` | 461–473 | helper/control flow | — |
+| `RawCurveWindow.closeEvent` | 475–477 | UI/event handler | — |
+| `RawCurveWindow.showEvent` | 479–481 | UI/event handler | — |
+| `RawCurveWindow._on_worker_playhead` | 485–507 | UI/event handler | `_db.get_connection` |
+| `RawCurveWindow._on_worker_file_done` | 512–526 | UI/event handler | — |
+| `RawCurveWindow._on_worker_file_error` | 528–532 | UI/event handler | — |
+| `RawCurveWindow._on_worker_data_unavailable` | 534–540 | UI/event handler | — |
+| `RawCurveWindow._on_worker_queue_empty` | 542–544 | UI/event handler | — |
+| `RawCurveWindow._show_worker_hint` | 546–551 | helper/control flow | — |
+| `RawCurveWindow._do_draw` | 555–613 | helper/control flow | — |
+| `RawCurveWindow._show_load_failure` | 615–625 | helper/control flow | — |
+| `RawCurveWindow._show_overlay_error` | 627–631 | helper/control flow | — |
+| `RawCurveWindow._draw_persisted_overlays` | 633–690 | UI/view coordination | `_db.get_analysis_result`, `_db.get_analysis_results_multi`, `_db.get_event_map`, `_db.load_analysis_params` |
+| `RawCurveWindow._clear_markers` | 692–705 | helper/control flow | — |
+| `RawCurveWindow._draw_contact_markers` | 707–725 | UI/view coordination | — |
+| `RawCurveWindow._draw_event_markers` | 727–731 | UI/view coordination | — |
+| `RawCurveWindow._draw_event_marker_coords` | 733–752 | UI/view coordination | — |
+| `RawCurveWindow._draw_derived` | 754–869 | UI/view coordination | `_db.get_file_id`, `_db.load_analysis_params`, `analyse_curve`, `compute_curve_events_coords` |
+| `RawCurveWindow._on_axes_changed` | 873–887 | UI/event handler | — |
+| `RawCurveWindow._ramp_series` | 890–902 | helper/control flow | — |
+| `RawCurveWindow._trace_series` | 905–908 | helper/control flow | — |
+| `RawCurveWindow._plot_axes` | 910–939 | helper/control flow | — |
+| `RawCurveWindow._draw` | 941–979 | UI/view coordination | — |
 
 ### `regression.py` (220 lines)
 
@@ -1672,6 +1691,19 @@ Imports app modules: `db`. Top-level classes: `ReportedSegmentChoice`, `SegmentO
 | `resolve_segment_override` | 122–132 | read/query/resolve | — |
 | `resolve_isoforce_pair` | 135–153 | read/query/resolve | — |
 
+### `sample_marks.py` (147 lines)
+
+Imports app modules: `db`, `style`. Top-level classes: `_Broadcast`.
+
+| Callable | Lines | Structural role | Direct app calls |
+|---|---:|---|---|
+| `dots` | 83–85 | helper/control flow | — |
+| `load` | 88–101 | helper/control flow | `_db.get_app_setting` |
+| `set_dots` | 104–114 | state mutation | `_db.set_app_setting` |
+| `trace` | 117–128 | helper/control flow | — |
+| `_dress` | 131–138 | helper/control flow | — |
+| `_apply` | 141–147 | helper/control flow | — |
+
 ### `scanner.py` (757 lines)
 
 Imports app modules: `curve_loader`, `db`. Top-level classes: none.
@@ -1753,42 +1785,43 @@ Imports app modules: none. Top-level classes: `BaselineFit`, `InvOLSFit`, `Decom
 | `find_begin_in_contact` | 393–436 | computation/transformation | — |
 | `find_end_in_contact` | 441–479 | computation/transformation | — |
 
-### `style.py` (635 lines)
+### `style.py` (677 lines)
 
 Imports app modules: none. Top-level classes: none.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `rgba` | 203–213 | helper/control flow | — |
-| `data_pen` | 216–219 | helper/control flow | — |
-| `model_pen` | 222–225 | helper/control flow | — |
-| `guide_pen` | 228–231 | helper/control flow | — |
-| `hair_pen` | 234–236 | helper/control flow | — |
-| `signature_pen` | 239–241 | helper/control flow | — |
-| `marker_brush` | 244–245 | helper/control flow | — |
-| `band_brush` | 252–254 | helper/control flow | — |
-| `scatter_brush` | 257–258 | helper/control flow | — |
-| `casing_pen` | 283–284 | helper/control flow | — |
-| `overlay_pen` | 287–288 | helper/control flow | — |
-| `add_cased_curve` | 291–296 | state mutation | — |
-| `series_line` | 301–302 | helper/control flow | — |
-| `series_labeled` | 305–306 | helper/control flow | — |
-| `series_dashed` | 309–312 | helper/control flow | — |
-| `roi_hue` | 315–326 | helper/control flow | — |
-| `roi_segment_qcolor` | 329–342 | helper/control flow | `roi_hue` |
-| `intensity_lut` | 355–360 | helper/control flow | — |
-| `pca_loading_colormap` | 375–381 | helper/control flow | — |
-| `apply_plot_defaults` | 388–392 | helper/control flow | — |
-| `font` | 447–458 | helper/control flow | — |
-| `row_tint` | 484–488 | helper/control flow | — |
-| `selection_qss` | 491–495 | helper/control flow | — |
-| `qss_text` | 502–513 | helper/control flow | — |
-| `qss_emphasis` | 523–526 | helper/control flow | — |
-| `qss_inset` | 529–534 | helper/control flow | — |
-| `html_text` | 537–542 | helper/control flow | — |
-| `var` | 557–564 | helper/control flow | — |
-| `pm` | 578–579 | helper/control flow | — |
-| `mathify` | 622–635 | helper/control flow | — |
+| `rgba` | 213–223 | helper/control flow | — |
+| `data_pen` | 226–237 | helper/control flow | — |
+| `data_marks` | 240–261 | helper/control flow | — |
+| `model_pen` | 264–267 | helper/control flow | — |
+| `guide_pen` | 270–273 | helper/control flow | — |
+| `hair_pen` | 276–278 | helper/control flow | — |
+| `signature_pen` | 281–283 | helper/control flow | — |
+| `marker_brush` | 286–287 | helper/control flow | — |
+| `band_brush` | 294–296 | helper/control flow | — |
+| `scatter_brush` | 299–300 | helper/control flow | — |
+| `casing_pen` | 325–326 | helper/control flow | — |
+| `overlay_pen` | 329–330 | helper/control flow | — |
+| `add_cased_curve` | 333–338 | state mutation | — |
+| `series_line` | 343–344 | helper/control flow | — |
+| `series_labeled` | 347–348 | helper/control flow | — |
+| `series_dashed` | 351–354 | helper/control flow | — |
+| `roi_hue` | 357–368 | helper/control flow | — |
+| `roi_segment_qcolor` | 371–384 | helper/control flow | `roi_hue` |
+| `intensity_lut` | 397–402 | helper/control flow | — |
+| `pca_loading_colormap` | 417–423 | helper/control flow | — |
+| `apply_plot_defaults` | 430–434 | helper/control flow | — |
+| `font` | 489–500 | helper/control flow | — |
+| `row_tint` | 526–530 | helper/control flow | — |
+| `selection_qss` | 533–537 | helper/control flow | — |
+| `qss_text` | 544–555 | helper/control flow | — |
+| `qss_emphasis` | 565–568 | helper/control flow | — |
+| `qss_inset` | 571–576 | helper/control flow | — |
+| `html_text` | 579–584 | helper/control flow | — |
+| `var` | 599–606 | helper/control flow | — |
+| `pm` | 620–621 | helper/control flow | — |
+| `mathify` | 664–677 | helper/control flow | — |
 
 ### `trace_overlay_panel.py` (153 lines)
 
@@ -1858,9 +1891,9 @@ Imports app modules: `db`, `quantities`, `roi_pipeline`. Top-level classes: `Var
 | `values` | 302–371 | helper/control flow | `_db.get_derived_results_bulk_latest`, `_db.get_file_columns`, `_db.normalize_path` |
 | `columns` | 374–392 | helper/control flow | `_db.normalize_path` |
 
-### `widgets.py` (329 lines)
+### `widgets.py` (357 lines)
 
-Imports app modules: `clustering`, `style`. Top-level classes: `FlowLayout`, `LabeledControl`, `CollapsibleSection`, `ClusterColourBar`.
+Imports app modules: `clustering`, `sample_marks`, `style`. Top-level classes: `FlowLayout`, `LabeledControl`, `SampleMarksToggle`, `CollapsibleSection`, `ClusterColourBar`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
@@ -1877,49 +1910,51 @@ Imports app modules: `clustering`, `style`. Top-level classes: `FlowLayout`, `La
 | `FlowLayout.minimumSize` | 81–89 | helper/control flow | — |
 | `FlowLayout._layout` | 93–121 | helper/control flow | — |
 | `LabeledControl.__init__` | 131–140 | construction/wiring | — |
-| `CollapsibleSection.__init__` | 157–183 | construction/wiring | — |
-| `CollapsibleSection._apply_collapse_height` | 188–198 | helper/control flow | — |
-| `CollapsibleSection.is_expanded` | 200–201 | helper/control flow | — |
-| `CollapsibleSection.header_height` | 203–204 | helper/control flow | — |
-| `CollapsibleSection._on_toggled` | 206–212 | UI/event handler | — |
-| `ClusterColourBar.__init__` | 234–266 | construction/wiring | — |
-| `ClusterColourBar.is_active` | 270–272 | helper/control flow | — |
-| `ClusterColourBar.refresh` | 274–301 | helper/control flow | — |
-| `ClusterColourBar.legend_text` | 303–310 | helper/control flow | — |
-| `ClusterColourBar._on_clear` | 312–313 | UI/event handler | — |
-| `ClusterColourBar._on_registry_changed` | 315–319 | UI/event handler | — |
-| `ClusterColourBar.closeEvent` | 321–323 | UI/event handler | — |
-| `ClusterColourBar.detach` | 325–329 | helper/control flow | — |
+| `SampleMarksToggle.__init__` | 153–163 | construction/wiring | — |
+| `SampleMarksToggle._follow` | 165–168 | helper/control flow | — |
+| `CollapsibleSection.__init__` | 185–211 | construction/wiring | — |
+| `CollapsibleSection._apply_collapse_height` | 216–226 | helper/control flow | — |
+| `CollapsibleSection.is_expanded` | 228–229 | helper/control flow | — |
+| `CollapsibleSection.header_height` | 231–232 | helper/control flow | — |
+| `CollapsibleSection._on_toggled` | 234–240 | UI/event handler | — |
+| `ClusterColourBar.__init__` | 262–294 | construction/wiring | — |
+| `ClusterColourBar.is_active` | 298–300 | helper/control flow | — |
+| `ClusterColourBar.refresh` | 302–329 | helper/control flow | — |
+| `ClusterColourBar.legend_text` | 331–338 | helper/control flow | — |
+| `ClusterColourBar._on_clear` | 340–341 | UI/event handler | — |
+| `ClusterColourBar._on_registry_changed` | 343–347 | UI/event handler | — |
+| `ClusterColourBar.closeEvent` | 349–351 | UI/event handler | — |
+| `ClusterColourBar.detach` | 353–357 | helper/control flow | — |
 
-### `wlc_view_window.py` (796 lines)
+### `wlc_view_window.py` (801 lines)
 
-Imports app modules: `clustering`, `curve_loader`, `db`, `export_utils`, `models`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_pipeline`, `style`. Top-level classes: `WlcViewWindow`.
+Imports app modules: `clustering`, `curve_loader`, `db`, `export_utils`, `models`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_pipeline`, `sample_marks`, `style`, `widgets`. Top-level classes: `WlcViewWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `WlcViewWindow.__init__` | 76–323 | construction/wiring | — |
-| `WlcViewWindow.update_event_list` | 325–344 | helper/control flow | — |
-| `WlcViewWindow.export_provenance` | 348–354 | helper/control flow | — |
-| `WlcViewWindow._on_export` | 356–391 | UI/event handler | `assemble_rows` |
-| `WlcViewWindow._find_dashboard` | 395–402 | helper/control flow | — |
-| `WlcViewWindow._on_go_to_scan` | 404–416 | UI/event handler | — |
-| `WlcViewWindow._on_go_to_roi` | 418–432 | UI/event handler | — |
-| `WlcViewWindow._on_go_to_dashboard` | 434–439 | UI/event handler | — |
-| `WlcViewWindow._warn_no_target` | 441–443 | helper/control flow | — |
-| `WlcViewWindow._go_prev` | 447–451 | helper/control flow | — |
-| `WlcViewWindow._go_next` | 453–457 | helper/control flow | — |
-| `WlcViewWindow._on_track_selected` | 459–464 | UI/event handler | — |
-| `WlcViewWindow._toggle_auto` | 468–477 | helper/control flow | — |
-| `WlcViewWindow._stop_auto` | 479–482 | helper/control flow | — |
-| `WlcViewWindow._auto_step` | 484–498 | helper/control flow | — |
-| `WlcViewWindow._on_speed_change` | 500–503 | UI/event handler | — |
-| `WlcViewWindow._show_current` | 505–520 | helper/control flow | — |
-| `WlcViewWindow._clear_plots` | 522–534 | helper/control flow | — |
-| `WlcViewWindow._on_manual_mode_toggled` | 538–543 | UI/event handler | — |
-| `WlcViewWindow._on_plot_clicked` | 545–577 | UI/event handler | `_db.set_primary_segment_idx`, `_db.set_secondary_segment_idx` |
-| `WlcViewWindow._load_and_fit` | 581–743 | UI/view coordination | `_db.get_file_id`, `_db.get_latest_event_map_params`, `_db.get_segment_override`, `_db.load_analysis_params`, `compute_curve_events_coords` |
-| `WlcViewWindow._draw_fit_ci` | 747–786 | UI/view coordination | — |
-| `WlcViewWindow._update_2dh_status` | 792–796 | UI/view coordination | — |
+| `WlcViewWindow.__init__` | 78–328 | construction/wiring | — |
+| `WlcViewWindow.update_event_list` | 330–349 | helper/control flow | — |
+| `WlcViewWindow.export_provenance` | 353–359 | helper/control flow | — |
+| `WlcViewWindow._on_export` | 361–396 | UI/event handler | `assemble_rows` |
+| `WlcViewWindow._find_dashboard` | 400–407 | helper/control flow | — |
+| `WlcViewWindow._on_go_to_scan` | 409–421 | UI/event handler | — |
+| `WlcViewWindow._on_go_to_roi` | 423–437 | UI/event handler | — |
+| `WlcViewWindow._on_go_to_dashboard` | 439–444 | UI/event handler | — |
+| `WlcViewWindow._warn_no_target` | 446–448 | helper/control flow | — |
+| `WlcViewWindow._go_prev` | 452–456 | helper/control flow | — |
+| `WlcViewWindow._go_next` | 458–462 | helper/control flow | — |
+| `WlcViewWindow._on_track_selected` | 464–469 | UI/event handler | — |
+| `WlcViewWindow._toggle_auto` | 473–482 | helper/control flow | — |
+| `WlcViewWindow._stop_auto` | 484–487 | helper/control flow | — |
+| `WlcViewWindow._auto_step` | 489–503 | helper/control flow | — |
+| `WlcViewWindow._on_speed_change` | 505–508 | UI/event handler | — |
+| `WlcViewWindow._show_current` | 510–525 | helper/control flow | — |
+| `WlcViewWindow._clear_plots` | 527–539 | helper/control flow | — |
+| `WlcViewWindow._on_manual_mode_toggled` | 543–548 | UI/event handler | — |
+| `WlcViewWindow._on_plot_clicked` | 550–582 | UI/event handler | `_db.set_primary_segment_idx`, `_db.set_secondary_segment_idx` |
+| `WlcViewWindow._load_and_fit` | 586–748 | UI/view coordination | `_db.get_file_id`, `_db.get_latest_event_map_params`, `_db.get_segment_override`, `_db.load_analysis_params`, `compute_curve_events_coords` |
+| `WlcViewWindow._draw_fit_ci` | 752–791 | UI/view coordination | — |
+| `WlcViewWindow._update_2dh_status` | 797–801 | UI/view coordination | — |
 
 ## Structural observations for red-team follow-up
 

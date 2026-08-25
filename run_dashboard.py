@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from smfs_catalog import crashlog as _crashlog
 from smfs_catalog import db as _db
+from smfs_catalog import sample_marks as _sample_marks
 from smfs_catalog.dashboard_window import DashboardWindow
 
 XPRA_DISPLAY = ":100"
@@ -162,6 +163,9 @@ def main(db_path: str = _db.DEFAULT_DB_PATH) -> None:
     # DB copied from another machine would look native the instant we open it.
     machine_warning = _db.check_db_machine(db_path)
     _db.initialise(db_path)
+    # Before any window builds a plot, so the first curve drawn is already in
+    # the mode this catalog was left in.
+    _sample_marks.load(db_path)
     app = QApplication(sys.argv)
     _crashlog.connect_clean_exit(app)
     icon_path = resource_path("smfs_catalog", "assets", "icons", "icon.png")

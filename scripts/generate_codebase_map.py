@@ -24,7 +24,7 @@ GROUPS = {
     "L2 exploration and gating": {"variables", "criteria_gate", "criteria_dialog", "variable_window", "categorical_window", "scatter_window", "event_summary_window", "clustering", "pca_window"},
     "L3/L4 models, fits, and products": {"models", "regression", "histogram_binning", "event_processor", "dist_fit_core", "dist_fit_window", "gmm_fit_core", "gmm_fit_window", "base_2dh_window", "normalized_2dh_window", "physical_2dh_window", "mean_curve_window", "wlc_view_window", "isoforce_window", "export_utils", "ledger"},
     "Inspection and diagnostics UI": {"rawcurve_window", "decomposition_window", "display_roi", "fft_window", "class_lineplot_window", "trace_overlay_panel"},
-    "Cross-cutting infrastructure": {"bandwidth_warning", "quantities", "style", "qt_utils", "scope", "date_picker_dialog", "crashlog", "utils", "__init__"},
+    "Cross-cutting infrastructure": {"bandwidth_warning", "quantities", "style", "sample_marks", "qt_utils", "scope", "date_picker_dialog", "crashlog", "utils", "__init__"},
 }
 
 

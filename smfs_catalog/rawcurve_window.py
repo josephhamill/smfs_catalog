@@ -34,7 +34,9 @@ from .provenance import cache_version
 from .decomposition_window import DecompositionWindow
 from .fft_window import FftWindow
 from .navigator_bar import NavigatorBar
+from . import sample_marks
 from . import style
+from .widgets import SampleMarksToggle
 from .qt_utils import (
     fit_on_screen,
     _make_session_header,
@@ -217,6 +219,8 @@ class RawCurveWindow(QWidget):
         # where population selection and export manifests preserve scope.
         ctrl_layout.addStretch()
 
+        ctrl_layout.addWidget(SampleMarksToggle())
+
         root.addWidget(ctrl)
 
         # ── Horizontal splitter: plot | metadata ──────────────────────────────
@@ -233,15 +237,15 @@ class RawCurveWindow(QWidget):
         _legend.anchor(itemPos=(0.5, 0.5), parentPos=(0.5, 0.5))
         self._plot.showGrid(x=True, y=True, alpha=0.2)
 
-        self._curve_appr = self._plot.plot(
-            [], [], pen=style.data_pen(style.SIG_APPROACH), name="approach"
+        self._curve_appr = sample_marks.trace(
+            self._plot, color=style.SIG_APPROACH, name="approach"
         )
-        self._curve_retr = self._plot.plot(
-            [], [], pen=style.data_pen(style.SIG_RETRACT), name="retract"
+        self._curve_retr = sample_marks.trace(
+            self._plot, color=style.SIG_RETRACT, name="retract"
         )
         # One series for a curve with no approach/retract split to make.
-        self._curve_raw = self._plot.plot(
-            [], [], pen=style.data_pen(style.SIG_RETRACT), name="trace"
+        self._curve_raw = sample_marks.trace(
+            self._plot, color=style.SIG_RETRACT, name="trace"
         )
         # Contact marker lines — added/removed each draw, None when not shown
         self._contact_appr_line = None   # vertical dashed line: contact onset (approach)
