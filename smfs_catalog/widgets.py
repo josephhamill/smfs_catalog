@@ -208,6 +208,7 @@ class CollapsibleSection(QWidget):
         outer.addWidget(self._body)
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._expanded_min_h = 0
         self._apply_collapse_height(expanded)
 
     # Qt's "max widget size" sentinel — restores unconstrained height.
@@ -216,14 +217,18 @@ class CollapsibleSection(QWidget):
     def _apply_collapse_height(self, expanded: bool) -> None:
         """
         Collapse must actually free space (inside a splitter, hiding the body
-        alone leaves the section's old size reserved).  When collapsed we cap
-        the whole section to the header height so siblings reclaim the room;
-        when expanded we lift the cap so it can grow / be resized again.
+        alone leaves the section's old size reserved).  Both bounds move: a
+        minimum height set by the host outranks the cap and would hold the
+        collapsed section open at that minimum.  The host's minimum is
+        remembered so expanding restores it.
         """
         if expanded:
             self.setMaximumHeight(self._UNCONSTRAINED)
+            self.setMinimumHeight(self._expanded_min_h)
         else:
-            self.setMaximumHeight(self._toggle.sizeHint().height() + 4)
+            self._expanded_min_h = self.minimumHeight()
+            self.setMinimumHeight(self.header_height())
+            self.setMaximumHeight(self.header_height())
 
     def is_expanded(self) -> bool:
         return self._toggle.isChecked()
