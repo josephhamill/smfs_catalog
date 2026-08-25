@@ -24,8 +24,6 @@ from .analysis_params import (
     AnalysisParams,
 )
 
-SCHEMA_VERSION = 10
-
 APP_NAME = "smfs_catalog"
 DB_FILENAME = "smfs_catalog.db"
 
@@ -217,10 +215,6 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
                 value   TEXT
             )
         """)
-        conn.execute("""
-            INSERT OR IGNORE INTO meta (key, value)
-            VALUES ('schema_version', ?)
-        """, (str(SCHEMA_VERSION),))
         _host, _os = _this_machine()
         conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('built_host', ?)", (_host,))
         conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('built_os', ?)", (_os,))

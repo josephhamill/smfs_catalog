@@ -155,8 +155,6 @@ check("(c) pyproject.toml declares no second version",
       "version" not in _pyproject,
       f"pyproject.toml declares version={_pyproject.get('version')!r}; "
       "the version belongs in smfs_catalog/__init__.py and only there")
-check("(c) manifest records the schema version",
-      man.get("schema_version") == _db.SCHEMA_VERSION)
 check("(c) manifest records the exact database",
       man.get("database_path") == str(Path(DB).resolve()))
 check("(c) manifest records the cache/provenance build identity",

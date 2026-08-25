@@ -265,7 +265,6 @@ class ExportGroup:
             "generated_at":   datetime.now().isoformat(timespec="seconds"),
             "app_version":    app_version(),
             "app_build_identity": code_version(),
-            "schema_version": _db.SCHEMA_VERSION,
             "database_path":  str(Path(self._db_path).resolve()),
             # These are the settings in force WHEN THE EXPORT WAS MADE. They
             # are useful context, but may not be the settings that produced
