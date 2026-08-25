@@ -1650,6 +1650,7 @@ def set_setting(
 
 
 APP_SETTING_EXPORT_DIR = "export_dir"
+APP_SETTING_SAMPLE_MARKS = "sample_marks"
 
 
 def get_app_setting(

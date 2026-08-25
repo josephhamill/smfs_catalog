@@ -44,7 +44,9 @@ from . import db as _db
 from . import export_utils as _export
 from .curve_loader import LoadError, load_force_curve
 from .models import wlc
+from . import sample_marks
 from . import style
+from .widgets import SampleMarksToggle
 from .qt_utils import _make_session_header, set_si_label, fit_on_screen
 from . import quantities as _quant
 # This window drives its OWN QTimer over its own curve list — it is not the
@@ -57,10 +59,10 @@ from .navigator_bar import (
 
 # Every colour and weight here comes from style.py — see its header for the
 # three rules (data neutral / model bold + translucent / guide bold-dashed).
-_PEN_DATA  = style.data_pen()
-_PEN_RESID = style.data_pen(style.SERIES_LINE[2])
 _PEN_ZERO  = style.hair_pen()
-_PEN_RAW   = style.data_pen(style.SERIES_LINE[0], width=1.2)
+# The three data traces are built by sample_marks.trace() so the dots/lines
+# toggle can reach them; the raw retract keeps its slightly finer weight.
+_W_RAW     = 1.2
 # Selection span over the raw retract.
 _ROI_BRUSH = pg.mkBrush(*style._COLOR_ROI_FILL_RGBA)
 
@@ -241,6 +243,7 @@ class WlcViewWindow(QMainWindow):
         )
         self._ci_chk.toggled.connect(lambda _checked: self._show_current())
         manual_row.addWidget(self._ci_chk)
+        manual_row.addWidget(SampleMarksToggle())
         root.addLayout(manual_row)
 
         self._armed_role: str | None = None          # 'primary' | 'secondary' | None
@@ -263,7 +266,8 @@ class WlcViewWindow(QMainWindow):
         # (axis labels are HTML — see style.py § K)
         self._raw_plot.showGrid(x=True, y=True, alpha=0.2)
 
-        self._raw_curve  = self._raw_plot.plot(pen=_PEN_RAW)
+        self._raw_curve  = sample_marks.trace(
+            self._raw_plot, color=style.SERIES_LINE[0], width=_W_RAW)
         self._raw_region = pg.LinearRegionItem(
             values=[0, 1], movable=False,
             brush=_ROI_BRUSH, pen=pg.mkPen(None),
@@ -283,7 +287,7 @@ class WlcViewWindow(QMainWindow):
         legend = self._top.addLegend(offset=(10, 10))
         legend.setParentItem(self._top.getPlotItem())
 
-        self._data_line = self._top.plot(pen=_PEN_DATA, name="data")
+        self._data_line = sample_marks.trace(self._top, name="data")
         self._top.scene().sigMouseClicked.connect(self._on_plot_clicked)
         vsplit.addWidget(self._top)
 
@@ -294,7 +298,8 @@ class WlcViewWindow(QMainWindow):
         self._bot.showGrid(x=True, y=True, alpha=0.2)
         self._bot.getViewBox().setXLink(self._top.getViewBox())
 
-        self._resid_line = self._bot.plot(pen=_PEN_RESID)
+        self._resid_line = sample_marks.trace(
+            self._bot, color=style.SERIES_LINE[2])
         self._bot.addItem(pg.InfiniteLine(angle=0, movable=False, pen=_PEN_ZERO))
         vsplit.addWidget(self._bot)
 

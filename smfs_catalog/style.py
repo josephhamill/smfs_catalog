@@ -26,6 +26,9 @@
 #
 #   DATA   is neutral grey, thin, opaque.  It is the substrate; it is never
 #          coloured, so a coloured thing on a plot is always a *conclusion*.
+#          Drawn either as a connected line or as the samples themselves
+#          (data_marks); which one is in force is sample_marks.py's business,
+#          not this file's.
 #   MODEL  (any fit, any computed curve) is a palette hue, BOLD (3.0 px) and
 #          semi-transparent (alpha 180), so it reads as an overlay and the data
 #          shows through it rather than being erased by it.
@@ -177,6 +180,8 @@ _COLOR_ROI_FILL_RGBA  = (180, 220, 255, 55)   # translucent selection region
 # ── G. Mark specs ─────────────────────────────────────────────────────────────
 
 W_DATA   = 1.4     # data traces — thin, they are the substrate
+W_SIGNAL = 2.0     # …except a derived detection signal, which carries markers
+                   # drawn ON it and has to stay findable underneath them
 W_MODEL  = 3.0     # fits — bold, per the brief
 W_GUIDE  = 2.0     # guides for the eye — bold-dashed
 W_HAIR   = 1.0     # zero lines, dividers
@@ -188,6 +193,11 @@ A_FILL   = 40      # ROI spans / masked bands
 DOT_SIZE  = 5
 DOT_ALPHA = 110    # … with more transparency, so density reads as tone
 DOT_LABEL_SIZE_PX = 15
+
+# One SAMPLE, drawn as itself rather than as a vertex of a line (#55).  Smaller
+# than DOT_SIZE because a scatter plot draws one dot per observation and a force
+# curve draws ~100k per trace: at DOT_SIZE the held segments fill solid.
+SAMPLE_DOT_SIZE = 3.0
 
 # The app's quiet signature: a two-event force-extension trace, echoing the
 # application icon.  It is used only as line art in genuinely empty panels,
@@ -213,10 +223,42 @@ def rgba(color, alpha: int = 255) -> tuple[int, int, int, int]:
     return (int(r), int(g), int(b), alpha)
 
 
-def data_pen(color: str = DATA, width: float = W_DATA) -> pg.mkPen:
+def data_pen(color=DATA, width: float = W_DATA,
+             alpha: int = 255) -> pg.mkPen:
     """Rule 1: the substrate.  Thin, opaque, neutral unless it's one of several
-    signals sharing a panel (then pass a SERIES_LINE hue)."""
-    return pg.mkPen(color, width=width)
+    signals sharing a panel (then pass a SERIES_LINE hue).
+
+    `alpha` defaults to opaque, so rule 1 stays the default.  It exists because
+    the detection panels stack signals, thresholds, masks and rupture markers
+    on one plot and each has to read through the others — a genuine exception
+    that had no way to say so, so display_roi.py built its four data pens by
+    hand instead and drifted off W_DATA while it was there.
+    """
+    return pg.mkPen(rgba(color, alpha), width=width)
+
+
+def data_marks(color=DATA, width: float = W_DATA, alpha: int = 255,
+               *, dots: bool) -> dict:
+    """Rule 1 as PlotDataItem keyword arguments: the substrate drawn either as
+    a connected line, or as the samples it is actually made of.
+
+    A line segment asserts the tip moved between two samples.  Through a held
+    segment it did not, so the line draws motion that never happened (#55).
+    Dots say only where the samples are.
+
+    The dot carries no ring: MARKER_PEN's dark outline is for a landmark, which
+    is one mark that must be found, and 100k of them would read as a black
+    band.  It is also the expensive half of drawing them.
+    """
+    if not dots:
+        return {"pen": data_pen(color, width, alpha), "symbol": None}
+    return {
+        "pen": None,
+        "symbol": "o",
+        "symbolSize": SAMPLE_DOT_SIZE,
+        "symbolPen": None,
+        "symbolBrush": pg.mkBrush(rgba(color, alpha)),
+    }
 
 
 def model_pen(color, width: float = W_MODEL, alpha: int = A_MODEL) -> pg.mkPen:

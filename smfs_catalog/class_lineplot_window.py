@@ -39,7 +39,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import sample_marks
 from . import style
+from .widgets import SampleMarksToggle
 from . import db as _db
 from . import export_utils as _export
 from .export_utils import slug as _slug
@@ -54,7 +56,6 @@ from .navigator_bar import (
     SLIDER_MIN, SLIDER_MAX, DEFAULT_RATE_HZ,
 )
 
-_PEN_RETR = style.data_pen(style.SIG_RETRACT)   # retract — matches RawCurveWindow
 _LIST_QSS = style.LIST_QSS
 
 
@@ -138,7 +139,7 @@ class ClassLinePlotWindow(QMainWindow):
         set_si_label(self._plot, "bottom", "Piezo",      _quant.NM)
         set_si_label(self._plot, "left",   "Deflection", _quant.NM)
         self._plot.showGrid(x=True, y=True, alpha=0.2)
-        self._curve = self._plot.plot([], [], pen=_PEN_RETR)
+        self._curve = sample_marks.trace(self._plot, color=style.SIG_RETRACT)
         plot_root.addWidget(self._plot, stretch=1)
         self._status_lbl = QLabel("")
         self._status_lbl.setWordWrap(True)
@@ -205,6 +206,7 @@ class ClassLinePlotWindow(QMainWindow):
         nav.addSpacing(16)
         nav.addWidget(self._fname_label)
         nav.addStretch()
+        nav.addWidget(SampleMarksToggle())
         self._export_btn = QPushButton("Export list…")
         self._export_btn.setToolTip(
             "Write this cohort's file list to the export folder, with a "

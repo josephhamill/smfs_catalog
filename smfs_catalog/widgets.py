@@ -13,13 +13,13 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QRect, QSignalBlocker, QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QFrame, QSizePolicy,
     QLabel, QPushButton, QCheckBox, QLayout,
 )
 
-from . import style
+from . import sample_marks, style
 
 
 class FlowLayout(QLayout):
@@ -138,6 +138,34 @@ class LabeledControl(QWidget):
         for c in controls:
             if c is not None:
                 lay.addWidget(c)
+
+
+class SampleMarksToggle(QCheckBox):
+    """The dots/lines switch, for the control strip of any window that draws
+    samples.
+
+    The mode is one app-wide setting, so every one of these shows the same
+    state: each instance follows sample_marks.changed rather than its own
+    window's copy of the answer.  PyQt drops the connection when the checkbox
+    is destroyed, so a closed window leaves nothing behind.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__("Dots", parent)
+        self.setToolTip(
+            "Draw each sample as a dot instead of joining them with a line.\n"
+            "A line through a held segment draws motion that never happened; "
+            "dots show where the samples actually are.\n"
+            "Lines pan and zoom faster on a large curve."
+        )
+        self.setChecked(sample_marks.dots())
+        self.toggled.connect(sample_marks.set_dots)
+        sample_marks.changed.connect(self._follow)
+
+    def _follow(self, on: bool) -> None:
+        if self.isChecked() != on:
+            with QSignalBlocker(self):
+                self.setChecked(on)
 
 
 class CollapsibleSection(QWidget):

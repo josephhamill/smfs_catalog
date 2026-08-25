@@ -75,9 +75,10 @@ from .roi_pipeline import (
     compute_curve_events_coords, event_geometry_identity, event_params_from,
     resolve_segment_override_state,
 )
+from . import sample_marks
 from . import style
 from .qt_utils import _make_session_header, set_si_label, fit_on_screen
-from .widgets import FlowLayout, LabeledControl
+from .widgets import FlowLayout, LabeledControl, SampleMarksToggle
 from .navigator_bar import WorkerNavBar
 from .provenance import cache_version
 
@@ -86,16 +87,19 @@ from .provenance import cache_version
 # All colours come from style.py. Red is reserved for status, while the d1
 # signal uses violet to remain distinguishable from rupture markers. The F-x
 # panel uses the same per-ROI hue and per-segment shade as the WLC fit window.
-_COLOR_RAW      = style.rgba(style.DATA, 220)
-_COLOR_MEAN_DEV = style.rgba(style.SIG_MEAN_DEV, 220)
-_COLOR_D1       = style.rgba(style.SIG_D1, 220)
+# The detection panels stack signals, thresholds, masks and rupture markers on
+# one plot, so everything here is drawn slightly transparent to read through
+# what is over it.  For the three signal traces that is a declared exception to
+# rule 1's "opaque" — style.data_pen takes the alpha rather than each trace
+# building its own pen, which is how they drifted off W_DATA before #55.
+_ALPHA_SIGNAL   = 220
+_ALPHA_FX       = 200
 _COLOR_ZERO     = style.rgba(style.GRID, 220)
 _COLOR_MASK     = style.rgba(style.INK_FAINT, 70)
 _COLOR_RUPTURE  = style.rgba(style.LM_RUPTURE, 220)        # OUTER/TERMINAL rupture
 _COLOR_RUPTURE_INNER = style.rgba(style.LM_RUPTURE_I, 220)  # INNER (sub-event)
 _COLOR_ONSET    = style.rgba(style.LM_ONSET, 220)
 _COLOR_THRESH   = style.rgba(style.LM_THRESHOLD, 220)
-_COLOR_FX_DATA  = style.rgba(style.DATA, 200)
 
 
 # ── Keys this window owns in the experimentalist_profiles JSON blob ─────────────────────
@@ -333,6 +337,8 @@ class ROIWindow(QWidget):
         self._manual_status_label.setWordWrap(True)
         ctrl3.addWidget(self._manual_status_label)
 
+        ctrl3.addWidget(SampleMarksToggle())
+
         _ctrl3_bar = QWidget()
         _ctrl3_bar.setLayout(ctrl3)
         _ctrl3_bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
@@ -351,8 +357,8 @@ class ROIWindow(QWidget):
         self._raw_plot = glw.addPlot(row=0, col=0)
         set_si_label(self._raw_plot, "left", "deflection", _quant.NM)
         self._raw_plot.showGrid(x=True, y=True, alpha=0.15)
-        self._raw_curve = self._raw_plot.plot(
-            pen=pg.mkPen(_COLOR_RAW, width=style.W_DATA)
+        self._raw_curve = sample_marks.trace(
+            self._raw_plot, color=style.DATA, alpha=_ALPHA_SIGNAL
         )
         self._raw_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=_zero_pen))
         # Rows 0-2 are x-linked onto one piezo axis, which row 2 labels.  Only
@@ -371,8 +377,9 @@ class ROIWindow(QWidget):
         set_si_label(self._mean_plot, "left", "mean dev", _quant.NM, si=False)
         self._mean_plot.showGrid(x=True, y=True, alpha=0.15)
         self._mean_plot.setXLink(self._raw_plot)
-        self._mean_curve = self._mean_plot.plot(
-            pen=pg.mkPen(_COLOR_MEAN_DEV, width=2.0)
+        self._mean_curve = sample_marks.trace(
+            self._mean_plot, color=style.SIG_MEAN_DEV,
+            width=style.W_SIGNAL, alpha=_ALPHA_SIGNAL,
         )
         self._mean_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=_zero_pen))
         self._mean_plot.getAxis("bottom").setStyle(showValues=False)
@@ -398,8 +405,9 @@ class ROIWindow(QWidget):
         set_si_label(self._d1_plot, "bottom", "piezo", _quant.NM)
         self._d1_plot.showGrid(x=True, y=True, alpha=0.15)
         self._d1_plot.setXLink(self._raw_plot)
-        self._d1_curve = self._d1_plot.plot(
-            pen=pg.mkPen(_COLOR_D1, width=2.0)
+        self._d1_curve = sample_marks.trace(
+            self._d1_plot, color=style.SIG_D1,
+            width=style.W_SIGNAL, alpha=_ALPHA_SIGNAL,
         )
         self._d1_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=_zero_pen))
 
@@ -419,10 +427,10 @@ class ROIWindow(QWidget):
 
         self._thresh_line_inner = pg.InfiniteLine(
             pos=self._inner_threshold_nm_per_nm, angle=0, movable=True,
-            # Was _COLOR_D1 (red) — the same colour as the d1 curve it sits on
-            # top of, distinguished only by a thin dotted style. Invisible in
-            # practice. Now matches _COLOR_RUPTURE_INNER, the colour of the
-            # inner rupture markers it corresponds to.
+            # Was the d1 signal's own colour (then red) — the same colour as the
+            # curve it sits on top of, distinguished only by a thin dotted style.
+            # Invisible in practice. Now matches _COLOR_RUPTURE_INNER, the
+            # colour of the inner rupture markers it corresponds to.
             pen=pg.mkPen(_COLOR_RUPTURE_INNER, width=2, style=Qt.PenStyle.DotLine),
             hoverPen=pg.mkPen(_COLOR_RUPTURE_INNER, width=3),
             label='d¹ inner',
@@ -442,7 +450,8 @@ class ROIWindow(QWidget):
         set_si_label(self._fx_plot, "left",   "force",     _quant.PN)
         set_si_label(self._fx_plot, "bottom", "extension", _quant.NM)
         self._fx_plot.showGrid(x=True, y=True, alpha=0.15)
-        self._fx_data = self._fx_plot.plot(pen=pg.mkPen(_COLOR_FX_DATA, width=style.W_DATA))
+        self._fx_data = sample_marks.trace(
+            self._fx_plot, color=style.DATA, alpha=_ALPHA_FX)
         self._fx_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=_zero_pen))
         # Dynamically created (variable-count) fit lines + force markers.
         self._fx_items: list = []

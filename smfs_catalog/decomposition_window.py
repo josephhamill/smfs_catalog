@@ -32,9 +32,10 @@ from .bandwidth_warning import filter_bandwidth_warning
 from .quantities import format_value as _q   # ONE formatter: unit and
 # meaningful digits come from quantities.py, so the same measurement
 # cannot print as 166, 166.2 and 166.20 in three different windows.
-from .widgets import FlowLayout, LabeledControl
+from .widgets import FlowLayout, LabeledControl, SampleMarksToggle
 from .navigator_bar import WorkerNavBar
 from .provenance import cache_version
+from . import sample_marks
 from . import style
 from .qt_utils import (
     _make_session_header,
@@ -360,6 +361,8 @@ class DecompositionWindow(QWidget):
             "invOLS win (pts):", self._invols_window_spinbox,
             self._invols_label))
 
+        ctrl_layout.addWidget(SampleMarksToggle())
+
         # No addStretch(): a FlowLayout packs from the left already, and QLayout
         # has no stretch to add.  The strip keeps its natural height for the
         # window's current width.
@@ -405,16 +408,19 @@ class DecompositionWindow(QWidget):
         # plots redraw smaller instead.
         root.addWidget(shrinkable(_glw, min_w=320, min_h=240), stretch=3)
 
-        # ── Curve items — approach (red) and retract (blue) ───────────────────
-        _appr_pen = style.data_pen(style.SIG_APPROACH, width=1.0)
-        _retr_pen = style.data_pen(style.SIG_RETRACT, width=1.0)
+        # ── Curve items — approach and retract, on three index-space panels ───
+        # Finer than W_DATA: three panels of whole-curve samples, stacked.
+        _W = 1.0
 
-        self._low_appr  = self._plt_low.plot([], [], pen=_appr_pen)
-        self._low_retr  = self._plt_low.plot([], [], pen=_retr_pen)
-        self._high_appr = self._plt_high.plot([], [], pen=_appr_pen)
-        self._high_retr = self._plt_high.plot([], [], pen=_retr_pen)
-        self._var_appr  = self._plt_var.plot([], [], pen=_appr_pen)
-        self._var_retr  = self._plt_var.plot([], [], pen=_retr_pen)
+        def _trace(plot, color):
+            return sample_marks.trace(plot, color=color, width=_W)
+
+        self._low_appr  = _trace(self._plt_low,  style.SIG_APPROACH)
+        self._low_retr  = _trace(self._plt_low,  style.SIG_RETRACT)
+        self._high_appr = _trace(self._plt_high, style.SIG_APPROACH)
+        self._high_retr = _trace(self._plt_high, style.SIG_RETRACT)
+        self._var_appr  = _trace(self._plt_var,  style.SIG_APPROACH)
+        self._var_retr  = _trace(self._plt_var,  style.SIG_RETRACT)
 
         # ── Approach/retract divider lines (one per plot) ─────────────────────
         _div_pen = pg.mkPen(_COLOR_DIVIDER, width=1)

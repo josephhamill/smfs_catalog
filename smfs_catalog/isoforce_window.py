@@ -46,7 +46,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import sample_marks
 from . import style
+from .widgets import SampleMarksToggle
 from . import db as _db
 from . import export_utils as _export
 from .curve_loader import LoadError, load_force_curve
@@ -63,7 +65,6 @@ from .navigator_bar import (
     SLIDER_MIN, SLIDER_MAX, DEFAULT_RATE_HZ,
 )
 
-_PEN_DATA     = style.data_pen()
 _PEN_GUIDE    = style.hair_pen(style.INK_MUTED)
 _PEN_DX       = style.guide_pen(style.LM_RUPTURE,   width=style.W_MODEL)
 _PEN_DF       = style.guide_pen(style.SERIES_LINE[1], width=style.W_MODEL)
@@ -197,6 +198,7 @@ class IsoforceWindow(QMainWindow):
         nav.addWidget(self._go_dash_btn)
 
         nav.addStretch()
+        nav.addWidget(SampleMarksToggle())
         self._export_btn = QPushButton("Export…")
         self._export_btn.setToolTip(
             "Write the isoforce measurements for EVERY curve in this window's "
@@ -220,7 +222,7 @@ class IsoforceWindow(QMainWindow):
         set_si_label(self._plot, "left",   f"Force {style.FORCE}",         _quant.PN)
         set_si_label(self._plot, "bottom", f"Extension {style.EXTENSION}", _quant.NM)
         self._plot.showGrid(x=True, y=True, alpha=0.2)
-        self._data_line = self._plot.plot(pen=_PEN_DATA, name="data")
+        self._data_line = sample_marks.trace(self._plot, name="data")
         main_hsplit.addWidget(self._plot)
 
         self._track_list = QListWidget()
