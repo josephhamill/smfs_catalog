@@ -671,7 +671,7 @@ Imports app modules: `db`. Top-level classes: `LoadError`, `UnusableCurveError`,
 | `load_raw_trace` | 535–597 | read/query/resolve | — |
 | `load_force_curve` | 602–719 | read/query/resolve | — |
 
-### `dashboard_window.py` (2077 lines)
+### `dashboard_window.py` (2111 lines)
 
 Imports app modules: `add_data_dialog`, `analysis_worker`, `bandwidth_warning`, `bulk_metadata_dialog`, `categorical_window`, `class_lineplot_window`, `criteria_dialog`, `criteria_gate`, `curve_analysis`, `date_picker_dialog`, `db`, `event_summary_window`, `export_utils`, `navigator_bar`, `qt_utils`, `quantities`, `rawcurve_window`, `remove_files_dialog`, `repoint_dialog`, `roi_pipeline`, `scanner`, `scatter_window`, `scope`, `signal_processing`, `style`, `variable_window`, `variables`, `widgets`. Top-level classes: `FilesTableModel`, `DashboardWindow`.
 
@@ -698,90 +698,92 @@ Imports app modules: `add_data_dialog`, `analysis_worker`, `bandwidth_warning`, 
 | `DashboardWindow._refresh_freshness` | 383–392 | UI/view coordination | — |
 | `DashboardWindow.closeEvent` | 394–410 | UI/event handler | — |
 | `DashboardWindow._confirm_queue_saved` | 412–442 | helper/control flow | `_db.queue_paths` |
-| `DashboardWindow._build_ui` | 445–557 | UI/view coordination | — |
-| `DashboardWindow._relayout_splitter` | 559–577 | helper/control flow | — |
-| `DashboardWindow._build_scope_section` | 579–649 | UI/view coordination | — |
-| `DashboardWindow._build_db_section` | 651–681 | UI/view coordination | — |
-| `DashboardWindow._build_queue_section` | 683–811 | UI/view coordination | — |
-| `DashboardWindow._build_gate_cluster` | 813–836 | UI/view coordination | — |
-| `DashboardWindow._sync_gate_buttons` | 838–846 | helper/control flow | — |
-| `DashboardWindow._on_export_classification_report` | 848–876 | UI/event handler | `_db.classification_report_rows` |
-| `DashboardWindow._on_define_metadata` | 878–890 | UI/event handler | `_db.list_files` |
-| `DashboardWindow._on_remove_files` | 892–905 | UI/event handler | `_db.list_files` |
-| `DashboardWindow._on_recheck_catalog` | 907–971 | UI/event handler | `_db.duplicate_groups`, `_db.list_files`, `_scanner.requalify_catalog` |
-| `DashboardWindow._on_save_queue` | 973–987 | UI/event handler | `_db.queue_paths` |
-| `DashboardWindow._on_export_queue_table` | 989–1029 | UI/event handler | `_db.list_queue` |
-| `DashboardWindow._on_load_queue` | 1031–1059 | UI/event handler | `_db.import_queue_from_paths` |
-| `DashboardWindow._update_export_dir_label` | 1061–1077 | UI/view coordination | `_db.get_app_setting` |
-| `DashboardWindow._on_set_export_folder` | 1079–1086 | UI/event handler | — |
-| `DashboardWindow._refresh_facets` | 1089–1122 | UI/view coordination | `_db.get_facet_options` |
-| `DashboardWindow._current_scope` | 1124–1138 | helper/control flow | — |
-| `DashboardWindow._on_scope_edit` | 1140–1150 | UI/event handler | — |
-| `DashboardWindow._prune_children` | 1152–1161 | helper/control flow | — |
-| `DashboardWindow._clear_filters` | 1163–1172 | helper/control flow | — |
-| `DashboardWindow._refresh_db_and_counts` | 1175–1189 | UI/view coordination | `_db.list_files` |
-| `DashboardWindow._on_db_double_click` | 1191–1194 | UI/event handler | — |
-| `DashboardWindow._on_queue_double_click` | 1196–1200 | UI/event handler | — |
-| `DashboardWindow._selected_db_ids` | 1202–1209 | helper/control flow | — |
-| `DashboardWindow._compute_queue_derived_cols` | 1212–1224 | helper/control flow | `_db.get_queue_analysis_types` |
-| `DashboardWindow._fetch_queue_column_data` | 1226–1231 | helper/control flow | — |
-| `DashboardWindow._queue_cell_value` | 1234–1236 | helper/control flow | `_db.normalize_path` |
-| `DashboardWindow._queue_cell_text` | 1239–1242 | helper/control flow | — |
-| `DashboardWindow._refresh_queue_table` | 1244–1305 | UI/view coordination | `_db.list_queue` |
-| `DashboardWindow._selected_ids` | 1307–1315 | helper/control flow | — |
-| `DashboardWindow._on_send_to_queue` | 1317–1324 | UI/event handler | `_db.enqueue_files` |
-| `DashboardWindow._on_segment_select_changed` | 1326–1329 | UI/event handler | — |
-| `DashboardWindow._on_remove_from_queue` | 1331–1337 | UI/event handler | `_db.dequeue_files` |
-| `DashboardWindow._on_empty_queue` | 1339–1353 | UI/event handler | `_db.clear_analysis_queue` |
-| `DashboardWindow._on_worker_paused_changed` | 1356–1357 | UI/event handler | — |
-| `DashboardWindow._on_worker_playhead_changed` | 1359–1361 | UI/event handler | — |
-| `DashboardWindow._on_worker_direction_changed` | 1363–1365 | UI/event handler | — |
-| `DashboardWindow._on_worker_queue_empty` | 1367–1368 | UI/event handler | — |
-| `DashboardWindow._compute_freshness` | 1370–1377 | helper/control flow | `_db.queue_freshness` |
-| `DashboardWindow._status_class` | 1379–1385 | helper/control flow | — |
-| `DashboardWindow._set_status_cell` | 1387–1412 | helper/control flow | — |
-| `DashboardWindow._raw_status` | 1414–1418 | helper/control flow | — |
-| `DashboardWindow._freshness_line` | 1420–1429 | helper/control flow | — |
-| `DashboardWindow._current_rate` | 1431–1440 | helper/control flow | — |
-| `DashboardWindow._mean_cost` | 1442–1445 | helper/control flow | — |
-| `DashboardWindow._files_ahead` | 1447–1457 | helper/control flow | — |
-| `DashboardWindow._eta_text` | 1459–1487 | helper/control flow | — |
-| `DashboardWindow._update_location_label` | 1489–1516 | UI/view coordination | — |
-| `DashboardWindow._acq_filter_line` | 1518–1536 | helper/control flow | `_db.load_analysis_params` |
-| `DashboardWindow._update_gate_label` | 1538–1589 | UI/view coordination | `_db.active_param_owner`, `_db.list_queue` |
-| `DashboardWindow._filename_for_playhead` | 1591–1601 | helper/control flow | — |
-| `DashboardWindow._on_open_viewer` | 1603–1618 | UI/event handler | — |
-| `DashboardWindow._open_raw_viewer` | 1620–1632 | helper/control flow | `_db.enqueue_files`, `_db.get_file_id` |
-| `DashboardWindow.reveal_raw_at` | 1634–1636 | helper/control flow | — |
-| `DashboardWindow.reveal_roi_at` | 1638–1645 | helper/control flow | — |
-| `DashboardWindow._on_file_started` | 1648–1649 | UI/event handler | — |
-| `DashboardWindow._on_file_done` | 1651–1652 | UI/event handler | — |
-| `DashboardWindow._on_file_error` | 1654–1658 | UI/event handler | — |
-| `DashboardWindow._on_data_unavailable` | 1660–1674 | UI/event handler | — |
-| `DashboardWindow._on_worker_fatal_error` | 1676–1681 | UI/event handler | — |
-| `DashboardWindow._flush_worker_events` | 1683–1772 | helper/control flow | — |
-| `DashboardWindow._fmt_eta` | 1775–1783 | helper/control flow | — |
-| `DashboardWindow._update_queue_row` | 1786–1803 | UI/view coordination | — |
-| `DashboardWindow._on_pick_date` | 1806–1816 | UI/event handler | — |
-| `DashboardWindow._on_add_data` | 1819–1823 | UI/event handler | — |
-| `DashboardWindow._on_repoint_data` | 1826–1833 | UI/event handler | — |
-| `DashboardWindow._spawn` | 1836–1841 | helper/control flow | — |
-| `DashboardWindow._on_queue_header_clicked` | 1845–1898 | UI/event handler | `_db.list_queue` |
-| `DashboardWindow._gate_hit_and_reasons` | 1900–1906 | helper/control flow | — |
-| `DashboardWindow._set_hit_cell` | 1908–1918 | helper/control flow | — |
-| `DashboardWindow._hit_tooltip` | 1920–1937 | helper/control flow | — |
-| `DashboardWindow._hit_text` | 1940–1946 | helper/control flow | — |
-| `DashboardWindow._count_non_hit` | 1948–1956 | helper/control flow | `_db.list_queue` |
-| `DashboardWindow._refresh_hit_column` | 1958–1968 | UI/view coordination | `_db.list_queue` |
-| `DashboardWindow._queue_event_paths` | 1970–1973 | helper/control flow | `_db.list_queue` |
-| `DashboardWindow._open_event_summary` | 1975–1986 | helper/control flow | — |
-| `DashboardWindow._open_scatter` | 1989–2006 | helper/control flow | — |
-| `DashboardWindow._attach_raw` | 2008–2012 | helper/control flow | — |
-| `DashboardWindow._open_criteria` | 2014–2029 | helper/control flow | — |
-| `DashboardWindow._on_criteria_changed` | 2031–2036 | UI/event handler | — |
-| `DashboardWindow._open_non_events` | 2038–2047 | helper/control flow | — |
-| `DashboardWindow._refresh_population_children` | 2049–2066 | UI/view coordination | — |
-| `_fmt_cell` | 2069–2077 | helper/control flow | — |
+| `DashboardWindow._build_ui` | 445–564 | UI/view coordination | — |
+| `DashboardWindow._snapshot_sections` | 566–577 | helper/control flow | — |
+| `DashboardWindow._on_section_toggled` | 579–586 | UI/event handler | — |
+| `DashboardWindow._relayout_splitter` | 588–611 | helper/control flow | — |
+| `DashboardWindow._build_scope_section` | 613–683 | UI/view coordination | — |
+| `DashboardWindow._build_db_section` | 685–715 | UI/view coordination | — |
+| `DashboardWindow._build_queue_section` | 717–845 | UI/view coordination | — |
+| `DashboardWindow._build_gate_cluster` | 847–870 | UI/view coordination | — |
+| `DashboardWindow._sync_gate_buttons` | 872–880 | helper/control flow | — |
+| `DashboardWindow._on_export_classification_report` | 882–910 | UI/event handler | `_db.classification_report_rows` |
+| `DashboardWindow._on_define_metadata` | 912–924 | UI/event handler | `_db.list_files` |
+| `DashboardWindow._on_remove_files` | 926–939 | UI/event handler | `_db.list_files` |
+| `DashboardWindow._on_recheck_catalog` | 941–1005 | UI/event handler | `_db.duplicate_groups`, `_db.list_files`, `_scanner.requalify_catalog` |
+| `DashboardWindow._on_save_queue` | 1007–1021 | UI/event handler | `_db.queue_paths` |
+| `DashboardWindow._on_export_queue_table` | 1023–1063 | UI/event handler | `_db.list_queue` |
+| `DashboardWindow._on_load_queue` | 1065–1093 | UI/event handler | `_db.import_queue_from_paths` |
+| `DashboardWindow._update_export_dir_label` | 1095–1111 | UI/view coordination | `_db.get_app_setting` |
+| `DashboardWindow._on_set_export_folder` | 1113–1120 | UI/event handler | — |
+| `DashboardWindow._refresh_facets` | 1123–1156 | UI/view coordination | `_db.get_facet_options` |
+| `DashboardWindow._current_scope` | 1158–1172 | helper/control flow | — |
+| `DashboardWindow._on_scope_edit` | 1174–1184 | UI/event handler | — |
+| `DashboardWindow._prune_children` | 1186–1195 | helper/control flow | — |
+| `DashboardWindow._clear_filters` | 1197–1206 | helper/control flow | — |
+| `DashboardWindow._refresh_db_and_counts` | 1209–1223 | UI/view coordination | `_db.list_files` |
+| `DashboardWindow._on_db_double_click` | 1225–1228 | UI/event handler | — |
+| `DashboardWindow._on_queue_double_click` | 1230–1234 | UI/event handler | — |
+| `DashboardWindow._selected_db_ids` | 1236–1243 | helper/control flow | — |
+| `DashboardWindow._compute_queue_derived_cols` | 1246–1258 | helper/control flow | `_db.get_queue_analysis_types` |
+| `DashboardWindow._fetch_queue_column_data` | 1260–1265 | helper/control flow | — |
+| `DashboardWindow._queue_cell_value` | 1268–1270 | helper/control flow | `_db.normalize_path` |
+| `DashboardWindow._queue_cell_text` | 1273–1276 | helper/control flow | — |
+| `DashboardWindow._refresh_queue_table` | 1278–1339 | UI/view coordination | `_db.list_queue` |
+| `DashboardWindow._selected_ids` | 1341–1349 | helper/control flow | — |
+| `DashboardWindow._on_send_to_queue` | 1351–1358 | UI/event handler | `_db.enqueue_files` |
+| `DashboardWindow._on_segment_select_changed` | 1360–1363 | UI/event handler | — |
+| `DashboardWindow._on_remove_from_queue` | 1365–1371 | UI/event handler | `_db.dequeue_files` |
+| `DashboardWindow._on_empty_queue` | 1373–1387 | UI/event handler | `_db.clear_analysis_queue` |
+| `DashboardWindow._on_worker_paused_changed` | 1390–1391 | UI/event handler | — |
+| `DashboardWindow._on_worker_playhead_changed` | 1393–1395 | UI/event handler | — |
+| `DashboardWindow._on_worker_direction_changed` | 1397–1399 | UI/event handler | — |
+| `DashboardWindow._on_worker_queue_empty` | 1401–1402 | UI/event handler | — |
+| `DashboardWindow._compute_freshness` | 1404–1411 | helper/control flow | `_db.queue_freshness` |
+| `DashboardWindow._status_class` | 1413–1419 | helper/control flow | — |
+| `DashboardWindow._set_status_cell` | 1421–1446 | helper/control flow | — |
+| `DashboardWindow._raw_status` | 1448–1452 | helper/control flow | — |
+| `DashboardWindow._freshness_line` | 1454–1463 | helper/control flow | — |
+| `DashboardWindow._current_rate` | 1465–1474 | helper/control flow | — |
+| `DashboardWindow._mean_cost` | 1476–1479 | helper/control flow | — |
+| `DashboardWindow._files_ahead` | 1481–1491 | helper/control flow | — |
+| `DashboardWindow._eta_text` | 1493–1521 | helper/control flow | — |
+| `DashboardWindow._update_location_label` | 1523–1550 | UI/view coordination | — |
+| `DashboardWindow._acq_filter_line` | 1552–1570 | helper/control flow | `_db.load_analysis_params` |
+| `DashboardWindow._update_gate_label` | 1572–1623 | UI/view coordination | `_db.active_param_owner`, `_db.list_queue` |
+| `DashboardWindow._filename_for_playhead` | 1625–1635 | helper/control flow | — |
+| `DashboardWindow._on_open_viewer` | 1637–1652 | UI/event handler | — |
+| `DashboardWindow._open_raw_viewer` | 1654–1666 | helper/control flow | `_db.enqueue_files`, `_db.get_file_id` |
+| `DashboardWindow.reveal_raw_at` | 1668–1670 | helper/control flow | — |
+| `DashboardWindow.reveal_roi_at` | 1672–1679 | helper/control flow | — |
+| `DashboardWindow._on_file_started` | 1682–1683 | UI/event handler | — |
+| `DashboardWindow._on_file_done` | 1685–1686 | UI/event handler | — |
+| `DashboardWindow._on_file_error` | 1688–1692 | UI/event handler | — |
+| `DashboardWindow._on_data_unavailable` | 1694–1708 | UI/event handler | — |
+| `DashboardWindow._on_worker_fatal_error` | 1710–1715 | UI/event handler | — |
+| `DashboardWindow._flush_worker_events` | 1717–1806 | helper/control flow | — |
+| `DashboardWindow._fmt_eta` | 1809–1817 | helper/control flow | — |
+| `DashboardWindow._update_queue_row` | 1820–1837 | UI/view coordination | — |
+| `DashboardWindow._on_pick_date` | 1840–1850 | UI/event handler | — |
+| `DashboardWindow._on_add_data` | 1853–1857 | UI/event handler | — |
+| `DashboardWindow._on_repoint_data` | 1860–1867 | UI/event handler | — |
+| `DashboardWindow._spawn` | 1870–1875 | helper/control flow | — |
+| `DashboardWindow._on_queue_header_clicked` | 1879–1932 | UI/event handler | `_db.list_queue` |
+| `DashboardWindow._gate_hit_and_reasons` | 1934–1940 | helper/control flow | — |
+| `DashboardWindow._set_hit_cell` | 1942–1952 | helper/control flow | — |
+| `DashboardWindow._hit_tooltip` | 1954–1971 | helper/control flow | — |
+| `DashboardWindow._hit_text` | 1974–1980 | helper/control flow | — |
+| `DashboardWindow._count_non_hit` | 1982–1990 | helper/control flow | `_db.list_queue` |
+| `DashboardWindow._refresh_hit_column` | 1992–2002 | UI/view coordination | `_db.list_queue` |
+| `DashboardWindow._queue_event_paths` | 2004–2007 | helper/control flow | `_db.list_queue` |
+| `DashboardWindow._open_event_summary` | 2009–2020 | helper/control flow | — |
+| `DashboardWindow._open_scatter` | 2023–2040 | helper/control flow | — |
+| `DashboardWindow._attach_raw` | 2042–2046 | helper/control flow | — |
+| `DashboardWindow._open_criteria` | 2048–2063 | helper/control flow | — |
+| `DashboardWindow._on_criteria_changed` | 2065–2070 | UI/event handler | — |
+| `DashboardWindow._open_non_events` | 2072–2081 | helper/control flow | — |
+| `DashboardWindow._refresh_population_children` | 2083–2100 | UI/view coordination | — |
+| `_fmt_cell` | 2103–2111 | helper/control flow | — |
 
 ### `date_picker_dialog.py` (156 lines)
 
@@ -1891,7 +1893,7 @@ Imports app modules: `db`, `quantities`, `roi_pipeline`. Top-level classes: `Var
 | `values` | 302–371 | helper/control flow | `_db.get_derived_results_bulk_latest`, `_db.get_file_columns`, `_db.normalize_path` |
 | `columns` | 374–392 | helper/control flow | `_db.normalize_path` |
 
-### `widgets.py` (357 lines)
+### `widgets.py` (362 lines)
 
 Imports app modules: `clustering`, `sample_marks`, `style`. Top-level classes: `FlowLayout`, `LabeledControl`, `SampleMarksToggle`, `CollapsibleSection`, `ClusterColourBar`.
 
@@ -1912,19 +1914,19 @@ Imports app modules: `clustering`, `sample_marks`, `style`. Top-level classes: `
 | `LabeledControl.__init__` | 131–140 | construction/wiring | — |
 | `SampleMarksToggle.__init__` | 153–163 | construction/wiring | — |
 | `SampleMarksToggle._follow` | 165–168 | helper/control flow | — |
-| `CollapsibleSection.__init__` | 185–211 | construction/wiring | — |
-| `CollapsibleSection._apply_collapse_height` | 216–226 | helper/control flow | — |
-| `CollapsibleSection.is_expanded` | 228–229 | helper/control flow | — |
-| `CollapsibleSection.header_height` | 231–232 | helper/control flow | — |
-| `CollapsibleSection._on_toggled` | 234–240 | UI/event handler | — |
-| `ClusterColourBar.__init__` | 262–294 | construction/wiring | — |
-| `ClusterColourBar.is_active` | 298–300 | helper/control flow | — |
-| `ClusterColourBar.refresh` | 302–329 | helper/control flow | — |
-| `ClusterColourBar.legend_text` | 331–338 | helper/control flow | — |
-| `ClusterColourBar._on_clear` | 340–341 | UI/event handler | — |
-| `ClusterColourBar._on_registry_changed` | 343–347 | UI/event handler | — |
-| `ClusterColourBar.closeEvent` | 349–351 | UI/event handler | — |
-| `ClusterColourBar.detach` | 353–357 | helper/control flow | — |
+| `CollapsibleSection.__init__` | 185–212 | construction/wiring | — |
+| `CollapsibleSection._apply_collapse_height` | 217–231 | helper/control flow | — |
+| `CollapsibleSection.is_expanded` | 233–234 | helper/control flow | — |
+| `CollapsibleSection.header_height` | 236–237 | helper/control flow | — |
+| `CollapsibleSection._on_toggled` | 239–245 | UI/event handler | — |
+| `ClusterColourBar.__init__` | 267–299 | construction/wiring | — |
+| `ClusterColourBar.is_active` | 303–305 | helper/control flow | — |
+| `ClusterColourBar.refresh` | 307–334 | helper/control flow | — |
+| `ClusterColourBar.legend_text` | 336–343 | helper/control flow | — |
+| `ClusterColourBar._on_clear` | 345–346 | UI/event handler | — |
+| `ClusterColourBar._on_registry_changed` | 348–352 | UI/event handler | — |
+| `ClusterColourBar.closeEvent` | 354–356 | UI/event handler | — |
+| `ClusterColourBar.detach` | 358–362 | helper/control flow | — |
 
 ### `wlc_view_window.py` (801 lines)
 

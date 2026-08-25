@@ -554,11 +554,43 @@ class DashboardWindow(QMainWindow):
             sec.setMinimumHeight(_MIN_SECTION_H)
             splitter.addWidget(sec)
             splitter.setStretchFactor(i, self._section_weights[i])
-            sec.toggled.connect(self._relayout_splitter)
+            sec.toggled.connect(self._on_section_toggled)
+        # The heights the expanded sections are shared out in.  Read as
+        # proportions, not pixels: absolute heights would remember a section as
+        # tall as it grew while its siblings were collapsed, and it would come
+        # back demanding that, squeezing them to their minimum.
+        self._section_ref_h = [max(sec.sizeHint().height(), _MIN_SECTION_H)
+                               for sec in self._sections]
+        splitter.splitterMoved.connect(lambda *_a: self._snapshot_sections())
 
-    def _relayout_splitter(self, *_args) -> None:
+    def _snapshot_sections(self) -> None:
+        """Record the proportions the visible sections are currently at,
+        leaving the collapsed ones' share of the total untouched."""
+        sizes = self._splitter.sizes()
+        shown = [i for i, sec in enumerate(self._sections)
+                 if sizes[i] > sec.header_height()]
+        now = sum(sizes[i] for i in shown)
+        if not shown or now <= 0:
+            return
+        was = sum(self._section_ref_h[i] for i in shown)
+        for i in shown:
+            self._section_ref_h[i] = sizes[i] * was / now
+
+    def _on_section_toggled(self, _expanded: bool) -> None:
+        # Qt has not re-laid out yet, so this still sees the heights the
+        # sections had before the click.
+        self._snapshot_sections()
+        # Deferred, because until Qt applies the new height bounds the
+        # splitter can still be as short as the collapsed ones held it, and
+        # sizes shared out of that height never grow back.
+        QTimer.singleShot(0, self._relayout_splitter)
+
+    def _relayout_splitter(self) -> None:
         """Redistribute splitter panes when a section collapses/expands."""
-        total = self._splitter.height()
+        # Sum of the panes, not the splitter's height: the handles are the
+        # difference, and sizes adding up to more than this push the last
+        # section off the bottom instead of shrinking the others.
+        total = sum(self._splitter.sizes())
         if total <= 0:
             return
         sizes = [0] * len(self._sections)
@@ -570,10 +602,12 @@ class DashboardWindow(QMainWindow):
             else:
                 sizes[i] = sec.header_height()
                 used += sizes[i]
-        remaining = max(0, total - used)
-        wsum = sum((self._section_weights[i] or 1) for i in expanded) or 1
-        for i in expanded:
-            sizes[i] = int(remaining * (self._section_weights[i] or 1) / wsum)
+        if expanded:
+            remaining = max(0, total - used)
+            wsum = sum(self._section_ref_h[i] for i in expanded) or 1
+            for i in expanded:
+                sizes[i] = int(remaining * self._section_ref_h[i] / wsum)
+            sizes[expanded[-1]] += remaining - sum(sizes[i] for i in expanded)
         self._splitter.setSizes(sizes)
 
     def _build_scope_section(self) -> QWidget:
