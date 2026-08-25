@@ -9,7 +9,7 @@
 """
 Regression test: manual Primary/Secondary segment override (#107).
 
-The contract under test, worked out in a live design session 2026-07-29:
+The contract under test:
 (a) with no override set, segment_summary_bulk behaves exactly as before
     (Ultimate/Penultimate `select`, dF/isoforce from the last two ruptures).
 (b) a Primary override takes precedence over `select` entirely for
@@ -20,7 +20,7 @@ The contract under test, worked out in a live design session 2026-07-29:
     already-known points); seg_dX_iso_nm DOES (isoforce_x_nm is only ever
     stored relative to the immediately preceding rupture) and is None for a
     non-adjacent pair, same as any other missing piece — never fabricated.
-    seg_dX_ext_nm (2026-07-30) is the order-independent, plain-geometry
+    seg_dX_ext_nm is the order-independent, plain-geometry
     counterpart to dF_pN — see roi_events.ROI.dX_ext_pairs — deliberately
     NOT the same thing as isoforce_x_nm, which stays one-directional on
     purpose (see that docstring for why a backward-looking generalisation
@@ -215,7 +215,7 @@ check("(f) a NEW pick made against the current event_map is honoured",
 
 # ── (g) Save Queue / Load Queue round-trip ──────────────────────────────────
 # db.queue_paths supplies the paths; export_utils.ExportGroup writes the file
-# (2026-07-31: db.py no longer writes export files itself — one writer, and
+# (db.py writes no export files itself — one writer, and
 # every export carries a manifest). Load Queue must still read it back.
 _db.enqueue_files([fid], DB)
 from smfs_catalog import export_utils as _export

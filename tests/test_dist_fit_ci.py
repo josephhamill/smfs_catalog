@@ -13,7 +13,7 @@ raw values, never read off curve_fit's covariance (#135).
 THE DEFECT.  The fit is least squares on ~20 histogram HEIGHTS.  Nothing in that
 objective records how many curves are behind each bar, so the covariance cannot
 know the sample size, and a symmetric +/- 1.96 sigma interval on a bounded
-parameter walks straight out of the possible range.  Measured on the live
+parameter walks straight out of the possible range.  On a live
 catalogue: a Gaussian width of 72.5 nm with a 95 % interval of [-21.4, 166.3],
 and a mixing fraction -- a proportion -- reported as [-0.14, 0.86].  The worst
 case was the LARGEST cohort (9,071 curves, fraction [-3.11, +4.88]): sample size

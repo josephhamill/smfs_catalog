@@ -511,6 +511,17 @@ class DashboardWindow(QMainWindow):
         recheck_btn.clicked.connect(self._on_recheck_catalog)
         header.addWidget(recheck_btn)
 
+        repoint_btn = QPushButton("📍 Repoint moved data…")
+        repoint_btn.setToolTip(
+            "Tell the catalog where curves went after they were moved to "
+            "another drive or folder.\n\n"
+            "Only the stored paths change — every verdict, ROI, fit and queue "
+            "entry is kept, so a move costs seconds instead of a new database "
+            "and a full re-analysis. No file on disk is touched."
+        )
+        repoint_btn.clicked.connect(self._on_repoint_data)
+        header.addWidget(repoint_btn)
+
 
         self._add_btn = QPushButton("➕ Add data…")
         self._add_btn.clicked.connect(self._on_add_data)
@@ -1810,6 +1821,16 @@ class DashboardWindow(QMainWindow):
         dlg = AddDataDialog(self._db_path, self)
         if dlg.exec():
             self._refresh_db_and_counts()
+
+
+    def _on_repoint_data(self) -> None:
+        """Rewrite the stored paths of curves that have moved to another drive, keeping the analysis attached to them (#30)."""
+        from .repoint_dialog import RepointDataDialog
+        dlg = RepointDataDialog(self._db_path, self)
+        dlg.exec()
+        if dlg.changed:
+            self._refresh_db_and_counts()
+            self._refresh_queue_table()
 
 
     def _spawn(self, win: QWidget) -> None:

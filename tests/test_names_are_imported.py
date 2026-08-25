@@ -9,7 +9,7 @@
 """
 Guard test: every module imports what it names.
 
-WHY THIS EXISTS.  On 2026-08-03 three windows called `_quant.configure_spinbox`
+WHY THIS EXISTS.  Three windows called `_quant.configure_spinbox`
 while only seven of the ten modules using it had written
 `from . import quantities as _quant`.  Nothing caught it:
 
@@ -116,7 +116,7 @@ def test_every_name_read_is_bound_somewhere_in_its_own_file(path: Path):
 def test_the_guard_would_have_caught_the_bug_it_was_written_for():
     """A guard nobody validates is just a second thing to be wrong.
 
-    Re-create the exact 2026-08-03 defect — a module-alias call with no import —
+    Re-create the exact defect — a module-alias call with no import —
     and assert the checker flags it, so a future refactor of _bound_names that
     quietly stops detecting anything fails here rather than passing silently
     across the whole package.

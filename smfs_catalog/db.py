@@ -140,20 +140,13 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
     conn.execute("PRAGMA journal_mode=WAL")
     with conn:
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS watched_directories (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                path            TEXT    NOT NULL UNIQUE,
-                added_at        TEXT    NOT NULL,
-                last_scan       TEXT
-            )
-        """)
-
-        conn.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
 
+                -- The ONE place a file's location is stored.  A path already
+                -- contains its parent folders; storing any prefix of it a
+                -- second time is storing the same fact twice.
                 path                TEXT    NOT NULL UNIQUE,
-                directory_id        INTEGER REFERENCES watched_directories(id),
                 filename            TEXT    NOT NULL,
 
                 size_bytes          INTEGER,
@@ -208,6 +201,13 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
                 tags                TEXT    DEFAULT '{}'
             )
         """)
+
+        # The column references the table, so it must go first.
+        if "directory_id" in {r["name"] for r in
+                              conn.execute("PRAGMA table_info(files)")}:
+            conn.execute("DROP INDEX IF EXISTS idx_files_directory_id")
+            conn.execute("ALTER TABLE files DROP COLUMN directory_id")
+        conn.execute("DROP TABLE IF EXISTS watched_directories")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS meta (
@@ -324,7 +324,6 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
 
 
         for stmt in (
-            "CREATE INDEX IF NOT EXISTS idx_files_directory_id   ON files(directory_id)",
             "CREATE INDEX IF NOT EXISTS idx_files_event          ON files(event)",
             "CREATE INDEX IF NOT EXISTS idx_files_curve_type     ON files(curve_type)",
             "CREATE INDEX IF NOT EXISTS idx_files_measured_date  ON files(measured_date)",
@@ -336,27 +335,15 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
     conn.close()
 
 
-def add_directory(path: str, db_path: str = DEFAULT_DB_PATH) -> bool:
-    """Register a directory to be scanned."""
-    path = normalize_path(path)
-    conn = get_connection(db_path)
-    try:
-        with conn:
-            conn.execute("""
-                INSERT INTO watched_directories (path, added_at)
-                VALUES (?, ?)
-            """, (path, _now()))
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
+def directory_of(path: str) -> str:
+    """The folder holding `path`.  Derived, never stored — see the files.path comment in initialise()."""
+    return str(Path(normalize_path(path)).parent)
 
 
 def find_overlapping_directories(
     path: str, db_path: str = DEFAULT_DB_PATH,
 ) -> list[tuple[str, str]]:
-    """Compare `path` against every already-registered watched_directories path for a directory-scope overlap in either direction — registering..."""
+    """Folders already holding catalogued files that nest with `path` either way — scanning a parent after its children re-walks them."""
     new_p = Path(normalize_path(path))
     out: list[tuple[str, str]] = []
     for row in list_directories(db_path):
@@ -371,26 +358,17 @@ def find_overlapping_directories(
 
 
 def list_directories(db_path: str = DEFAULT_DB_PATH) -> list[sqlite3.Row]:
+    """Every folder the catalog holds files in, with how many, read off files.path itself."""
     conn = get_connection(db_path)
     rows = conn.execute("""
-        SELECT wd.*,
-               COUNT(f.id)  AS n_files
-        FROM   watched_directories wd
-        LEFT JOIN files f ON f.directory_id = wd.id
-        GROUP BY wd.id
-        ORDER BY wd.path
+        SELECT substr(f.path, 1, length(f.path) - length(f.filename) - 1) AS path,
+               COUNT(*) AS n_files
+        FROM   files f
+        GROUP  BY path
+        ORDER  BY path
     """).fetchall()
     conn.close()
     return rows
-
-
-def mark_directory_scanned(directory_id: int, db_path: str = DEFAULT_DB_PATH) -> None:
-    conn = get_connection(db_path)
-    with conn:
-        conn.execute("""
-            UPDATE watched_directories SET last_scan = ? WHERE id = ?
-        """, (_now(), directory_id))
-    conn.close()
 
 
 def upsert_file(
@@ -401,7 +379,7 @@ def upsert_file(
     if "path" in record:
         record = {**record, "path": normalize_path(record["path"])}
     allowed = {
-        "path", "directory_id", "filename",
+        "path", "filename",
         "size_bytes", "modified_at", "first_seen", "last_seen",
         "spring_constant_pn_nm", "velocity_nm_s", "force_dist_nm",
         "trigger_point_nn", "xpos_um", "ypos_um", "sample_rate_hz",
@@ -487,19 +465,16 @@ def _sql_chunks(seq: list, size: int = 800):
 
 def _file_ids_for_paths(
     conn: sqlite3.Connection, paths: list[str],
-) -> tuple[list[int], set[int]]:
-    """(file ids, the directory ids those files belong to) for `paths`."""
+) -> list[int]:
+    """The file ids for `paths`."""
     ids: list[int] = []
-    dir_ids: set[int] = set()
     for chunk in _sql_chunks(paths):
         ph = ",".join("?" * len(chunk))
         for row in conn.execute(
-            f"SELECT id, directory_id FROM files WHERE path IN ({ph})", chunk
+            f"SELECT id FROM files WHERE path IN ({ph})", chunk
         ):
             ids.append(row["id"])
-            if row["directory_id"] is not None:
-                dir_ids.add(row["directory_id"])
-    return ids, dir_ids
+    return ids
 
 
 def _count_by_id(conn: sqlite3.Connection, sql: str, ids: list[int]) -> int:
@@ -528,14 +503,14 @@ def describe_removal_scope(
     resolved = [normalize_path(p) for p in paths]
     out = {
         "n_files": 0, "n_classified": 0, "n_events": 0,
-        "n_with_fits": 0, "n_queued": 0, "n_dirs_emptied": 0,
+        "n_with_fits": 0, "n_queued": 0,
     }
     if not resolved:
         return out
 
     conn = get_connection(db_path)
     try:
-        ids, dir_ids = _file_ids_for_paths(conn, resolved)
+        ids = _file_ids_for_paths(conn, resolved)
         if not ids:
             return out
         out["n_files"] = len(ids)
@@ -555,15 +530,6 @@ def describe_removal_scope(
             conn,
             "SELECT COUNT(*) FROM analysis_queue WHERE file_id IN ({ph})",
             ids)
-
-        id_set = set(ids)
-        for did in dir_ids:
-            remaining = [
-                r["id"] for r in conn.execute(
-                    "SELECT id FROM files WHERE directory_id = ?", (did,))
-            ]
-            if remaining and all(fid in id_set for fid in remaining):
-                out["n_dirs_emptied"] += 1
     finally:
         conn.close()
     return out
@@ -583,7 +549,7 @@ def erase_analysis_for_files(
     conn = get_connection(db_path)
     try:
         with conn:
-            ids, _dirs = _file_ids_for_paths(conn, resolved)
+            ids = _file_ids_for_paths(conn, resolved)
             if not ids:
                 return out
             out["n_files"] = len(ids)
@@ -605,7 +571,7 @@ def remove_files_from_catalog(
 ) -> dict:
     """Level 1: erase these files' analysis AND delete the file rows themselves."""
     resolved = [normalize_path(p) for p in paths]
-    out: dict = {"n_files": 0, "n_directories": 0}
+    out: dict = {"n_files": 0}
     out.update({t: 0 for t in _ANALYSIS_TABLES + _FILE_CHILD_TABLES})
     if not resolved:
         return out
@@ -613,7 +579,7 @@ def remove_files_from_catalog(
     conn = get_connection(db_path)
     try:
         with conn:
-            ids, dir_ids = _file_ids_for_paths(conn, resolved)
+            ids = _file_ids_for_paths(conn, resolved)
             if not ids:
                 return out
             out["n_files"] = len(ids)
@@ -622,23 +588,167 @@ def remove_files_from_catalog(
                 out[table] = _exec_by_id(
                     conn, f"DELETE FROM {table} WHERE file_id IN ({{ph}})", ids)
             _exec_by_id(conn, "DELETE FROM files WHERE id IN ({ph})", ids)
-
-            for did in dir_ids:
-                still_there = conn.execute(
-                    "SELECT 1 FROM files WHERE directory_id = ? LIMIT 1", (did,)
-                ).fetchone()
-                if still_there is None:
-                    conn.execute(
-                        "DELETE FROM watched_directories WHERE id = ?", (did,))
-                    out["n_directories"] += 1
     finally:
         conn.close()
     return out
 
 
+# ── Repointing the catalog at data that has moved ─────────────────────────────
+#
+# A curve's path is true for this machine at this moment, and moving the data
+# to another drive makes every one of them wrong at once.  Nothing else goes
+# wrong: verdicts, ROIs, WLC fits, histograms, queue entries and hand-set
+# segment picks all key on files.id.  So the whole repair is to rewrite the
+# part of the path that changed, which is why this is two short functions and
+# not a subsystem.  describe_relocation says what would happen; only
+# relocate_files writes.
+
+
+def _repointed(path: str, old_root: str, new_root: str) -> Optional[str]:
+    """`path` re-expressed under `new_root`, or None when it is not under `old_root`.
+
+    Compared with a separator appended, so /a/b never captures /a/b2 — the
+    one way a prefix test quietly does the wrong thing.
+    """
+    if path == old_root:
+        return new_root
+    if not path.startswith(old_root + os.sep):
+        return None
+    return new_root + path[len(old_root):]
+
+
+def _relocation_plan(
+    conn: sqlite3.Connection, old_root: str, new_root: str,
+) -> tuple[list[tuple[int, str]], int]:
+    """([(file id, new path)], n_blocked) for the move.
+
+    A file whose new path is already held by a DIFFERENT catalog entry — the
+    same data imported twice, once at each location — is excluded and counted
+    instead.  Merging them would mean choosing which entry's analysis to keep,
+    and that is not a choice this should make silently.
+    """
+    rows = [(r["id"], r["path"]) for r in conn.execute("SELECT id, path FROM files")]
+    held = {p: i for i, p in rows}
+    plan, blocked = [], 0
+    moving = set()
+    for fid, path in rows:
+        new = _repointed(path, old_root, new_root)
+        if new is not None and new != path:
+            plan.append((fid, new))
+            moving.add(fid)
+    for fid, new in plan:
+        owner = held.get(new)
+        if owner is not None and owner != fid and owner not in moving:
+            blocked += 1
+    keep = [(fid, new) for fid, new in plan
+            if held.get(new) in (None, fid) or held[new] in moving]
+    return keep, blocked
+
+
+def describe_relocation(
+    old_root: str,
+    new_root: str,
+    db_path: str = DEFAULT_DB_PATH,
+) -> dict:
+    """What repointing WOULD do — the numbers the dialog puts in front of the user before a single row is rewritten."""
+    old_root = normalize_path(old_root)
+    new_root = normalize_path(new_root)
+    out = {
+        "old_root": old_root, "new_root": new_root,
+        "n_files": 0, "n_found": 0, "n_missing": 0, "n_blocked": 0,
+        "examples": [],
+    }
+    if old_root == new_root:
+        return out
+    conn = get_connection(db_path)
+    try:
+        plan, out["n_blocked"] = _relocation_plan(conn, old_root, new_root)
+        out["n_files"] = len(plan)
+        out["examples"] = [new for _fid, new in plan[:3]]
+        for _fid, new in plan:
+            if os.path.exists(new):
+                out["n_found"] += 1
+            else:
+                out["n_missing"] += 1
+    finally:
+        conn.close()
+    return out
+
+
+def relocate_files(
+    old_root: str,
+    new_root: str,
+    db_path: str = DEFAULT_DB_PATH,
+) -> dict:
+    """Repoint every catalogued curve under `old_root` at `new_root`, keeping each file's id and therefore all of its analysis.
+
+    Nothing on disk is read, moved or deleted — this edits stored paths only.
+    Repointing at a drive that is not mounted yet is deliberately allowed;
+    describe_relocation is what tells the user how many of the new paths it
+    could actually see.
+    """
+    old_root = normalize_path(old_root)
+    new_root = normalize_path(new_root)
+    out = {"old_root": old_root, "new_root": new_root, "n_files": 0, "n_blocked": 0}
+    if old_root == new_root:
+        return out
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            plan, out["n_blocked"] = _relocation_plan(conn, old_root, new_root)
+            # Two passes, because path is UNIQUE and re-nesting a root
+            # under itself makes one moving row's new path another moving
+            # row's old one.  A NUL prefix cannot collide with a real path or
+            # with a row that is staying put.  Both passes are in the one
+            # transaction, so an abort leaves nothing parked.
+            for fid, _new in plan:
+                conn.execute(
+                    "UPDATE files SET path = char(0) || path WHERE id = ?", (fid,))
+            for fid, new in plan:
+                conn.execute("UPDATE files SET path = ? WHERE id = ?", (new, fid))
+            out["n_files"] = len(plan)
+    finally:
+        conn.close()
+    return out
+
+
+def missing_by_directory(db_path: str = DEFAULT_DB_PATH) -> list[dict]:
+    """Every folder the catalog holds curves in, and how many of them are not on disk.
+
+    Stats each catalogued path — one syscall per file, and cheaper still when
+    the drive is gone, since the folder itself is missing and the walk stops
+    there.  An exact count is the point: "1,904 of 6,007 curves cannot be
+    found" is actionable where "some are missing" is not.
+    """
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT substr(f.path, 1, length(f.path) - length(f.filename) - 1) AS dir,
+                   f.path
+            FROM   files f
+            ORDER  BY dir, f.path
+        """).fetchall()
+    finally:
+        conn.close()
+    by_dir: dict[str, list[str]] = {}
+    for row in rows:
+        by_dir.setdefault(row["dir"], []).append(row["path"])
+    out = []
+    for d, paths in by_dir.items():
+        here = os.path.isdir(d)
+        out.append({
+            "path": d,
+            "n_files": len(paths),
+            "n_missing": (len(paths) if not here
+                          else sum(1 for p in paths if not os.path.exists(p))),
+            "exists": here,
+        })
+    return out
+
+
 def get_distinct_values(
     column: str,
-    table: str = "watched_directories",
+    table: str = "files",
     db_path: str = DEFAULT_DB_PATH,
     *,
     users: Optional[list] = None,
@@ -649,7 +759,6 @@ def get_distinct_values(
 ) -> list[str]:
     """Return sorted list of distinct non-null values for a given column."""
     _allowed = {
-        "watched_directories": {"experimentalist", "technique", "analyte", "solvent", "afm_unit", "cantilever"},
         "files": {
             "curve_type", "experimentalist", "technique", "analyte",
             "solvent", "afm_unit", "cantilever",
@@ -710,7 +819,7 @@ _CANONICAL_IDS_SQL = """
 
 def _file_filter_clauses(
     *,
-    directory_id=None, directory_ids=None,
+    directory=None, directories=None,
     curve_type=None, curve_types=None, parse_ok=None, quality=None,
     search=None, users=None, analytes=None, solvents=None, afm_units=None,
     date_from=None, date_to=None, k_min=None, k_max=None,
@@ -726,10 +835,14 @@ def _file_filter_clauses(
             clauses.append(f"{column} IN ({placeholders})")
             params.extend(values)
 
-    if directory_id is not None:
-        clauses.append("f.directory_id = ?")
-        params.append(directory_id)
-    add_many("f.directory_id", directory_ids)
+    for d in ([directory] if directory else []) + list(directories or []):
+        # Compared with a trailing separator, so /a/b never captures
+        # /a/b2.  substr rather than LIKE: LIKE reads _ and % in the root as
+        # wildcards, and a real folder name may contain either.
+        root = normalize_path(d)
+        under = root + os.sep
+        clauses.append("(f.path = ? OR substr(f.path, 1, ?) = ?)")
+        params.extend([root, len(under), under])
     if usable is not None:
         clauses.append(
             "f.unusable_reason IS NULL" if usable
@@ -815,8 +928,8 @@ def get_facet_options(
 
 def list_files(
     db_path: str = DEFAULT_DB_PATH,
-    directory_id: Optional[int] = None,
-    directory_ids: Optional[list] = None,
+    directory: Optional[str] = None,
+    directories: Optional[list] = None,
     curve_type: Optional[str] = None,
     curve_types: Optional[list] = None,
     parse_ok: Optional[bool] = None,
@@ -835,7 +948,7 @@ def list_files(
 ) -> list[sqlite3.Row]:
     """Fetch file records with optional filters."""
     clauses, params = _file_filter_clauses(
-        directory_id=directory_id, directory_ids=directory_ids,
+        directory=directory, directories=directories,
         curve_type=curve_type, curve_types=curve_types, parse_ok=parse_ok,
         quality=quality, search=search, users=users, analytes=analytes,
         solvents=solvents, afm_units=afm_units,
@@ -848,7 +961,7 @@ def list_files(
     conn = get_connection(db_path)
     rows = conn.execute(f"""
         SELECT f.*,
-               wd.path AS dir_path,
+               substr(f.path, 1, length(f.path) - length(f.filename) - 1) AS dir_path,
                -- Derived, never stored: which OTHER path holds these same
                -- bytes. NULL for a unique file and for the canonical copy of a
                -- duplicated one, so a non-empty cell always means "this row is
@@ -859,7 +972,6 @@ def list_files(
                    AND o.id < f.id
                  ORDER BY o.id LIMIT 1) AS duplicate_of
         FROM   files f
-        LEFT JOIN watched_directories wd ON wd.id = f.directory_id
         {where}
         ORDER BY f.path
     """, params).fetchall()
@@ -1950,22 +2062,6 @@ def get_file_columns(
         conn.close()
 
 
-def get_directory_by_path(
-    path: str,
-    db_path: str = DEFAULT_DB_PATH,
-) -> Optional[sqlite3.Row]:
-    """Return the watched_directories row whose path exactly matches the resolved path."""
-    path = normalize_path(path)
-    conn = get_connection(db_path)
-    row = conn.execute("""
-        SELECT wd.*
-        FROM   watched_directories wd
-        WHERE  wd.path = ?
-    """, (path,)).fetchone()
-    conn.close()
-    return row
-
-
 def get_experimentalist_for_file(
     file_path: str,
     db_path: str = DEFAULT_DB_PATH,
@@ -2260,10 +2356,9 @@ def list_queue(db_path: str = DEFAULT_DB_PATH) -> list[sqlite3.Row]:
         SELECT q.file_id, q.enqueued_at, q.status,
                f.path, f.filename, f.event, f.curve_type,
                f.experimentalist, f.force_filter_bw_hz,
-               wd.path AS dir_path
+               substr(f.path, 1, length(f.path) - length(f.filename) - 1) AS dir_path
         FROM   analysis_queue q
         JOIN   files f ON f.id = q.file_id
-        LEFT JOIN watched_directories wd ON wd.id = f.directory_id
         ORDER BY q.enqueued_at, q.file_id
     """).fetchall()
     conn.close()

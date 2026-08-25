@@ -296,8 +296,8 @@ def test_low_pass_filtering_alone_produces_only_a_modest_tau() -> None:
 
     med = filter_only_tau(SAMPLE_RATE_HZ, APP_CUTOFF_HZ)
 
-    # Measured 2026-08-04: the empirical rule across four (rate, cutoff) pairs
-    # is tau ~= f_s / f_c, which is ~16.7 here.  (The single-pole textbook
+    # The empirical rule across four (rate, cutoff) pairs is
+    # tau ~= f_s / f_c, which is ~16.7 here.  (The single-pole textbook
     # figure f_s/(pi*f_c) understates it: sosfiltfilt runs the 4th-order Bessel
     # forward AND backward, so the effective noise bandwidth is narrower than
     # the -3 dB point.)  Checked as a RULE, not a magic number, so a change to
@@ -306,7 +306,7 @@ def test_low_pass_filtering_alone_produces_only_a_modest_tau() -> None:
     assert 0.5 * predicted <= med <= 2.0 * predicted, (
         f"filter-only tau {med:.1f} against a predicted ~{predicted:.1f} "
         "(f_s/f_c). If the app's cutoff or sample rate changed, the "
-        "'a quarter of tau is the filter' arithmetic in #134, CLAUDE.md §3 and "
+        "'a quarter of tau is the filter' arithmetic in #134, and "
         "the roi_events docstring all need redoing with the new numbers."
     )
     # Deliberately NO assertion here comparing this against a stored "typical
@@ -391,14 +391,14 @@ def test_a_v3_document_reads_as_a_miss() -> None:
     assert payload_to_events(stale) is None
     assert _PAYLOAD_VERSION == 4, (
         "payload version changed; if the segment schema moved again, this test "
-        "and CLAUDE.md §3 both need the new number."
+        "and both need the new number."
     )
 
 
 def test_z_max_is_derived_and_never_stored() -> None:
     """z_max is a ratio of two stored numbers. Storing it would be a third thing
-    to keep consistent with them — the defect class CLAUDE.md documents for the
-    gate verdict and for cache keys."""
+    to keep consistent with them — the same defect class as a stored gate
+    verdict or a stale cache key."""
     seg = _segment(x_max_nm=82.8, l_c_nm=100.0)
     assert abs(seg.z_max - 0.828) < 1e-12
 
@@ -427,7 +427,7 @@ def test_the_three_diagnostics_are_real_summary_keys() -> None:
 
 
 def test_every_diagnostic_declares_its_unit_and_precision() -> None:
-    """quantities.py owns every unit and every displayed digit (CLAUDE.md §4).
+    """quantities.py owns every unit and every displayed digit.
     A key that reaches the queue without one falls back to GENERIC and prints at
     a precision nobody chose."""
     for key in ("seg_tau", "seg_z_max", "seg_edge_pinned"):
@@ -448,12 +448,12 @@ def test_every_diagnostic_declares_its_unit_and_precision() -> None:
 
 # ── (h) The ACQUISITION filter — f_s/f_c assumes the data arrives white ──────
 #
-# CLAUDE.md §3 explains tau with tau ~ f_s/cutoff_hz.  That is only meaningful
+# explains tau with tau ~ f_s/cutoff_hz.  That is only meaningful
 # while THIS app's Bessel is the narrowest filter in the chain.  The AFM
 # software applies its own low-pass at capture (files.force_filter_bw_hz), and
-# on the live catalog one cohort (Anthony, 2 kHz at 50 kHz sampling) sits at or
-# below the app's own cutoff.  When that happens f_s/cutoff UNDERSTATES tau —
-# error bars too small — which is why the app says so.  Measured 2026-08-04.
+# a cohort can sit at or below the app's own cutoff.  When that happens
+# f_s/cutoff UNDERSTATES tau — error bars too small — which is why the app
+# says so.
 
 def test_verdict_fires_only_when_our_filter_is_not_the_narrower_one() -> None:
     """The rule, in both directions, plus the equality case that is live now."""

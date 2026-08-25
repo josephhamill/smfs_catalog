@@ -318,10 +318,10 @@ def roi_hue(roi_idx: int, n_rois: int) -> str:
     The right-most ROI — the tether / final rupture, the one the Ultimate
     selection points at — is ALWAYS SERIES_LINE[0] (blue); the next one left is
     always orange, then violet.  Colour follows the entity, not its rank in a
-    list whose length varies per curve: before this, `enumerate(rois)` meant the
-    ROI you care about was blue on a one-ROI curve and orange on a two-ROI one,
-    so the same physical thing changed colour depending on what else happened to
-    be detected beside it.
+    list whose length varies per curve: index the list instead and the ROI you
+    care about is blue on a one-ROI curve and orange on a two-ROI one, so the
+    same physical thing changes colour depending on what else was detected
+    beside it.
     """
     return series_line(max(0, n_rois - 1 - roi_idx))
 

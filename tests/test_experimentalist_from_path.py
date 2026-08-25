@@ -8,7 +8,7 @@
 
 """
 Regression test: the scanner may REUSE an experimentalist, never MINT one
-(2026-08-05).
+
 
 `scanner.experimentalist_from_path` reads the depth-1 folder BELOW WHEREVER
 ADD DATA WAS AIMED, so the same file yields a different answer per import root:

@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Qualification stage (#122, 2026-08-03).
+Qualification stage (#122).
 
 "Can we use this file?" is asked once, by ONE function, before anything
 downstream assumes anything. These tests pin the three properties that make
@@ -174,7 +174,7 @@ def test_modalities_other_than_continuous_stretch_get_no_usability_verdict():
 
 
 def test_no_spring_constant_is_classified_not_rejected():
-    """User's call, 2026-08-04: a missing spring constant means the file is not
+    """User's call: a missing spring constant means the file is not
     a FORCE curve — it does not mean the file is damaged. Without k a
     deflection trace cannot be expressed as force, so it is classified into the
     bulk 'unknown' bucket and kept, visible, with nothing marked wrong with it.
@@ -213,7 +213,7 @@ def test_every_reason_code_has_user_facing_text():
 # ── (b) one implementation, shared ────────────────────────────────────────────
 
 def test_scanner_and_loader_share_one_qualifier():
-    """They kept two copies until 2026-08-03, and the copies disagreed: the
+    """Two copies would disagree: the
     scanner's swallowed its own exceptions, so it admitted files the loader
     then rejected on every analysis pass, forever."""
     import ast
@@ -339,7 +339,7 @@ def _seed(db, p, path, sha=None, first_seen="2026-01-01"):
 
 
 def test_the_same_bytes_under_two_paths_are_one_curve(tmp_path):
-    """Measured on the live catalog 2026-08-04: 1,045 redundant copies, the
+    """A real catalog holds many redundant copies, the
     largest an entire 1,000-file folder duplicated one level up — every one of
     them counted twice in every histogram, fit and 2DH."""
     db, p = _fresh_db(tmp_path)
@@ -400,7 +400,7 @@ def test_which_copy_is_canonical_cannot_drift(tmp_path):
 
 def test_duplicate_status_is_not_a_stored_column(tmp_path):
     """It is a conclusion about a SET of files, so it is derived on demand —
-    the same rule as the gate verdict (CLAUDE.md §4). A stored flag would have
+    the same rule as the gate verdict. A stored flag would have
     to be kept true as files are added and removed, for ever."""
     db, p = _fresh_db(tmp_path)
     conn = db.get_connection(p)
@@ -495,7 +495,7 @@ def test_requalify_reports_progress_and_can_be_cancelled(tmp_path):
 
 
 def test_the_queue_exposes_owner_and_bandwidth(tmp_path):
-    """db.list_queue omitted `experimentalist` until 2026-08-04, which silently
+    """db.list_queue omitting `experimentalist` silently
     disabled the dashboard's mixed-owner warning (its caller guards on
     `"experimentalist" in r.keys()`).  Both columns are read by the gate
     summary; a warning that cannot fire reads as reassurance."""

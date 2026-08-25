@@ -9,10 +9,9 @@
 """
 Regression test: scan progress reporting and cancellation (#124).
 
-Registering 6,007 files took 39.6 minutes with no progress bar, no spinner, no
-status text and not even a busy cursor — the only way to tell "working" from
-"hung" was that hovering a button gave no highlight.  The scanner had the count
-the whole time and discarded it, because the GUI passed console=None.
+A large registration runs for a long time.  With no progress bar, spinner,
+status text or busy cursor there is no way to tell "working" from "hung", and
+the scanner has the count available the whole time.
 
 The contract under test:
 (a) scan_directory reports progress through a plain callable — the scanner must
@@ -22,9 +21,9 @@ The contract under test:
 (b) returning True from the callback cancels: the remaining files are NOT
     scanned, and the call reports cancelled=True.
 (c) a cancelled scan KEEPS what it already scanned — those rows are real — but
-    does NOT mark the directory scanned, so the next scan finishes the job.
+    are kept, and the next scan finishes the job by skipping them.
     (Undoing the import entirely is the removal dialog's job, #145.)
-(d) a completed scan DOES mark the directory scanned.
+(d) re-running a completed scan is idempotent — it adds nothing.
 (e) cancelling takes effect before the file is touched, so the file count in
     the DB matches the `done` value the callback last saw.
 (f) scan_tree reports ONE bar across the whole tree — a total equal to every
@@ -71,31 +70,17 @@ def make_dir(name, n):
     return d
 
 
-def register(path):
-    _db.add_directory(path, DB)
-    return _db.get_directory_by_path(path, DB)["id"]
-
-
-def n_files_in_db(dir_id):
-    return len(_db.list_files(db_path=DB, directory_id=dir_id))
-
-
-def scanned_at(dir_id):
-    conn = _db.get_connection(DB)
-    row = conn.execute(
-        "SELECT last_scan FROM watched_directories WHERE id = ?",
-        (dir_id,)).fetchone()
-    conn.close()
-    return row["last_scan"] if row else None
+def n_files_in_db(directory):
+    """How many catalogued files live under `directory` — read off files.path, the one place a location is stored."""
+    return len(_db.list_files(db_path=DB, directory=directory))
 
 
 # -- (a)(d)(g) a full, uncancelled scan ---------------------------------------
 D1 = make_dir("full", 10)
-id1 = register(D1)
 
 seen = []
 n_found, n_updated, n_errors, cancelled = _scanner.scan_directory(
-    D1, id1, DB, progress_cb=lambda done, total, label="": seen.append(
+    D1, DB, progress_cb=lambda done, total, label="": seen.append(
         (done, total, label)) or False)
 
 check("(a) the callback fired once per file, plus a final tick",
@@ -109,19 +94,18 @@ check("(a) the last tick lands exactly on total", seen[-1][0] == 10)
 check("(a) the label names the file being scanned",
       seen[0][2] == "Image0000.ibw")
 check("(a) a completed scan reports cancelled=False", cancelled is False)
-check("(a) it found every file", n_found == 10 and n_files_in_db(id1) == 10)
-check("(d) a completed scan marks the directory scanned",
-      scanned_at(id1) is not None)
+check("(a) it found every file", n_found == 10 and n_files_in_db(D1) == 10)
+_again = _scanner.scan_directory(D1, DB)
+check("(d) re-running a completed scan adds nothing",
+      _again[3] is False and n_files_in_db(D1) == 10)
 
 D1B = make_dir("full_nocb", 4)
-id1b = register(D1B)
-res = _scanner.scan_directory(D1B, id1b, DB)
+res = _scanner.scan_directory(D1B, DB)
 check("(g) progress_cb is optional — scanning without one still works",
-      res[0] == 4 and res[3] is False and n_files_in_db(id1b) == 4)
+      res[0] == 4 and res[3] is False and n_files_in_db(D1B) == 4)
 
 # -- (b)(c)(e) cancelling mid-scan --------------------------------------------
 D2 = make_dir("cancelled", 10)
-id2 = register(D2)
 
 STOP_AFTER = 4
 seen2 = []
@@ -133,24 +117,21 @@ def cancel_cb(done, total, label=""):
 
 
 n_found2, n_updated2, _e2, cancelled2 = _scanner.scan_directory(
-    D2, id2, DB, progress_cb=cancel_cb)
+    D2, DB, progress_cb=cancel_cb)
 
 check("(b) cancelling reports cancelled=True", cancelled2 is True)
 check("(b) the scan stopped early — no further callbacks",
       seen2[-1] == STOP_AFTER)
 check("(b) it did NOT scan the remaining files", n_updated2 == STOP_AFTER)
 check("(c) what was already scanned is KEPT, not rolled back",
-      n_files_in_db(id2) == STOP_AFTER)
+      n_files_in_db(D2) == STOP_AFTER)
 check("(e) the DB row count matches the last `done` the callback saw",
-      n_files_in_db(id2) == seen2[-1])
-check("(c) a cancelled scan does NOT mark the directory scanned",
-      scanned_at(id2) is None)
+      n_files_in_db(D2) == seen2[-1])
 
-# Re-running finishes the job — the point of leaving it unmarked.
-_f, _u, _e, again_cancelled = _scanner.scan_directory(D2, id2, DB)
+# Re-running finishes the job — the point of keeping the partial result.
+_f, _u, _e, again_cancelled = _scanner.scan_directory(D2, DB)
 check("(c) re-scanning after a cancel completes the directory",
-      again_cancelled is False and n_files_in_db(id2) == 10
-      and scanned_at(id2) is not None)
+      again_cancelled is False and n_files_in_db(D2) == 10)
 
 # -- (f) scan_tree: one bar across the whole tree -----------------------------
 TREE = os.path.join(tmp, "tree")
@@ -193,10 +174,8 @@ summary2 = _scanner.scan_tree(
     TREE2, DB, progress_cb=lambda done, total, label="": done >= 7)
 check("(f) cancelling inside a tree scan propagates out",
       summary2["cancelled"] is True)
-last_dir = _db.get_directory_by_path(
-    _db.normalize_path(os.path.join(TREE2, "a3")), DB)
-check("(f) folders after the cancel were never registered or scanned",
-      last_dir is None)
+check("(f) folders after the cancel were never scanned",
+      n_files_in_db(os.path.join(TREE2, "a3")) == 0)
 
 
 # Every check above becomes its own named pytest case.  Must be last:

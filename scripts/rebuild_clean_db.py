@@ -36,7 +36,6 @@ from smfs_catalog import db as _db
 
 # Source-of-truth tables to carry over (expensive to regenerate).
 KEEP = [
-    "watched_directories",
     "files",
     "file_metadata",
     "settings",

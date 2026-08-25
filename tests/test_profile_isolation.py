@@ -16,7 +16,7 @@ so every user collapsed onto the shared default bucket while the windows
 loaded from the global last-writer-wins settings table.
 
 The contract under test — ONE parameter set is in force, and the file at
-POSITION ONE OF THE ANALYSIS QUEUE decides whose it is (2026-08-01; this
+POSITION ONE OF THE ANALYSIS QUEUE decides whose it is (this
 supersedes the older "profile follows the curve on screen" rule, which was a
 SECOND way of deciding the same thing and let one computation be assembled
 from two people's profiles — see db.active_param_owner):
@@ -32,7 +32,7 @@ from two people's profiles — see db.active_param_owner):
 (f) a NEVER-BEFORE-SEEN experimentalist (zero profile row, not even a
     partial one) seeds from the shared __default__ bucket, not from
     whatever the previously-displayed owner left sitting in the settings
-    table / widgets — found 2026-07-28: `if profile:` guards around a
+    table / widgets — `if profile:` guards around a
     `get_experimentalist_profile()` call that returns None for a genuinely
     missing row skipped the load entirely, so the seed-write right after it
     saved the PREVIOUS owner's stale values under the new person's name.
@@ -66,22 +66,16 @@ DANA_FILE   = _db.normalize_path("/tank/testdata/dana/Image0004.ibw")
 
 conn = _db.get_connection(DB)
 with conn:
-    # experimentalist is file-level (#110) — watched_directories rows here
-    # are just for directory_id plumbing, NOT where experimentalist lives.
-    for i, dirpath in enumerate(
-        [os.path.dirname(ALEX_FILE), os.path.dirname(ANA_FILE),
-         os.path.dirname(CARLOS_FILE), os.path.dirname(DANA_FILE)], start=1):
-        conn.execute(
-            "INSERT INTO watched_directories (id, path, added_at)"
-            " VALUES (?, ?, datetime('now'))", (i, dirpath))
-    for path, did, who in [
-        (ALEX_FILE, 1, "alexandre"), (ANA_FILE, 2, "anastasiia"),
-        (CARLOS_FILE, 3, "carlos"), (DANA_FILE, 4, "dana"),
+    # experimentalist is file-level (#110), and a file's folder is read off
+    # its own path — there is no directory registry to seed.
+    for path, who in [
+        (ALEX_FILE, "alexandre"), (ANA_FILE, "anastasiia"),
+        (CARLOS_FILE, "carlos"), (DANA_FILE, "dana"),
     ]:
         conn.execute(
-            "INSERT INTO files (path, directory_id, filename, first_seen, last_seen, experimentalist)"
-            " VALUES (?, ?, ?, datetime('now'), datetime('now'), ?)",
-            (path, did, os.path.basename(path), who))
+            "INSERT INTO files (path, filename, first_seen, last_seen, experimentalist)"
+            " VALUES (?, ?, datetime('now'), datetime('now'), ?)",
+            (path, os.path.basename(path), who))
 conn.close()
 
 # carlos mirrors a real historic DB state: a profile with ONLY 2DH grid keys
@@ -219,7 +213,7 @@ check("empty queue answers Default - never nothing",
       _db.active_param_owner(DB) == _db.DEFAULT_EXPERIMENTALIST)
 
 # ── Never-before-seen owner: must seed from __default__, not the previous
-#    owner's leftovers (the 2026-07-28 bug) ──────────────────────────────────
+#    owner's leftovers ─────────────────────────────────────────────────────
 use(ALEX_FILE); roi._sync_profile_owner(None)     # a REAL profile first,
                                           # so dana's sync has something wrong
                                           # to inherit if the fallback is broken
@@ -254,7 +248,7 @@ check("dana at row one puts her set in force, not alexandre's",
       abs(_db.load_analysis_params(DB).roi_threshold_nm_per_nm - 0.5) > 1e-9)
 
 # ── Lost-update race: two independent partial writes to the SAME profile
-#    must never clobber each other (the 2026-07-28 "old undone by new" bug).
+#    must never clobber each other ("old undone by new").
 #    display_roi.py / decomposition_window.py / base_2dh_window.py /
 #    export_utils.py each used to save their own subset of a profile by
 #    reading the WHOLE stored blob, editing it in Python, and writing the

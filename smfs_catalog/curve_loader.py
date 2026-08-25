@@ -309,8 +309,8 @@ def qualify_wave(
 
     Nothing here judges the SCIENCE.  "There are no numbers in this channel"
     and "nothing in this channel ever changed" are statements about data being
-    absent; an unusual-but-real curve is not this function's business (see
-    CLAUDE.md §4 on informing rather than gating).
+    absent; an unusual-but-real curve is not this function's business.
+    This informs; it does not gate.
     """
     channels = channel_map(labels, wdata.shape[1]) if wdata.ndim == 2 else {}
     curve_type = _modality(wdata, channels, indent_mode, hold_z, spring_constant)
@@ -467,8 +467,8 @@ class ForceCurve:
     force_filter_bw_hz: float | None = None
 
     # ── Raw (unsplit) arrays — used by FftWindow ─────────────────────────────
-    # Full time-series before the approach/retract split.  None when the file
-    # was loaded before this field was added (should not occur in practice).
+    # Full time-series before the approach/retract split.  None only if a
+    # loader failed to populate them; should not occur in practice.
     raw_defl:       np.ndarray | None = None   # nm, baseline-subtracted, full trace
     raw_piezo_read: np.ndarray | None = None   # nm, full read-piezo trace
     idx_turn:       int                = 0     # turnaround sample index

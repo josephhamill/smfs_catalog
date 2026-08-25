@@ -604,14 +604,14 @@ def current_signature(db_path: str) -> tuple[str, str | None]:
     Exists so a caller can ask "which queued files would the fast path serve?"
     WITHOUT running the pipeline (issue #96).  The dashboard needs that to
     tell up-to-date rows from stale ones and to give the ETA an honest
-    denominator: an up-to-date file still gets VISITED — since 2026-08-03 the
-    worker steers by queue order and nothing overrules a scrub — it is just
-    visited in milliseconds instead of seconds.
+    denominator: an up-to-date file still gets VISITED — the worker steers by
+    queue order and nothing overrules a scrub — just in milliseconds rather
+    than seconds.
 
     Deliberately returns the signature rather than a verdict, so the freshness
     question stays DERIVED (db.queue_freshness) instead of becoming a stored
     per-file class that every parameter or numerical-method edit would have to
-    invalidate — the cache-key trap CLAUDE.md §4 keeps naming.
+    invalidate.  A stored class is a cache key that nothing updates.
     """
     return (pipeline_params_from(_db.load_analysis_params(db_path)).all_params,
             cache_version())
@@ -690,9 +690,8 @@ def analyse_and_classify(
         # A generic LoadError is a READ failure and may be transient (e.g. a
         # disconnected drive). Issue #69: this is NOT a classification, so it
         # must not return "non_event" — that string is indistinguishable, to
-        # any caller, from a real "no rupture found" verdict, and silently
-        # masquerading as one cost real debugging time once already
-        # (2026-07-02). "unavailable" is its own outcome; no verdict is cached,
+        # any caller, from a real "no rupture found" verdict.
+        # "unavailable" is its own outcome; no verdict is cached,
         # so the file IS retried on the next pass — the drive may come back.
         return "unavailable", False
 
@@ -709,7 +708,7 @@ def analyse_and_classify(
     # A non_event still purges the legacy rupture_force_pn row, if any — see
     # db._EVENT_BUNDLE_TYPES. rupture/onset/invOLS are NOT purged here: they
     # persist across an event -> non_event flip like any other computed
-    # value (2026-07-28). The multi-event ROI document is dropped regardless
+    # value. The multi-event ROI document is dropped regardless
     # so a vanished ROI does not linger in the fit window or the 2DH windows.
     if not result.event:
         _db.delete_event_map(file_id, db_path, conn=conn)
@@ -758,8 +757,8 @@ def _persist_multi_event_roi(
     analysis/visit overwrites its one document (lazy per-file update — the DB
     never accumulates stale marks). This is now entirely compute_curve_events_
     coords's own doing: it checks the same signature and does the same write
-    internally whenever it actually has to compute, so this function no longer
-    duplicates either the cache check or the write — it just calls through.
+    internally whenever it actually has to compute, so this function
+    duplicates neither the cache check nor the write — it calls through.
 
     A characterization exception is raised as CurveAnalysisError. It is not
     converted into a non-event, and the caller does not publish the verdict as

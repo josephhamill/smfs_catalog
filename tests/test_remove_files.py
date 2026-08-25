@@ -13,7 +13,7 @@ selected undo for Add Data and for an analysis run.
 Before this landed there was no way to remove anything from the catalog in
 the dashboard at all, and the one removal API (db.remove_directory) deleted
 a directory row while explicitly leaving its file records behind — orphaning
-every one of them.  It had zero callers once the CLI was deleted 2026-07-31.
+every one of them, and nothing called it.
 
 The contract under test:
 (a) level 2 (erase_analysis_for_files) deletes every computed result for the
@@ -30,9 +30,9 @@ The contract under test:
     regression here shows up as an IntegrityError, not as silent orphaning.
 (d) BOTH levels touch only files in the given cohort: an out-of-scope file in
     the same directory keeps its rows, its analysis and its queue entry.
-(e) level 1 deregisters a directory left holding no files, but NOT one that
-    still holds an out-of-scope file, and NOT a registered-but-never-scanned
-    directory that never had any.
+(e) a folder is not a catalog object: it is read off files.path, so
+    emptying one simply stops it appearing, and a folder that still holds an
+    out-of-scope file keeps appearing.
 (f) describe_removal_scope reports what WOULD happen without changing
     anything — it is what the confirmation dialog puts in front of the user.
 (g) neither level touches the filesystem: a real file on disk survives both.
@@ -81,23 +81,14 @@ def seed():
     conn = _db.get_connection(DB)
     with conn:
         for tbl in ("event_map", "event_histograms", "analysis_results",
-                    "file_metadata", "analysis_queue", "files",
-                    "watched_directories"):
+                    "file_metadata", "analysis_queue", "files"):
             conn.execute(f"DELETE FROM {tbl}")
-        conn.execute(
-            "INSERT INTO watched_directories (id, path, added_at)"
-            " VALUES (1, ?, datetime('now'))", (_db.normalize_path(DATA_DIR),))
-        # Registered but never scanned — must survive a removal it had no
-        # part in.
-        conn.execute(
-            "INSERT INTO watched_directories (id, path, added_at)"
-            " VALUES (2, ?, datetime('now'))", (_db.normalize_path(OTHER_DIR),))
         for path in (IN_SCOPE_A, IN_SCOPE_B, OUT_OF_SCOPE):
             conn.execute(
-                "INSERT INTO files (path, directory_id, filename, first_seen,"
+                "INSERT INTO files (path, filename, first_seen,"
                 " last_seen, solvent, event, primary_segment_idx,"
                 " secondary_segment_idx, segment_override_params_json)"
-                " VALUES (?, 1, ?, datetime('now'), datetime('now'),"
+                " VALUES (?, ?, datetime('now'), datetime('now'),"
                 " 'PBS', 'event', 2, 1, '{\"p\": 1}')",
                 (_db.normalize_path(path), os.path.basename(path)))
         for path in (IN_SCOPE_A, IN_SCOPE_B, OUT_OF_SCOPE):
@@ -155,17 +146,10 @@ check("(f) describe counts classified files", info["n_classified"] == 2)
 check("(f) describe counts events", info["n_events"] == 2)
 check("(f) describe counts files holding stored fits", info["n_with_fits"] == 2)
 check("(f) describe counts queued files", info["n_queued"] == 2)
-check("(f) describe does NOT count a directory that keeps an out-of-scope file",
-      info["n_dirs_emptied"] == 0)
 check("(f) describe changed nothing — all 3 files still present",
       len(rows("SELECT id FROM files")) == 3)
 check("(f) describe changed nothing — event_map intact",
       len(rows("SELECT file_id FROM event_map")) == 3)
-
-info_all = _db.describe_removal_scope(
-    [IN_SCOPE_A, IN_SCOPE_B, OUT_OF_SCOPE], DB)
-check("(f) describe DOES count a directory losing every file it holds",
-      info_all["n_dirs_emptied"] == 1)
 
 # -- (a)(b)(d) level 2: erase analysis ---------------------------------------
 seed()
@@ -218,21 +202,17 @@ check("(d) the out-of-scope file survives intact", file_exists_in_db(OUT_OF_SCOP
 check("(d) so does its analysis", n_rows("event_map", OUT_OF_SCOPE) == 1)
 check("(d) so does its queue entry", n_rows("analysis_queue", OUT_OF_SCOPE) == 1)
 
-check("(e) the directory is NOT deregistered while it still holds a file",
-      bool(rows("SELECT 1 FROM watched_directories WHERE id = 1")))
-check("(e) a never-scanned registered directory is untouched",
-      bool(rows("SELECT 1 FROM watched_directories WHERE id = 2")))
+check("(e) the folder still lists while it holds the out-of-scope file",
+      _db.normalize_path(DATA_DIR) in
+      {r["path"] for r in _db.list_directories(DB)})
 
 check("(g) every .ibw is still on disk after a catalog removal",
       all(os.path.exists(p) for p in (IN_SCOPE_A, IN_SCOPE_B, OUT_OF_SCOPE)))
 
-# Now take the last file too — the directory should be deregistered.
+# Take the last file too — the folder simply stops appearing.
 out = _db.remove_files_from_catalog([OUT_OF_SCOPE], DB)
-check("(e) a directory left holding no files IS deregistered",
-      out.get("n_directories") == 1
-      and not rows("SELECT 1 FROM watched_directories WHERE id = 1"))
-check("(e) the never-scanned directory STILL survives that",
-      bool(rows("SELECT 1 FROM watched_directories WHERE id = 2")))
+check("(e) a folder holding no catalogued files stops listing",
+      not _db.list_directories(DB))
 check("(g) the files are still on disk after removing every catalog entry",
       all(os.path.exists(p) for p in (IN_SCOPE_A, IN_SCOPE_B, OUT_OF_SCOPE)))
 

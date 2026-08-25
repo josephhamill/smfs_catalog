@@ -8,7 +8,7 @@
 
 """
 Guard test: the spectral-cutoff slider offers only cutoffs that can be USED, and
-never displays a number the database does not hold (#141, 2026-08-06).
+never displays a number the database does not hold (#141).
 
 WHAT WAS WRONG.  The list read
 
@@ -25,7 +25,7 @@ THE DISTINCTION THIS TEST PINS, because it is the whole design:
 
   * Nyquist is a NECESSITY.  The filter is mathematically undefined above it,
     the same class as the WLC fit's l_c > x_max floor, so it is ENFORCED.
-  * "500 Hz over-smooths" is POLICY, and CLAUDE.md §4 (#97/#94) says the app
+  * "500 Hz over-smooths" is POLICY, and (#97/#94) says the app
     informs and the user decides.  So the low end stays selectable, and the cost
     of a choice is stated (tau ~ f_s/f_c) rather than the choice being removed.
 
@@ -50,7 +50,7 @@ from smfs_catalog import signal_processing as sp        # noqa: E402
 
 VALUES = dw._CUTOFF_VALUES
 
-# The sample rates actually present in the live catalog, measured 2026-08-06.
+# The sample rates actually present in the live catalog.
 # Nyquist for the commonest is 8,333 Hz, which is what the old list overran.
 LIVE_SAMPLE_RATES = (16666.67, 20000.0, 50000.0)
 
@@ -81,7 +81,7 @@ def test_every_value_is_usable_on_every_live_sample_rate():
 
 
 def test_the_studied_values_are_all_reachable():
-    """The 2026-08-02 tuning study measured these five.  A value with evidence
+    """The tuning study covered these five.  A value with evidence
     behind it that the slider cannot reach is a measurement nobody can act on."""
     for hz in (500, 1000, 1500, 2000, 3000):
         assert hz in VALUES, f"{hz} Hz was measured but cannot be selected"
@@ -91,7 +91,7 @@ def test_the_over_smoothing_end_is_still_offered():
     """NOT a gate.  500 Hz has a residual/noise ratio of 0.37 — it discards
     signal that could have been fitted — but that is a judgement for the person
     looking at the curve, and it is only visible if it can be selected.  Same
-    standing decision as the WLC fit's absent l_c ceiling (CLAUDE.md §4)."""
+    standing decision as the WLC fit's absent l_c ceiling."""
     assert min(VALUES) <= 500
 
 
@@ -264,7 +264,7 @@ def test_cutoff_index_round_trips_every_listed_value():
 # ── (d) The advice half ─────────────────────────────────────────────────────
 
 def test_tau_hint_states_the_filtering_floor():
-    """tau ~ f_s/f_c (CLAUDE.md §3) is what a cutoff costs the error bars, and it
+    """tau ~ f_s/f_c is what a cutoff costs the error bars, and it
     is the number the user is actually choosing between."""
     p = _Probe(16666.67, cutoff_hz=2000.0)
     p._refresh_tau_hint()

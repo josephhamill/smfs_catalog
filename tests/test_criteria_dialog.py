@@ -17,19 +17,12 @@ def _mixed_queue(db_path: str, tmp_path: Path) -> list[str]:
     paths = [db.normalize_path(str(tmp_path / name)) for name in ("a.ibw", "b.ibw")]
     conn = db.get_connection(db_path)
     with conn:
-        conn.execute(
-            "INSERT INTO watched_directories(path, added_at) VALUES (?, ?)",
-            (db.normalize_path(str(tmp_path)), "now"),
-        )
-        directory_id = conn.execute(
-            "SELECT id FROM watched_directories"
-        ).fetchone()[0]
         ids = []
         for path, owner in zip(paths, ("A", "B")):
             cursor = conn.execute(
-                "INSERT INTO files(path, directory_id, filename, first_seen, "
-                "last_seen, experimentalist, event) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (path, directory_id, Path(path).name, "now", "now", owner, "event"),
+                "INSERT INTO files(path, filename, first_seen, "
+                "last_seen, experimentalist, event) VALUES (?, ?, ?, ?, ?, ?)",
+                (path, Path(path).name, "now", "now", owner, "event"),
             )
             ids.append(cursor.lastrowid)
     conn.close()

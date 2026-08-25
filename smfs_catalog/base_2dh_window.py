@@ -603,8 +603,8 @@ class _TwoDHWindowBase(QMainWindow):
         self._stats_label.setText("Building…")
         QApplication.processEvents()
 
-        # Absorb the upstream ledger so exclusions before this build remain
-        # visible in its provenance.
+        # Absorb the upstream ledger so exclusions made earlier in the
+        # pipeline stay visible in this build's provenance.
         upstream = event_summary_win.population_ledger(self._population)
         valid_paths = upstream.kept()
         led = _ledger.Ledger(

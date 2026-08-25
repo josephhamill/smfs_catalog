@@ -8,7 +8,7 @@
 
 """
 Regression test: windows report what they were GIVEN, not only what they kept
-(#117, 2026-08-04), and the queue says what it will actually cost (#96).
+(#117), and the queue says what it will actually cost (#96).
 
 The contract under test:
 (a) The reason vocabulary is closed.  Every reason any module records is one
@@ -35,7 +35,7 @@ The contract under test:
     Anything else is work the ETA must price as work.
 (h) The freshness verdict is DERIVED, never stored — no column anywhere
     holds it, so no parameter edit or checkout can leave a stale copy behind
-    (the files.hit lesson, CLAUDE.md §4).
+    (the files.hit lesson).
 
 Run with the smfs-catalog env, from the repo root:
     python tests/test_drop_ledger.py
@@ -208,15 +208,10 @@ PATHS = [
 ]
 conn = _db.get_connection(DB)
 with conn:
-    conn.execute(
-        "INSERT INTO watched_directories (id, path, added_at)"
-        " VALUES (1, ?, datetime('now'))",
-        (_db.normalize_path("/tank/testdata/led"),),
-    )
     for p in PATHS:
         conn.execute(
-            "INSERT INTO files (path, directory_id, filename, first_seen, last_seen,"
-            " experimentalist) VALUES (?, 1, ?, datetime('now'), datetime('now'), 'led')",
+            "INSERT INTO files (path, filename, first_seen, last_seen,"
+            " experimentalist) VALUES (?, ?, datetime('now'), datetime('now'), 'led')",
             (p, os.path.basename(p)))
 conn.close()
 

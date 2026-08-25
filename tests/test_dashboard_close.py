@@ -8,7 +8,7 @@
 
 """
 Regression test: closing the dashboard quits, and offers to keep the queue
-(#127, 2026-08-03).
+(#127).
 
 The contract under test:
 (a) An empty queue asks NOTHING.  The prompt is not a nag; it appears only when
@@ -53,13 +53,10 @@ PATHS = [
 
 conn = _db.get_connection(DB)
 with conn:
-    conn.execute(
-        "INSERT INTO watched_directories (id, path, added_at)"
-        " VALUES (1, '/tank/testdata/close', datetime('now'))")
     for p in PATHS:
         conn.execute(
-            "INSERT INTO files (path, directory_id, filename, first_seen, last_seen,"
-            " experimentalist) VALUES (?, 1, ?, datetime('now'), datetime('now'), 'close')",
+            "INSERT INTO files (path, filename, first_seen, last_seen,"
+            " experimentalist) VALUES (?, ?, datetime('now'), datetime('now'), 'close')",
             (p, os.path.basename(p)))
 conn.close()
 

@@ -227,9 +227,9 @@ def compute_curve_events_coords(
     actually had to compute (i.e. no matching document already existed) and
     cache identity (db_path/code_ver/file_id) is available — there is no way
     for a caller to trigger a fresh computation here and have it silently not
-    saved. `_persist_multi_event_roi` no longer does its own separate write for
-    this reason: it already skips in before getting this far on a cache hit,
-    and this function now saves on its own whenever it actually computes.
+    saved.  `_persist_multi_event_roi` performs no separate write: it skips
+    out before reaching here on a cache hit, and this function saves whenever
+    it actually computes.
 
     ``force=True`` bypasses the complete event-map document and reruns event
     detection, segmentation, fitting, and persistence. Stage-1 values and
@@ -372,8 +372,8 @@ def compute_curve_events_coords(
                 )
                 inv = _fit.slope
                 # This is a real fresh computation (neither stage1 nor the DB
-                # cache had it) — per CLAUDE.md's persist-what-you-compute
-                # rule, write it and its QC diagnostics now, the same as
+                # cache had it).  Persist what you compute: write it and
+                # its QC diagnostics now, the same as
                 # curve_analysis.analyse_curve does, so the next caller (same
                 # params) gets a cache hit instead of re-fitting.
                 if _p1 is not None and inv == inv:   # not NaN
@@ -538,23 +538,22 @@ def assemble_rows(
 # The one map from a dashboard/variable-window column key to the field
 # segment_summary_bulk returns it under.  Both dashboard_window.py (the queue
 # table) and variable_window.py (its per-column drill-down) import this rather
-# than each keeping their own copy — the exact kind of fork CLAUDE.md §6 warns
-# about, avoided instead of repeated.
+# than each keeping their own copy, which would fork the moment one of them
+# gained a column.
 SEG_SUMMARY_KEYS = (
     "seg_l_p_nm", "seg_l_c_nm", "seg_l_p_err", "seg_l_c_err",
     "seg_force_pN", "seg_dF_pN", "seg_dX_iso_nm", "seg_dX_ext_nm",
     "seg_n_segments",
-    # Fit-conditioning diagnostics (#137, 2026-08-04).  Adding a key here makes
+    # Fit-conditioning diagnostics.  Adding a key here makes
     # it a queue column, a variable_window drill-down AND a criteria-gate
     # criterion automatically, because criteria_gate branches generically on
     # this tuple.  That is the point: these become criteria a user may CHOOSE to
     # check — exactly like seg_n_segments — never something the app applies on
-    # their behalf.  Standing decision (CLAUDE.md §4, #97/#94) untouched.
+    # their behalf.
     #
-    # Read the "Criteria gate: checking a variable *requires* it" note in
-    # CLAUDE.md §4 before checking one of these: an AND across checked
-    # variables makes a missing value an automatic non-hit, so checking
-    # seg_z_max also silently drops every curve whose fit failed.
+    # Checking a variable REQUIRES it: the gate ANDs across checked
+    # variables, so a missing value is an automatic non-hit and checking
+    # seg_z_max silently drops every curve whose fit failed.
     "seg_tau", "seg_z_max", "seg_edge_pinned",
 )
 SEG_SUMMARY_FIELD = {
@@ -596,31 +595,26 @@ def segment_summary_bulk(
     its terminating rupture) of the right-most outer ROI with ruptures:
     "ultimate" = its last segment (the tether/final rupture, or the whole pull
     if there's only one segment); "penultimate" = the one before it when that
-    ROI has >= 2 segments, else the SAME segment ultimate would use (2026-07-27
-    — see CLAUDE.md §3/§4: matches base_2dh_window._stored_segment_fit's
-    long-standing "penult" behavior, which this now aligns with instead of
-    silently disagreeing with). force_pN is the characterization value for
-    "rupture force" (curve_analysis.py no longer computes one — see
-    CLAUDE.md's "what defines an event" note): whichever segment is selected
-    here IS the rupture force, by definition, for now — a single, user-facing
-    force number, not a second parallel one alongside a stage-1 scalar.
-    l_p_err/l_c_err are the WLC fit's own uncertainty on l_p/l_c (large values
-    flag an under-constrained fit — see CLAUDE.md's "Fit bounds" note); they
-    inform, they don't gate anything by themselves.
+    ROI has >= 2 segments, else the SAME segment ultimate would use — matching
+    base_2dh_window._stored_segment_fit.  force_pN is the characterization
+    value for "rupture force": whichever segment is selected here IS the
+    rupture force, by definition — one user-facing force number, not a second
+    parallel one alongside a stage-1 scalar.  l_p_err/l_c_err are the WLC
+    fit's own uncertainty on l_p/l_c; large values flag an under-constrained
+    fit.  They inform; they gate nothing by themselves.
 
     n_segments is the segment count of that SAME right-most outer ROI —
     NOT selection-dependent (it describes the ROI, not the pick within it).
     It exists so a caller who wants "only curves with a real, distinct
     penultimate segment" can filter on it explicitly (seg_n_segments >= 2)
-    instead of relying on `select` to silently narrow the population the way
-    it used to (2026-07-27 — see CLAUDE.md §4).
+    instead of relying on `select` to narrow the population silently.
 
     dF_pN/dX_iso_nm/dX_ext_nm are NOT selection-dependent (`select`) either by
     default — they are the gap between the last two ruptures (ultimate minus
     penultimate, by definition), so they don't change when `select` is
     flipped; only l_p_nm/l_c_nm/force_pN do.
 
-    dX_ext_nm (2026-07-30) is the plain ruptures[lo].extension_nm -
+    dX_ext_nm is the plain ruptures[lo].extension_nm -
     ruptures[hi].extension_nm gap — no crossing search, defined regardless of
     which rupture is stronger, unlike dX_iso_nm (see roi_events.ROI.
     dX_ext_pairs). It exists so dF_pN has an order-independent extension-side
@@ -642,21 +636,16 @@ def segment_summary_bulk(
     missing piece below.
 
     Any missing piece (no file, no document, wrong schema version) yields
-    None fields — never a fabricated value. A present-but-single-segment ROI
-    under "penultimate" is no longer one of those missing-piece cases (see
-    above); it's a deliberate, documented fallback, not an absence. Keyed
-    by resolved path (db.normalize_path), matching
-    get_derived_results_bulk_latest's convention.
+    None fields — never a fabricated value.  A present-but-single-segment
+    ROI under "penultimate" is not one of those: it is the documented
+    fallback above, not an absence.  Keyed by resolved path
+    (db.normalize_path), matching get_derived_results_bulk_latest.
 
-    Bulk by construction (regression fix, 2026-07-23): the first version of
-    this function called db.get_file_id per path, each opening and closing its
-    own sqlite connection — ~6 ms/call, ~110 s over a 6,293-file queue,
-    measured directly against a live catalog DB. Every double-click on a
-    variable-window row that opens the raw viewer forces a full queue-table
-    rebuild (dashboard_window._open_raw_viewer), so that cost was paid again on
-    every click. Fixed the same way get_derived_results_bulk_latest already
-    does it: resolve path->file_id and fetch event_map rows in chunked bulk
-    SQL, not one query per file.
+    Bulk by construction.  A per-path db.get_file_id opens and closes its own
+    sqlite connection each time, and the queue-table rebuild behind every
+    raw-viewer double-click pays that cost again for the whole queue.  So
+    path->file_id and the event_map fetch both go through chunked bulk SQL,
+    the same way get_derived_results_bulk_latest does.
     """
     from .roi_events import payload_to_events
 

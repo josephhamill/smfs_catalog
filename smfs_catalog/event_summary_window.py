@@ -36,8 +36,7 @@
 # rupture's force_pN, length = that segment's WLC l_c_nm. A curve contributes
 # a point only when both exist for the selected segment (e.g. blank under
 # Penultimate if the curve has only one segment) — never a fabricated value.
-# curve_analysis.py no longer computes its own force; there is no separate
-# stage-one gate here.
+# There is no separate stage-one force gate here.
 #
 # Pre-populated from the DB at open time (no curve loading required).
 
@@ -84,9 +83,8 @@ from . import quantities as _quant
 # With
 # both populations neutral, EVERY palette hue stays available for whatever is
 # drawn on top, and density still reads correctly because tone is what a dense
-# scatter encodes anyway.  Measured separation: 31.8 dE, 3.61:1 against each
-# other.  The two are also always named in the legend/toggle row, so the
-# distinction is never carried by the marks alone.
+# scatter encodes anyway.  The two are always named in the legend/toggle
+# row as well, so the distinction is never carried by the marks alone.
 _EVENT_RGBA = style.HIT_RGBA
 _HIST_HIT_RGBA     = style.rgba(style.INK_STRONG, 190)   # bars: opaque enough to read
 _HIST_NON_HIT_RGBA = style.rgba(style.INK_FAINT, 190)

@@ -344,19 +344,16 @@ class AnalysisWorker(QThread):
         if path is None:
             return self._fail(file_id, "file_id not found")
 
-        # No per-file parameter switching here any more.  ONE parameter set is
-        # in force for a run: the queue owner's (db.active_param_owner, derived
-        # from the queue itself).  This block used to re-point the catalog-wide
-        # `settings` table at each file's owner as the worker walked the queue —
-        # which meant the worker and any open tuning window were writing the
-        # same global row, last writer winning, and a curve could be analysed
-        # with whichever knobs had most recently been touched on screen.
+        # ONE parameter set is in force for a run: the queue owner's
+        # (db.active_param_owner, derived from the queue itself).  Never
+        # per-file — that would have the worker and any open tuning window
+        # writing the same global `settings` row, last writer winning.
 
         try:
             # Hand down the worker-thread connection opened in run().  Without
             # it every cache read and result write inside the pipeline opened
-            # and closed its own connection, and closing the last connection to
-            # a WAL database checkpoints it — measured at 35ms a time (#125).
+            # and closed its own connection, and closing the last connection
+            # to a WAL database checkpoints it.
             event, was_cached = analyse_and_classify(
                 file_id, path, self._db_path, conn=self._conn
             )

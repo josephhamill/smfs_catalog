@@ -54,13 +54,10 @@ OUT_OF_SCOPE = _db.normalize_path(
 
 conn = _db.get_connection(DB)
 with conn:
-    conn.execute(
-        "INSERT INTO watched_directories (id, path, added_at)"
-        " VALUES (1, '/tank/testdata/bulkmeta', datetime('now'))")
     for path in (IN_SCOPE_A, IN_SCOPE_B, OUT_OF_SCOPE):
         conn.execute(
-            "INSERT INTO files (path, directory_id, filename, first_seen, last_seen, solvent)"
-            " VALUES (?, 1, ?, datetime('now'), datetime('now'), 'pre-existing-solvent')",
+            "INSERT INTO files (path, filename, first_seen, last_seen, solvent)"
+            " VALUES (?, ?, datetime('now'), datetime('now'), 'pre-existing-solvent')",
             (path, os.path.basename(path)))
 conn.close()
 

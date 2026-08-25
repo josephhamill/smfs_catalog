@@ -18,9 +18,9 @@ of the hot path would silently revert it with no error anywhere.
 The contract under test:
 (a) journal_mode is WAL — persistent, set by initialise(), and the precondition
     that makes (b) safe.
-(b) synchronous is NORMAL (1), not FULL (2).  Measured 2026-08-03: commit was
-    48% of a 210-file scan, 93ms per commit, because FULL forces a platter
-    flush on every one.  NORMAL is durable against an application crash in WAL
+(b) synchronous is NORMAL (1), not FULL (2).  FULL forces a platter flush on
+    every commit, which dominates the cost of a scan.  NORMAL is durable
+    against an application crash in WAL
     mode; only an OS crash or power cut can lose recent transactions, and this
     is a re-runnable catalogue scan.
 (c) foreign_keys is ON — the pre-existing per-connection PRAGMA, asserted here

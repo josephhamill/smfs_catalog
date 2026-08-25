@@ -13,11 +13,10 @@
 # THE RULE: a stage that narrows a set reports what it was GIVEN, not only
 # what it KEPT.  The event-summary and 2DH stages take cohorts and shrink
 # them — no stored segmentation, no l_p/l_c, file won't load, landmarks
-# missing — and before this module those exclusions were bare `continue`s.
-# A window said "306 events" and nothing anywhere could establish that the
-# 307th was legitimately absent rather than lost.  For a figure heading into
-# a paper that is not good enough: every population count was an
-# unverifiable claim.
+# missing.  Without a record of those exclusions, a window saying "306
+# events" gives nobody a way to establish that the 307th was legitimately
+# absent rather than lost, and every population count in a paper figure is
+# an unverifiable claim.
 #
 # Two things are owed, and they are ONE mechanism, not two:
 #
@@ -38,7 +37,7 @@
 #
 # NOT a cache.  A Ledger describes one pass of one stage and is rebuilt with
 # whatever rebuilt the view.  Nothing persists it, so nothing has to
-# invalidate it — same reasoning that deleted files.hit (CLAUDE.md §4).
+# invalidate it.
 
 from __future__ import annotations
 

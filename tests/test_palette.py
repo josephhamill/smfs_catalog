@@ -11,11 +11,11 @@ Guard test for smfs_catalog/style.py's palettes.
 
 WHY THIS EXISTS.  The palette this replaced carried a comment stating it had
 been "re-checked for this use: worst-pair CVD ΔE 14.8 (protan/deutan/tritan)".
-Measured, its orange/green pair is **3.2** under protanopia — the claim looks
+In fact its orange/green pair is **3.2** under protanopia — the claim looks
 like it was read off deutan (15.6) or tritan (33.9) and never off the one that
 failed.  Nothing caught it, because a colour claim in a comment is exactly the
-kind of thing nobody re-derives.  Same failure shape as the force-sign comment
-in CLAUDE.md §8, and the same remedy: assert the property, not the prose.
+kind of thing nobody re-derives.  Same failure shape as the force-sign
+comment, and the same remedy: assert the property, not the prose.
 
 So: these checks recompute the palette's colour-blindness separation, contrast
 and lightness from the hex values themselves, every run.  Edit a hex in

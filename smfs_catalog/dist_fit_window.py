@@ -735,10 +735,10 @@ class _ModelPane(QWidget):
     def _run_bootstrap(self, components, data, popt, bounds, x_fine):
         """Bootstrap the reported interval, with a cancellable progress dialog.
 
-        Measured 4–5 s for 400 resamples on real cohorts of 350–9,000 curves,
-        so this runs on the GUI thread behind a progress dialog rather than a
-        worker: a thread would have to marshal the result back for a wait the
-        user can already watch and abort.  Cancelling yields no interval (see
+        A few seconds for a few hundred resamples, so this runs on the GUI
+        thread behind a progress dialog rather than a worker: a thread would
+        have to marshal the result back for a wait the user can already watch
+        and abort.  Cancelling yields no interval (see
         bootstrap_fit_ci) — never a quiet fall back to the covariance.
         """
         prog = CancelableProgress(

@@ -380,8 +380,8 @@ class MeanCurveWindow(QMainWindow):
                                                          alpha=90))
         self._pw.addItem(band)
 
-        # Cased, for the same measured reason the 2DH trace overlays are
-        # (style.py § H): this curve is drawn over the histogram image, and
+        # Cased, for the same reason the 2DH trace overlays are (style.py
+        # § H): this curve is drawn over the histogram image, and
         # every hue drops below 3:1 somewhere in the middle of the ramp.  A
         # ridge that vanishes into the densest part of its own 2DH is
         # exactly where it matters most.

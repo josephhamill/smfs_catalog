@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: the piezo landmarks are measured FROM snap-off (2026-08-07).
+Regression test: the piezo landmarks are measured FROM snap-off.
 
 Replaces test_variable_relative_snapoff.py, which guarded a display checkbox in
 one window.  The convention is now a property of the variable itself
@@ -28,7 +28,7 @@ The contract under test:
 (e) the drift that referencing removes is the one it claims to remove: a pure
     common-mode wander, with the true distance held constant, comes back flat.
 (f) the queue table shows the same number the variable accessor does - the two
-    used to be independent copies of the routing (CLAUDE.md #6).
+    used to be independent copies of the routing.
 (g) VariableStatsWindow plots the referenced values, with no mode to set.
 """
 import os
@@ -64,16 +64,13 @@ PATHS  = [FILE_A, FILE_B, FILE_C]
 
 _conn = _db.get_connection(DB)
 with _conn:
-    _conn.execute(
-        "INSERT INTO watched_directories (id, path, added_at)"
-        " VALUES (1, ?, datetime('now'))", (DIR,))
     for _path, _date in [(FILE_A, "2026-07-17 10:00:00"),
                          (FILE_B, "2026-07-18 10:00:00"),
                          (FILE_C, "2026-07-19 10:00:00")]:
         _conn.execute(
-            "INSERT INTO files (path, directory_id, filename, first_seen, last_seen,"
+            "INSERT INTO files (path, filename, first_seen, last_seen,"
             " experimentalist, measured_at, event)"
-            " VALUES (?, 1, ?, datetime('now'), datetime('now'), 'alexandre', ?, 'event')",
+            " VALUES (?, ?, datetime('now'), datetime('now'), 'alexandre', ?, 'event')",
             (_path, os.path.basename(_path), _date))
 _conn.close()
 
@@ -200,7 +197,7 @@ def test_the_queue_prints_the_referenced_landmarks():
 
 def test_a_queue_cell_holds_what_the_accessor_returned():
     """The queue used to route its own columns to their values, independently
-    of variables.py - CLAUDE.md #6, and the fork that would have shown a raw
+    of variables.py, and the fork that would have shown a raw
     stage position in the table under the same heading every plot referenced."""
     from smfs_catalog.dashboard_window import DashboardWindow
     assert DashboardWindow._queue_cell_value(

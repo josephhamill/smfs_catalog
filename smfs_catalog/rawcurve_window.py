@@ -594,8 +594,8 @@ class RawCurveWindow(QWidget):
             self._roi_win.update_curve(index)
 
         if self._worker is None:
-            # Compatibility for the retired standalone caller. Production
-            # worker mode never computes scientific results on the GUI thread.
+            # Standalone (no worker).  Worker mode never computes
+            # scientific results on the GUI thread.
             self._draw_derived(index, path, curve)
         elif self._current_file_id is not None:
             try:

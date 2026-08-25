@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Guard test: ONE profile, ONE seed, ONE inheritance rule (#141, 2026-08-06).
+Guard test: ONE profile, ONE seed, ONE inheritance rule (#141).
 
 A profile holds two kinds of setting — the analysis parameters and the 2DH view
 settings — and until this change only the first kind was seeded into the

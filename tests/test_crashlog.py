@@ -17,8 +17,8 @@ precisely the failure mode.
 
 The contract under test:
 (a) a clean run writes SESSION START and then CLEAN EXIT.
-(b) a hard fault (segfault) writes a C-level traceback — the case that on
-    2026-08-01 left no traceback, no oomd record, no core, and no apport
+(b) a hard fault (segfault) writes a C-level traceback — the case that
+    otherwise leaves no traceback, no oomd record, no core and no apport
     report.  This is the only writer that survives the interpreter dying.
 (c) an unhandled Python exception writes a Python traceback.
 (d) an unhandled exception on a plain thread does too — sys.excepthook never
@@ -83,7 +83,7 @@ check("(a) a clean run writes CLEAN EXIT", "=== CLEAN EXIT" in text)
 
 # -- (b) hard fault -----------------------------------------------------------
 # faulthandler._sigsegv() dereferences a null pointer on purpose: the closest
-# thing available to what killed the app on 2026-08-01.
+# thing available to what killed the app.
 db_segv = _db_path("segv")
 text = _run_child(db_segv, "import faulthandler; faulthandler._sigsegv()\n")
 check("(b) a segfault writes a fatal-error dump",

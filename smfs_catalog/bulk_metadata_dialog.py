@@ -9,16 +9,15 @@
 # smfs_catalog/bulk_metadata_dialog.py
 #
 # "Define metadata for these files..." — bulk-write sample metadata onto
-# every file in a pre-resolved path list (#110, 2026-07-29).
+# every file in a pre-resolved path list.
 #
 # Descriptive sample metadata (experimentalist, analyte, solvent, instrument,
 # cantilever, technique) is file-level, same grain as the per-file instrument
 # columns the scanner already parses. It is populated AFTER import: filter to
 # a cohort with the dashboard's existing scope filters, then open this dialog
-# to write typed values onto every file the current scope expresses. There is
-# no automatic extraction anymore — the .txt-scrape/Claude pipeline that used
-# to do this at directory-registration time is retired (see CLAUDE.md's dated
-# entry); this dialog is the only way these fields get set now.
+# to write typed values onto every file the current scope expresses.  This
+# dialog is the only place these fields are set; nothing extracts them
+# automatically.
 
 from __future__ import annotations
 

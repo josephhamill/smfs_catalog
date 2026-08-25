@@ -10,7 +10,7 @@
 Guard: every export in this app goes through export_utils, and every export
 writes a manifest.
 
-WHY THIS EXISTS (2026-07-31)
+WHY THIS EXISTS
     Exports are how results leave this app. They become report figures and
     publication figures, read months later by someone with no access to the
     window that produced them. A CSV of bare numbers with no record of which
@@ -285,7 +285,7 @@ for mod, needle in (("dist_fit_window.py", '"ci_lo", "ci_hi"'),
 
 # ── (g) The export folder is ONE DB-wide setting, with no owner ──────────────
 #
-# #123 (2026-08-01 user test): the folder was set with the app's own button and
+# #123: the folder was set with the app's own button and
 # four hours later the app was writing to the database directory instead, with
 # nothing on screen saying so. It was stored per-experimentalist and resolved
 # through "whose data is this" — the first file in the catalog carrying a name.

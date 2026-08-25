@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Guard test: a variable explains itself everywhere it is offered (2026-08-07).
+Guard test: a variable explains itself everywhere it is offered.
 
 WHAT WENT WRONG.  Twenty-one good descriptions existed, in
 dashboard_window._QUEUE_COL_TOOLTIPS — a private dict, reachable only by
@@ -20,7 +20,7 @@ metadata off the wave note — had no description anywhere at all, including
 trigger_point_nn, which is a FORCE rather than a distance and had already
 been documented backwards for months.
 
-So this is the palette/spin-box/axis-label fault once more (CLAUDE.md §6):
+So this is the palette/spin-box/axis-label fault once more:
 one decision, one copy, and only one window can see it.
 
 THE RULE NOW: variables.DESCRIPTIONS is the ONE register, reached through

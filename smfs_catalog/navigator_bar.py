@@ -70,8 +70,8 @@ from . import style
 #
 # Lives here rather than in rawcurve_window because three other windows
 # (wlc_view_window, isoforce_window, class_lineplot_window) drive their OWN
-# QTimer over their own curve list with the same slider and used to reach into
-# rawcurve_window for these private helpers.  Those windows are not the worker's
+# QTimer over their own curve list with the same slider, and would otherwise
+# reach into rawcurve_window for these helpers.  Those windows are not the worker's
 # playhead and deliberately do not use NavigatorBar — they just share the maths.
 SLIDER_MIN  = 1
 SLIDER_MAX  = 20

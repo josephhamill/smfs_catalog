@@ -13,7 +13,7 @@
 # Written the way test_palette.py is: RECOMPUTE the claim from the values
 # rather than trusting the prose next to them.  The audit that produced this
 # module found a comment in style.py claiming a colour separation that was
-# measurably false, and CLAUDE.md §8's whole point is that a hand-maintained
+# measurably false, and 's whole point is that a hand-maintained
 # claim rots.  So these tests derive the step from the decimals, the display
 # unit from the factor, and the formatting from real measured magnitudes.
 #
@@ -198,10 +198,9 @@ def test_slope_units_name_both_measured_axes():
 
 # ── Formatting, against real measured magnitudes ──────────────────────────────
 
-# Medians and extremes measured from the live DB, 2026-08-03 (4,515 segments,
-# 20,000 rows per analysis_results type) — see the audit report §2.  Hard-coded
-# so this test states the magnitudes it is protecting rather than needing a
-# database to run.
+# Medians and extremes taken from a real catalog.  Hard-coded so this test
+# states the magnitudes it is protecting rather than needing a database to
+# run.
 REAL_MAGNITUDES = {
     "seg_l_p_nm":     [0.05, 0.251029, 7.78787, 500.0],
     "seg_l_c_nm":     [15.03, 103.6485, 411.0, 2000.0],
@@ -363,7 +362,7 @@ def test_quantities_holds_no_values_and_does_no_io():
 def test_every_drag_handler_quantises_before_it_stores():
     """A dragged line hands back a raw mouse position; a spin box shows digits.
 
-    Found 2026-08-03, after the nm²/Å² version of this had already been fixed:
+    Found after the nm²/Å² version of this had already been fixed:
     display_roi's three threshold handlers and decomposition's anchor handler
     still wrote the raw float straight to the database while the spin box beside
     each of them displayed it rounded to its own decimals.  The two then

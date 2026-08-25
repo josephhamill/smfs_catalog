@@ -463,11 +463,6 @@ def scan_tree(
     done_before = 0
 
     for idx, leaf in enumerate(leaves, 1):
-        db.add_directory(leaf, db_path)
-        drow = db.get_directory_by_path(leaf, db_path)
-        if drow is None:
-            continue
-
         leaf_cb = None
         if progress_cb is not None:
             prefix = f"Folder {idx}/{len(leaves)}: {Path(leaf).name}"
@@ -478,8 +473,7 @@ def scan_tree(
                     f"{_p} — {label}" if label else _p)
 
         nf, _nu, ne, leaf_cancelled = scan_directory(
-            leaf, drow["id"], db_path, force_rescan=force_rescan,
-            progress_cb=leaf_cb)
+            leaf, db_path, force_rescan=force_rescan, progress_cb=leaf_cb)
         done_before += nf
 
         if infer_experimentalist:
@@ -488,7 +482,7 @@ def scan_tree(
                 experimentalists.add(exp)
                 paths = [
                     r["path"] for r in
-                    db.list_files(db_path=db_path, directory_id=drow["id"])
+                    db.list_files(db_path=db_path, directory=leaf)
                 ]
                 if paths:
                     db.set_file_descriptors_bulk(paths, {"experimentalist": exp}, db_path)
@@ -523,7 +517,6 @@ def scan_tree(
 
 def scan_directory(
     directory_path: str,
-    directory_id:   int,
     db_path:        str  = db.DEFAULT_DB_PATH,
     force_rescan:   bool = False,
     progress_cb=None,
@@ -535,8 +528,6 @@ def scan_directory(
     ----------
     directory_path : str
         Absolute path to the directory.
-    directory_id : int
-        The DB id of this directory row.
     db_path : str
         Path to the catalog database.
     force_rescan : bool
@@ -555,11 +546,11 @@ def scan_directory(
     -------
     (n_found, n_new_or_updated, n_errors, cancelled)
 
-    On cancel the files already scanned are COMMITTED and kept — they are real
-    and re-deriving them costs another walk — but mark_directory_scanned is
-    NOT called, so the directory stays "not fully scanned" and the next scan
-    finishes the job.  Undoing a mistaken import is the removal dialog's job,
-    not something a half-finished scan should do silently (#145).
+    On cancel the files already scanned are COMMITTED and kept — they are
+    real, and re-deriving them costs another walk.  The next scan finishes the
+    job: it skips what is already recorded with an unchanged mtime.  Undoing a
+    mistaken import is the removal dialog's job, not something a half-finished
+    scan should do silently (#145).
     """
     if not os.path.isdir(directory_path):
         # A disconnected drive is not a fact about the files — report nothing
@@ -575,21 +566,18 @@ def scan_directory(
     # Fetch existing records for this directory to check timestamps
     existing = {
         row["path"]: row
-        for row in db.list_files(db_path=db_path, directory_id=directory_id)
+        for row in db.list_files(db_path=db_path, directory=directory_path)
     }
 
-    # One connection and one transaction per SCAN_BATCH_SIZE files, rather than
-    # three connections and two commits per file (#125).  Measured 2026-08-03 on
-    # a 210-file scan: 632 connection open/close cycles and 421 commits, together
-    # 76% of the total time — the commits because synchronous=FULL flushes to the
-    # platter on each one, the closes because closing the last connection to a
-    # WAL database checkpoints it.  Both are SQLite behaving correctly for a usage
-    # pattern it does not expect; a connection is meant to be long-lived.
+    # One connection and one transaction per SCAN_BATCH_SIZE files, not one
+    # of each per file.  A commit under synchronous=FULL flushes to the
+    # platter, and closing the last connection to a WAL database checkpoints
+    # it — both correct SQLite behaviour for a usage pattern it does not
+    # expect.  A connection is meant to be long-lived.
     #
     # Crash behaviour is deliberate and unchanged in kind: an interrupted scan
     # loses at most the current batch, which the next scan re-derives by reading
-    # the same files.  mark_directory_scanned stays outside the loop, so a
-    # partial scan is never recorded as a complete one.
+    # the same files.
     conn      = db.get_connection(db_path)
     pending   = 0
     cancelled = False
@@ -617,7 +605,6 @@ def scan_directory(
                     db.upsert_file({
                         "path":      fpath,
                         "last_seen": now,
-                        "directory_id": directory_id,
                         "filename":  Path(fpath).name,
                         "first_seen": existing[fpath]["first_seen"],
                         **fmeta,
@@ -628,7 +615,6 @@ def scan_directory(
             record = _parse_ibw(fpath)
             file_meta = record.pop("_file_metadata", {})
             record.update(fmeta)
-            record["directory_id"] = directory_id
             record["last_seen"]    = now
             record["first_seen"]   = (existing[fpath]["first_seen"] if fpath in existing else now) or now
 
@@ -662,7 +648,6 @@ def scan_directory(
 
     if progress_cb is not None:
         progress_cb(n_found, n_found, "")
-    db.mark_directory_scanned(directory_id, db_path=db_path)
     return n_found, n_updated, n_errors, False
 
 

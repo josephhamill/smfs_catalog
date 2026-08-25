@@ -9,15 +9,9 @@
 # smfs_catalog/remove_files_dialog.py
 #
 # "Remove these files..." — the undo for an import or an analysis run, over
-# the same scope-selected cohort as "Define metadata for these files..."
-# (#110's pattern).
-#
-# Until this existed there was NO way to remove anything from the catalog in
-# the dashboard: the only Remove button clears the analysis QUEUE, and
-# db.remove_directory (which deleted a directory row and left its files
-# orphaned) had zero callers once the CLI was deleted on 2026-07-31.  A user
-# who pointed Add Data at the wrong folder, or analysed a cohort under the
-# wrong parameter set, had no way back.
+# the same scope-selected cohort as "Define metadata for these files...".
+# The dashboard's other Remove button clears the analysis QUEUE, not the
+# catalog.
 #
 # Two levels, because those are two different mistakes — see db.py's
 # "Removing things from the catalog" section for what each one touches.
@@ -98,8 +92,7 @@ class RemoveFilesDialog(QDialog):
         outer.addWidget(self._remove_rb)
         outer.addWidget(self._muted(
             "The above, plus the catalog entries themselves — the app forgets "
-            "these curves exist. Any registered directory left holding no "
-            "files is deregistered too.", indent=True))
+            "these curves exist.", indent=True))
 
         outer.addStretch(1)
 
@@ -147,11 +140,7 @@ class RemoveFilesDialog(QDialog):
             what = (
                 f"Remove {i['n_files']:,} file(s) from the catalog?\n\n"
                 f"This also discards {i['n_with_fits']:,} file(s) worth of "
-                f"stored fits and {i['n_classified']:,} verdict(s)"
-                + (f", and deregisters {i['n_dirs_emptied']:,} directory(ies) "
-                   f"left holding no files"
-                   if i["n_dirs_emptied"] else "")
-                + "."
+                f"stored fits and {i['n_classified']:,} verdict(s)."
             )
 
         r = QMessageBox.question(
@@ -177,7 +166,6 @@ class RemoveFilesDialog(QDialog):
             out = _db.remove_files_from_catalog(self._paths, self._db_path)
             msg = (
                 f"Removed {out['n_files']:,} file(s) from the catalog.\n\n"
-                f"  directories deregistered: {out['n_directories']:,}\n"
                 f"  fits/ROIs cleared: {out['event_map']:,}\n"
                 f"  queue entries cleared: {out['analysis_queue']:,}\n\n"
                 f"The .ibw files themselves are untouched on disk."

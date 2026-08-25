@@ -113,13 +113,9 @@ def compute_detection_signals(
     Caller is expected to have already baseline-subtracted `low_retr` using
     the ONE stored offset characterization (signal_processing.fit_retract_
     baseline, persisted as offset_retr/flatness_slope) — this function does
-    NOT independently re-measure that region. It used to, via a second,
-    independent baseline measurement of the same far-retract stretch on the
-    smoothed signal; checked against three real curves (2026-07-24), the two
-    agreed to within ~1e-4 nm, so there was no real difference being
-    measured, just the same answer computed twice (removed 2026-07-29).
-    mean_dev now reads directly off the caller's already-corrected signal
-    instead of re-deriving its own reference.
+    NOT independently re-measure that region: a second baseline of the same
+    far-retract stretch is the same answer computed twice.  mean_dev reads
+    directly off the caller's already-corrected signal.
 
     A requested window longer than the trace is reduced to the largest supported
     odd window. Fewer than three samples cannot support the quadratic derivative

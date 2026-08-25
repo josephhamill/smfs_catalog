@@ -10,18 +10,11 @@ def test_first_paths_profile_applies_to_the_cohort(tmp_path, monkeypatch):
     paths = [db.normalize_path(str(tmp_path / name)) for name in ("a.ibw", "b.ibw")]
     conn = db.get_connection(db_path)
     with conn:
-        conn.execute(
-            "INSERT INTO watched_directories(path, added_at) VALUES (?, ?)",
-            (db.normalize_path(str(tmp_path)), "now"),
-        )
-        directory_id = conn.execute(
-            "SELECT id FROM watched_directories"
-        ).fetchone()[0]
         for path, owner in zip(paths, ("A", "B")):
             conn.execute(
-                "INSERT INTO files(path, directory_id, filename, first_seen, "
-                "last_seen, experimentalist, event) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (path, directory_id, Path(path).name, "now", "now", owner, "event"),
+                "INSERT INTO files(path, filename, first_seen, "
+                "last_seen, experimentalist, event) VALUES (?, ?, ?, ?, ?, ?)",
+                (path, Path(path).name, "now", "now", owner, "event"),
             )
         file_ids = [
             conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()[0]

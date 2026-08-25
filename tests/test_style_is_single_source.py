@@ -10,15 +10,15 @@
 Guard test: style.py is the ONLY module that names a colour.
 
 WHY THIS EXISTS.  style.py's own header lists the fourteen independent palettes
-it was written to replace on 2026-07-31.  By 2026-08-03 the app had re-forked
-anyway — not in the plot layer, which held, but in the Qt chrome around it,
+it was written to replace.  The app re-forked anyway — not in the plot
+layer, which held, but in the Qt chrome around it,
 which the original consolidation never covered: five different "muted grey"s
 across thirteen labels, SIX copies of one selection blue, a second status
 palette competing with style.py's, and a calendar highlight hand-copied from the
 dashboard's row tint with the comment "same green as 'event'" standing in for a
 shared constant.
 
-That is the same lesson as tests/test_palette.py and CLAUDE.md §8's table: a
+That is the same lesson as tests/test_palette.py and 's table: a
 claim about the code that nobody re-derives goes stale, so it has to be
 machine-checked rather than hand-maintained.  test_palette.py already validates
 the palette's *contents* (separation, contrast, CVD).  This one validates its
@@ -201,7 +201,7 @@ def test_no_module_invents_typography(path: Path):
 
 
 def test_row_tints_cover_the_event_vocabulary():
-    """The queue tint follows the files.event verdict (CLAUDE.md §4's
+    """The queue tint follows the files.event verdict (the
     vocabulary), so a new verdict value cannot ship without a colour — which is
     how 'unavailable' (#69) came to need one in the first place."""
     from smfs_catalog import style
@@ -286,7 +286,7 @@ def test_cluster_colours_come_from_the_palette():
 
     pg.intColor walks pyqtgraph's HSV wheel, so it also cycles into new hues
     without limit, which is exactly what SERIES_LABELED exists to stop
-    (CLAUDE.md §5: colours never cycle into a new hue).
+    (colours never cycle into a new hue).
     """
     import pathlib
     import re

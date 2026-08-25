@@ -19,7 +19,7 @@ be allowed to happen to data that goes into papers.
   1. its semantics (absolute index, degenerate windows → None);
   2. that it is robust on the signal it is contracted to receive;
   3. THE BUG IT WAS EXTRACTED TO KILL — that a window bounded by d1 ARGMAX
-     indices (the pre-2026-07-16 bounds) picks a peak
+     indices (the unclamped bounds) picks a peak
      belonging to the PREVIOUS rupture on an inverted pair, while a window
      bounded by the d1 EDGES (what fit_segments has always used, and what the
      fitter uses) picks the right one;

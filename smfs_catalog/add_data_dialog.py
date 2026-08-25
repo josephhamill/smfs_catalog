@@ -8,21 +8,11 @@
 
 # smfs_catalog/add_data_dialog.py
 #
-# "Add data" dialog: register a new watched directory + scan it.
+# "Add data": point the catalog at a folder of .ibw files and scan it.
 #
-#   1. db.add_directory(path)
-#   2. scanner.scan_directory(path, dir_id) — populates files table
-#
-# No metadata is entered here (#110, 2026-07-29). Descriptive sample metadata
-# (experimentalist/analyte/solvent/instrument/cantilever/technique) is
-# file-level now, populated AFTER import via the dashboard's scope-based
-# "Define metadata for these files..." dialog — one single place that writes
-# these fields, not two that can disagree. The one exception is parent-mode
-# below, which still auto-infers experimentalist from folder structure (a
-# plain path heuristic, not manual entry) and writes it straight onto each
-# scanned file. The old per-directory metadata form and the "Auto-fill from
-# notes (.txt)" Claude-extraction button are retired outright — see
-# CLAUDE.md's dated entry; the code lives on under legacy/ at the repo root.
+# Sample metadata is not entered here.  It is file-level, and
+# BulkMetadataDialog is the single place that writes it.  The one exception
+# is parent mode, which infers experimentalist from folder names.
 
 from __future__ import annotations
 
@@ -43,20 +33,14 @@ from .qt_utils import CancelableProgress, fit_on_screen
 
 class _ScanProgress:
     """
-    Adapts the scanner's Qt-free `(done, total, label) -> cancelled` callback
-    to a CancelableProgress dialog (#124).
+    Adapts the scanner's Qt-free `(done, total, label) -> cancelled`
+    callback to a CancelableProgress dialog.
 
-    Registering 6,007 files took 39.6 minutes with no progress bar, no
-    spinner, no status text and not even a busy cursor on this path — the only
-    way to tell "working" from "hung" was that hovering a button gave no
-    highlight.  The scanner knew the count the whole time and threw it away,
-    because the GUI called it with console=None.
-
-    The progress dialog is created LAZILY, on the first tick: the scanner only
-    knows how many files there are after it has walked the tree, and a bar
-    with a made-up total is worse than none.  The wait cursor covers that
-    walk, and is dropped the moment the dialog appears — a wait cursor over a
-    button you are meant to be able to click is a lie about whether you can.
+    The dialog is created lazily, on the first tick: the total is not known
+    until the scanner has walked the tree, and a bar with a made-up total is
+    worse than none.  A wait cursor covers that walk and is dropped the
+    moment the dialog appears — a wait cursor over a clickable button lies
+    about whether it can be clicked.
     """
 
     def __init__(self, parent, title: str) -> None:
@@ -89,8 +73,8 @@ class _ScanProgress:
 
 class AddDataDialog(QDialog):
     """
-    Modal dialog.  Returns Accepted after successful directory registration +
-    scan.  The dashboard re-populates options after this returns.
+    Modal dialog.  Returns Accepted after a successful scan.  The dashboard
+    re-populates its options once this returns.
     """
 
     def __init__(self, db_path: str = _db.DEFAULT_DB_PATH, parent=None) -> None:
@@ -134,10 +118,9 @@ class AddDataDialog(QDialog):
         outer.addWidget(form_lbl)
         outer.addLayout(dir_row)
 
-        # Parent-of-many mode: register each session subfolder as its own unit,
-        # inferring the experimentalist from the folder structure
-        # (/<this folder>/<experimentalist>/<session>/…/*.ibw). This is the
-        # "point at the drive and read everything" path.
+        # Parent mode scans each session subfolder in turn and reads the
+        # experimentalist from the layout
+        # /<this folder>/<experimentalist>/<session>/…/*.ibw.
         self._parent_chk = QCheckBox(
             "This is a parent of many session folders — auto-detect experimentalist "
             "from subfolder names and register each session"
@@ -160,25 +143,25 @@ class AddDataDialog(QDialog):
 
     def _confirm_no_overlap(self, path: str) -> bool:
         """
-        Warn on a directory-scope overlap with an already-registered directory
-        (#68) — registering a parent after its children re-walks them
-        (silently duplicating rows); registering a child already covered by a
-        registered parent is redundant.  Returns False (caller should abort)
-        only if the user declines to proceed past the warning.
+        Warn when `path` nests with a folder that already holds catalogued
+        files, either way round: scanning a parent re-walks its children, and
+        scanning a child already covered by a parent is redundant.
+
+        Returns False — caller should abort — only if the user declines.
         """
         overlaps = _db.find_overlapping_directories(path, self._db_path)
         if not overlaps:
             return True
         lines = [
-            (f"  - {existing} already covers this directory" if rel == "ancestor"
+            (f"  - {existing} already covers this folder" if rel == "ancestor"
              else f"  - {existing} is inside this directory and would be re-scanned")
             for existing, rel in overlaps
         ]
         r = QMessageBox.warning(
             self, "Directory overlap",
-            "This directory overlaps an already-registered one:\n\n"
+            "This folder overlaps one already in the catalog:\n\n"
             + "\n".join(lines)
-            + "\n\nScanning it may re-walk already-registered files. Proceed anyway?",
+            + "\n\nScanning it may re-walk files already catalogued. Proceed anyway?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -197,23 +180,12 @@ class AddDataDialog(QDialog):
             self._accept_parent_tree(path)
             return
 
-        # 1) Register directory (or note it was already registered)
-        added = _db.add_directory(path, self._db_path)
-        row = _db.get_directory_by_path(path, self._db_path)
-        if row is None:
-            QMessageBox.critical(self, "Add data", "Directory registration failed.")
-            return
-        dir_id = row["id"]
-
-        # 2) Scan — no metadata entry here (see module header); every
-        # descriptive field starts NULL until "Define metadata..." is run.
-        # scan_directory calls mark_directory_scanned itself, and skips it on
-        # cancel; this method must NOT call it too, or a cancelled scan would
-        # be recorded as a complete one.
+        # Every descriptive field starts NULL until "Define metadata…" runs.
+        known = bool(_db.list_files(db_path=self._db_path, directory=path))
         prog = _ScanProgress(self, f"Scanning {Path(path).name}…")
         try:
             n_found, n_updated, n_errors, cancelled = _scanner.scan_directory(
-                path, dir_id, self._db_path, progress_cb=prog,
+                path, self._db_path, progress_cb=prog,
             )
         except Exception as exc:
             QMessageBox.critical(self, "Scan failed", f"Scan raised: {exc!r}")
@@ -225,16 +197,16 @@ class AddDataDialog(QDialog):
             QMessageBox.information(
                 self, "Scan cancelled",
                 f"Stopped after {n_updated:,} of {n_found:,} file(s).\n\n"
-                "What was scanned is kept — this directory is left marked "
-                "not-fully-scanned, so running Add data on it again picks up "
-                "where this stopped.\n\nTo undo the import entirely, use "
+                "What was scanned is kept — running Add data on this "
+                "folder again picks up where this stopped, skipping what is "
+                "already in.\n\nTo undo the import entirely, use "
                 "'Remove these files…' on the dashboard.",
             )
             self.accept()
             return
 
         msg = (
-            ("Registered new directory.\n" if added else "Directory already registered; rescanned.\n")
+            ("New folder.\n" if not known else "Folder already in the catalog; rescanned.\n")
             + f"Found {n_found} .ibw files\n"
             + f"  added/updated: {n_updated}\n"
             + f"  errors: {n_errors}"
@@ -244,19 +216,16 @@ class AddDataDialog(QDialog):
 
     def _accept_parent_tree(self, path: str) -> None:
         """
-        Parent mode: register every session subfolder under `path` as its own
-        watched_directory, inferring the experimentalist from the folder names
-        and writing it onto each scanned file (#110 — experimentalist is
-        file-level, not directory-level). This is the "point at the drive and
-        read everything" path — one flat registration would leave the whole
-        tree unfilterable (nowhere to hang per-session metadata).
+        Scan every session subfolder under `path`, reading the
+        experimentalist from the folder names and writing it onto each
+        scanned file.
         """
         prog = _ScanProgress(self, "Scanning folders…")
         try:
             summary = _scanner.scan_tree(
                 path, self._db_path,
-                # Explicit rather than relying on the default: this decides
-                # whether folder names touch files.experimentalist at all.
+                # Explicit: this decides whether folder names touch
+                # files.experimentalist at all.
                 infer_experimentalist=True,
                 progress_cb=prog,
             )
@@ -279,10 +248,9 @@ class AddDataDialog(QDialog):
             + f"Assigned to ({len(exps)}): {', '.join(exps) if exps else '—'}"
         )
         if unmatched:
-            # Say what was NOT assigned and why. A folder naming nobody in the
-            # catalog is the normal case for a new person — and also what a
-            # mis-aimed import root looks like ("afm", "260319"), which is
-            # exactly why it is shown rather than silently written.
+            # Shown rather than silently written: a folder naming nobody in
+            # the catalog is either a new person or a mis-aimed import root,
+            # and only the user can tell which.
             body += (
                 f"\n\nNot assigned — no such experimentalist yet "
                 f"({len(unmatched)}): {', '.join(unmatched)}\n"

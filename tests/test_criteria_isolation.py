@@ -44,21 +44,15 @@ DANA_FILE = _db.normalize_path("/tank/testdata/dana/Image0003.ibw")  # never con
 
 conn = _db.get_connection(DB)
 with conn:
-    # Experimentalist is file-level; watched_directories rows here
-    # are just for directory_id plumbing, NOT where experimentalist lives.
-    for i, dirpath in enumerate(
-        ["/tank/testdata/alexandre", "/tank/testdata/anastasiia", "/tank/testdata/dana"],
-        start=1):
-        conn.execute(
-            "INSERT INTO watched_directories (id, path, added_at)"
-            " VALUES (?, ?, datetime('now'))", (i, dirpath))
-    for path, did, who in [
-        (ALEX_FILE, 1, "alexandre"), (ANA_FILE, 2, "anastasiia"), (DANA_FILE, 3, "dana"),
+    # Experimentalist is file-level, and a file's folder is read off its own
+    # path — there is no directory registry to seed.
+    for path, who in [
+        (ALEX_FILE, "alexandre"), (ANA_FILE, "anastasiia"), (DANA_FILE, "dana"),
     ]:
         conn.execute(
-            "INSERT INTO files (path, directory_id, filename, first_seen, last_seen, event, experimentalist)"
-            " VALUES (?, ?, ?, datetime('now'), datetime('now'), 'event', ?)",
-            (path, did, os.path.basename(path), who))
+            "INSERT INTO files (path, filename, first_seen, last_seen, event, experimentalist)"
+            " VALUES (?, ?, datetime('now'), datetime('now'), 'event', ?)",
+            (path, os.path.basename(path), who))
     # test_metric values (a stand-in gate criterion, any ordinary gateable
     # key would do): Alexandre's is a GOOD value (0.99), Anastasiia's a BAD
     # one (0.40), Dana's middling (0.70) — chosen so each experimentalist's

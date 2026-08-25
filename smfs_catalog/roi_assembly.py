@@ -68,11 +68,11 @@ def _seg_row(roi: ROI, i: int, *, file_id, path, roi_index: int) -> dict:
         "l_c_nm":      seg.l_c_nm,
         "l_p_err":     seg.l_p_err,
         "l_c_err":     seg.l_c_err,
-        # Fit-conditioning diagnostics (#134/#137).  These travel WITH the
-        # error bars, in the same row, because an uncertainty that leaves the
-        # app without the number explaining it is exactly what CLAUDE.md's
-        # export rule ("uncertainty travels with the value it belongs to")
-        # exists to prevent — l_p_err already has sqrt(tau) folded in, and a
+        # Fit-conditioning diagnostics.  These travel WITH the error bars,
+        # in the same row: uncertainty travels with the value it belongs to,
+        # and an uncertainty that leaves the app without the number
+        # explaining it cannot be read — l_p_err already has sqrt(tau) folded
+        # in, and a
         # colleague reading the CSV months later cannot recover tau from it.
         "tau":         seg.tau,
         "z_max":       seg.z_max,

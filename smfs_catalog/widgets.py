@@ -217,8 +217,8 @@ class ClusterColourBar(QWidget):
 
     One implementation because there are three consumers (#63: Explore Events,
     the any-vs-any scatter, the variable timeseries) and three copies of a
-    checkbox plus a caption plus a subscribe/unsubscribe pair is exactly the
-    fork CLAUDE.md §6 keeps describing.
+    checkbox plus a caption plus a subscribe/unsubscribe pair is three
+    copies to keep in step.
 
     It owns no cluster data.  It reads clustering.current(), reports coverage
     for whatever cohort its host passes in, and emits `changed` when the host
@@ -302,8 +302,7 @@ class ClusterColourBar(QWidget):
 
     def legend_text(self, paths: list[str]) -> str:
         """The same facts for an on-canvas caption, which survives an image
-        export where a sibling QLabel does not (CLAUDE.md's plot-provenance
-        rule)."""
+        export where a sibling QLabel does not."""
         c = self._clustering.current()
         if c is None or not self.is_active():
             return ""

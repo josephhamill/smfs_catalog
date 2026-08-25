@@ -8,7 +8,7 @@
 
 """
 Regression test: a window is bound BY the screen, it does not define its own
-size (2026-08-10).
+size.
 
 WHAT WENT WRONG.  Every window opened with a hard-coded `self.resize(W, H)`,
 chosen on a large monitor.  That is only half a size request, and it was the

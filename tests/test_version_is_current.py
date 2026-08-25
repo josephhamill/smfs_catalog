@@ -7,25 +7,21 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Guard test: the declared version never lags the released one (2026-08-08).
+Guard test: the declared version never lags the released one.
 
 WHAT WENT WRONG, and it is worth stating plainly because the existing guard
 looked like it covered this.
 
-  2026-05-22   v1.0.0 tagged
-  2026-07-08   v1.1.0 tagged
-  2026-07-31   pyproject.toml and __init__.py created -- BOTH SET TO 1.0.0
-
-The version declarations were not merely allowed to drift.  They were written
-three weeks after v1.1.0 was released and set to the version before it, so
-they were wrong on the day they were created and stayed wrong for every
+The version declarations were not merely allowed to drift.  They were
+created after a release had already shipped and set to the version before it,
+so they were wrong on the day they were written and stayed wrong for every
 release, export and figure afterwards.
 
 That is not cosmetic.  smfs_catalog.__version__ is written into EVERY export
 manifest, and the manifest exists precisely so a colleague opening a CSV
 months later -- with no access to the app or to this repository -- can tell
-which code produced the numbers.  Every export written between 2026-07-31 and
-2026-08-08 names a version from May.
+which code produced the numbers.  A stale declaration makes every export in
+that window name the wrong release.
 
 WHY test_export_convention.py DID NOT CATCH IT.  It checks that pyproject.toml
 and __init__.py agree WITH EACH OTHER.  They did: both said 1.0.0.  A

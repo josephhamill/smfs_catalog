@@ -122,8 +122,8 @@ class ExportGroup:
     that the app's file *formats* are defined once too, not just its folder.
     A histogram exported from Explore Events and one exported from a 2DH's
     marginal projection are the same kind of object and must be readable by
-    the same script; before this they were two hand-rolled writers that
-    happened to agree.
+    the same script, rather than two hand-rolled writers that happen to
+    agree.
     """
 
     def __init__(self, export_dir: Path, base: str, kind: str,

@@ -9,7 +9,7 @@
 """
 ONE parameter set, fetched in ONE read, from the ONE place that decides whose.
 
-The failure this pins down, found live 2026-08-01 with the app open:
+The failure this pins down with the app open:
 
   * The analysis queue held Dylan's files; an ROI window was open on one of
     Anastasiia's curves.
@@ -26,7 +26,7 @@ Cause: 8473c92 removed the settings-table mirror (correctly) and repointed
 every read at the queue, without noticing that a window whose knobs were
 loaded from a different source now disagreed with it.
 
-The rule, restated by the user 2026-08-01: **nobody owns the queue; the file
+The rule, as the user states it: **nobody owns the queue; the file
 at position one of it decides which parameter set is used** — for the batch
 worker and for every window alike.  Clear the queue, add, delete, restart:
 recheck.  Otherwise one answer.  There is no per-curve resolution.

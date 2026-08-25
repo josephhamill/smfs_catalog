@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-One idiom for the procedural guard tests (#84, 2026-08-07).
+One idiom for the procedural guard tests (#84).
 
 WHAT WAS WRONG.  This suite grew two ways of writing a test.  Most files use
 ordinary pytest functions.  Ten grew up as standalone scripts instead — a
@@ -20,9 +20,8 @@ command, and the second one behaved badly under it in three ways:
      broken guard hid the results of every file after it.  That is the exact
      inverse of what a regression suite is for.
   2. They contributed ZERO named tests, so "672 passed" silently did not
-     count ten files — including the guards for the export convention, profile
-     isolation, criteria isolation and curve qualification, which are the ones
-     CLAUDE.md leans on hardest.
+     count ten files — including the guards for the export convention,
+     profile isolation, criteria isolation and curve qualification.
   3. A whole-file pass/fail told you nothing about WHICH check broke without
      scrolling the captured output.
 

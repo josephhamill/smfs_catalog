@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: the packaged app behaves like the app (#111, 2026-08-07).
+Regression test: the packaged app behaves like the app (#111).
 
 WHY THIS EXISTS.  A PyInstaller bundle runs the same source under three
 conditions a checkout never has — no .git directory, no guarantee of a `git`

@@ -92,8 +92,8 @@ class DatePickerDialog(QDialog):
         self._cal.setGridVisible(True)
         self._cal.setSelectionMode(QCalendarWidget.SelectionMode.NoSelection)
         avail_fmt = QTextCharFormat()
-        # The SAME green the queue/database tables use for an event row —
-        # read from style, not hand-copied as it was until 2026-08-03.
+        # The SAME green the queue/database tables use for an event row.
+        # Read from style — never hand-copied.
         avail_fmt.setBackground(QColor(style.ROW_TINT["event"]))
         avail_fmt.setFontWeight(QFont.Weight.Bold)
         for ds in self._counts:

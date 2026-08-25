@@ -8,7 +8,7 @@
 
 """
 Regression test: ONE navigator, mirrored — the worker is the single source of
-truth for playback (#126, 2026-08-03).
+truth for playback (#126).
 
 The contract under test:
 (a) The worker owns the rate limit.  A NavigatorBar READS it when built and
@@ -29,7 +29,7 @@ The contract under test:
 (g) There is no second play/pause control anywhere: the dashboard's old
     _play_btn is gone, and nothing outside navigator_bar drives the worker's
     transport.
-(h) Playing forward honours where the playhead was PUT (2026-08-03).  Forward
+(h) Playing forward honours where the playhead was PUT.  Forward
     means the next file in queue order and nothing else — it never jumps back
     to the oldest still-pending file, and it idles at the queue edge rather
     than wrapping round to pending work behind it.  A fresh worker (no
@@ -65,13 +65,10 @@ PATHS = [
 
 conn = _db.get_connection(DB)
 with conn:
-    conn.execute(
-        "INSERT INTO watched_directories (id, path, added_at)"
-        " VALUES (1, '/tank/testdata/nav', datetime('now'))")
     for p in PATHS:
         conn.execute(
-            "INSERT INTO files (path, directory_id, filename, first_seen, last_seen,"
-            " experimentalist) VALUES (?, 1, ?, datetime('now'), datetime('now'), 'nav')",
+            "INSERT INTO files (path, filename, first_seen, last_seen,"
+            " experimentalist) VALUES (?, ?, datetime('now'), datetime('now'), 'nav')",
             (p, os.path.basename(p)))
 conn.close()
 

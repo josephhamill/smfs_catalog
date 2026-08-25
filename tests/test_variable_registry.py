@@ -38,18 +38,16 @@ ALL    = [FULL, SPARSE, BARE]
 
 _conn = _db.get_connection(DB)
 with _conn:
-    _conn.execute("INSERT INTO watched_directories (id, path, added_at)"
-                  " VALUES (1, '/tank/testdata/vars', datetime('now'))")
     for path, k, at, date in (
         (FULL,   42.5, "2026-07-01 09:30:00", "2026-07-01"),
         (SPARSE, None, None,                  "2026-07-02"),
         (BARE,   None, None,                  None),
     ):
         _conn.execute(
-            "INSERT INTO files (path, directory_id, filename, first_seen,"
+            "INSERT INTO files (path, filename, first_seen,"
             " last_seen, event, experimentalist, spring_constant_pn_nm,"
             " measured_at, measured_date)"
-            " VALUES (?,1,?,datetime('now'),datetime('now'),'event','sam',?,?,?)",
+            " VALUES (?,?,datetime('now'),datetime('now'),'event','sam',?,?,?)",
             (path, os.path.basename(path), k, at, date))
     for path, val in ((FULL, 1.25), (SPARSE, 2.5)):
         fid = _conn.execute("SELECT id FROM files WHERE path=?", (path,)).fetchone()[0]
@@ -113,7 +111,7 @@ def test_nothing_in_not_a_variable_is_ever_offered():
 
 def test_the_dashboard_and_the_registry_share_one_exclusion_object():
     """Not "have equal contents" — the SAME object. Two lists that merely
-    agree today are the fork this module exists to close (CLAUDE.md §6);
+    agree today are the fork this module exists to close;
     identity is the only version of this that cannot drift apart."""
     pytest.importorskip("PyQt6.QtWidgets")
     from smfs_catalog import dashboard_window as _dash
@@ -123,7 +121,7 @@ def test_the_dashboard_and_the_registry_share_one_exclusion_object():
 def test_the_dead_fitter_a_columns_can_never_be_plotted_beside_the_live_ones():
     """wlc_l_c_nm is Fitter A's contour length: fit to the RAW retract
     (sawtooth noise), one event per curve, on a cache key of frozen literals
-    that never invalidated (#80). It was deleted 2026-07-22 and its rows are
+    that never invalidated (#80). It was deleted and its rows are
     frozen at that date. seg_l_c_nm is the SAME physical quantity measured
     correctly. Offering both puts a corpse on an axis beside the living thing
     under near-identical names, which is worse than offering neither."""

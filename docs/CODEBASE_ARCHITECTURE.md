@@ -62,7 +62,7 @@ The straight path exists, but persistence is shared rather than layered: `db.py`
 
 ### Unclassified
 
-`analysis_params.py`, `provenance.py`, `roi_selection.py`
+`analysis_params.py`, `provenance.py`, `repoint_dialog.py`, `roi_selection.py`
 
 ## Static module dependency graph
 
@@ -139,6 +139,7 @@ graph TD
   dashboard_window --> quantities
   dashboard_window --> rawcurve_window
   dashboard_window --> remove_files_dialog
+  dashboard_window --> repoint_dialog
   dashboard_window --> roi_pipeline
   dashboard_window --> scanner
   dashboard_window --> scatter_window
@@ -266,6 +267,9 @@ graph TD
   remove_files_dialog --> db
   remove_files_dialog --> qt_utils
   remove_files_dialog --> style
+  repoint_dialog --> db
+  repoint_dialog --> qt_utils
+  repoint_dialog --> style
   roi_assembly --> roi_events
   roi_events --> models
   roi_events --> roi_detection
@@ -326,18 +330,19 @@ graph TD
 
 Line ranges refer to the current source. `Direct app calls` lists statically visible calls into major app services; an empty cell does not mean the callable has no effect.
 
-### `run_dashboard.py` (127 lines)
+### `run_dashboard.py` (179 lines)
 
 Imports app modules: `crashlog`, `db`. Top-level classes: none.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `_frozen` | 44–46 | helper/control flow | — |
-| `resource_path` | 49–61 | helper/control flow | — |
-| `_ensure_display` | 64–99 | helper/control flow | — |
-| `main` | 102–122 | helper/control flow | `_db.check_db_machine`, `_db.initialise` |
+| `_frozen` | 51–53 | helper/control flow | — |
+| `resource_path` | 56–68 | helper/control flow | — |
+| `_stop_xpra_session` | 71–106 | helper/control flow | — |
+| `_ensure_display` | 109–151 | helper/control flow | — |
+| `main` | 154–174 | helper/control flow | `_db.check_db_machine`, `_db.initialise` |
 
-### `__init__.py` (20 lines)
+### `__init__.py` (17 lines)
 
 Imports app modules: none. Top-level classes: none.
 
@@ -345,22 +350,22 @@ Imports app modules: none. Top-level classes: none.
 |---|---:|---|---|
 | *(no callables)* | — | package metadata/constants | — |
 
-### `add_data_dialog.py` (297 lines)
+### `add_data_dialog.py` (265 lines)
 
 Imports app modules: `db`, `qt_utils`, `scanner`, `style`. Top-level classes: `_ScanProgress`, `AddDataDialog`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `_ScanProgress.__init__` | 62–68 | construction/wiring | — |
-| `_ScanProgress._drop_cursor` | 70–73 | helper/control flow | — |
-| `_ScanProgress.__call__` | 75–81 | helper/control flow | — |
-| `_ScanProgress.close` | 83–87 | helper/control flow | — |
-| `AddDataDialog.__init__` | 96–102 | construction/wiring | — |
-| `AddDataDialog._build_ui` | 104–154 | UI/view coordination | — |
-| `AddDataDialog._on_browse` | 156–159 | UI/event handler | — |
-| `AddDataDialog._confirm_no_overlap` | 161–185 | helper/control flow | `_db.find_overlapping_directories` |
-| `AddDataDialog._on_accept` | 187–243 | UI/event handler | `_db.add_directory`, `_db.get_directory_by_path`, `_scanner.scan_directory` |
-| `AddDataDialog._accept_parent_tree` | 245–297 | helper/control flow | `_scanner.scan_tree` |
+| `_ScanProgress.__init__` | 46–52 | construction/wiring | — |
+| `_ScanProgress._drop_cursor` | 54–57 | helper/control flow | — |
+| `_ScanProgress.__call__` | 59–65 | helper/control flow | — |
+| `_ScanProgress.close` | 67–71 | helper/control flow | — |
+| `AddDataDialog.__init__` | 80–86 | construction/wiring | — |
+| `AddDataDialog._build_ui` | 88–137 | UI/view coordination | — |
+| `AddDataDialog._on_browse` | 139–142 | UI/event handler | — |
+| `AddDataDialog._confirm_no_overlap` | 144–168 | helper/control flow | `_db.find_overlapping_directories` |
+| `AddDataDialog._on_accept` | 170–215 | UI/event handler | `_db.list_files`, `_scanner.scan_directory` |
+| `AddDataDialog._accept_parent_tree` | 217–265 | helper/control flow | `_scanner.scan_tree` |
 
 ### `analysis_params.py` (90 lines)
 
@@ -376,7 +381,7 @@ Imports app modules: none. Top-level classes: `AnalysisParams`.
 | `AnalysisParams.__iter__` | 82–83 | helper/control flow | — |
 | `AnalysisParams.__len__` | 85–86 | helper/control flow | — |
 
-### `analysis_worker.py` (511 lines)
+### `analysis_worker.py` (508 lines)
 
 Imports app modules: `curve_analysis`, `db`. Top-level classes: `AnalysisWorker`.
 
@@ -398,18 +403,18 @@ Imports app modules: `curve_analysis`, `db`. Top-level classes: `AnalysisWorker`
 | `AnalysisWorker.invalidate_queue_cache` | 216–231 | helper/control flow | — |
 | `AnalysisWorker.run` | 235–249 | helper/control flow | `_db.get_connection` |
 | `AnalysisWorker._run_loop` | 251–327 | helper/control flow | — |
-| `AnalysisWorker._process_one` | 331–399 | helper/control flow | `_db.set_event`, `_db.set_queue_status`, `analyse_and_classify` |
-| `AnalysisWorker._fail` | 401–411 | helper/control flow | `_db.set_queue_status` |
-| `AnalysisWorker._lookup_path` | 413–414 | helper/control flow | `_db.get_path` |
-| `AnalysisWorker._check_stop` | 416–418 | helper/control flow | — |
-| `AnalysisWorker._wait_while_paused` | 420–427 | helper/control flow | — |
-| `AnalysisWorker._wait_for_work` | 429–434 | helper/control flow | — |
-| `AnalysisWorker._wait_for_throttle` | 436–454 | helper/control flow | — |
-| `AnalysisWorker._pop_step_request` | 456–460 | helper/control flow | — |
-| `AnalysisWorker._is_paused_locked` | 462–464 | helper/control flow | — |
-| `AnalysisWorker._set_paused_internal` | 466–471 | helper/control flow | — |
-| `AnalysisWorker._queue_ids` | 475–492 | helper/control flow | `_db.list_queue` |
-| `AnalysisWorker._neighbour_file_id` | 497–511 | helper/control flow | — |
+| `AnalysisWorker._process_one` | 331–396 | helper/control flow | `_db.set_event`, `_db.set_queue_status`, `analyse_and_classify` |
+| `AnalysisWorker._fail` | 398–408 | helper/control flow | `_db.set_queue_status` |
+| `AnalysisWorker._lookup_path` | 410–411 | helper/control flow | `_db.get_path` |
+| `AnalysisWorker._check_stop` | 413–415 | helper/control flow | — |
+| `AnalysisWorker._wait_while_paused` | 417–424 | helper/control flow | — |
+| `AnalysisWorker._wait_for_work` | 426–431 | helper/control flow | — |
+| `AnalysisWorker._wait_for_throttle` | 433–451 | helper/control flow | — |
+| `AnalysisWorker._pop_step_request` | 453–457 | helper/control flow | — |
+| `AnalysisWorker._is_paused_locked` | 459–461 | helper/control flow | — |
+| `AnalysisWorker._set_paused_internal` | 463–468 | helper/control flow | — |
+| `AnalysisWorker._queue_ids` | 472–489 | helper/control flow | `_db.list_queue` |
+| `AnalysisWorker._neighbour_file_id` | 494–508 | helper/control flow | — |
 
 ### `bandwidth_warning.py` (31 lines)
 
@@ -479,17 +484,17 @@ Imports app modules: `curve_loader`, `db`, `export_utils`, `ledger`, `pca_window
 | `_TwoDHWindowBase._run_pca_impl` | 992–1084 | helper/control flow | — |
 | `_TwoDHWindowBase._axis_labels` | 1086–1094 | helper/control flow | — |
 
-### `bulk_metadata_dialog.py` (178 lines)
+### `bulk_metadata_dialog.py` (177 lines)
 
 Imports app modules: `db`, `qt_utils`, `style`. Top-level classes: `BulkMetadataDialog`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `BulkMetadataDialog.__init__` | 58–67 | construction/wiring | — |
-| `BulkMetadataDialog._build_ui` | 69–105 | UI/view coordination | — |
-| `BulkMetadataDialog._make_value_box` | 107–144 | helper/control flow | `_db.get_distinct_values` |
-| `BulkMetadataDialog._wrap` | 146–150 | helper/control flow | — |
-| `BulkMetadataDialog._on_accept` | 152–178 | UI/event handler | `_db.set_file_descriptors_bulk` |
+| `BulkMetadataDialog.__init__` | 57–66 | construction/wiring | — |
+| `BulkMetadataDialog._build_ui` | 68–104 | UI/view coordination | — |
+| `BulkMetadataDialog._make_value_box` | 106–143 | helper/control flow | `_db.get_distinct_values` |
+| `BulkMetadataDialog._wrap` | 145–149 | helper/control flow | — |
+| `BulkMetadataDialog._on_accept` | 151–177 | UI/event handler | `_db.set_file_descriptors_bulk` |
 
 ### `categorical_window.py` (332 lines)
 
@@ -604,7 +609,7 @@ Imports app modules: `db`, `variables`. Top-level classes: none.
 | `evaluate` | 140–155 | helper/control flow | — |
 | `explain` | 158–169 | helper/control flow | — |
 
-### `curve_analysis.py` (782 lines)
+### `curve_analysis.py` (781 lines)
 
 Imports app modules: `analysis_params`, `curve_loader`, `db`, `provenance`, `roi_detection`, `roi_events`, `roi_pipeline`, `signal_processing`. Top-level classes: `CurveAnalysisError`, `_PipelineParams`, `Stage1Search`, `CurveResult`.
 
@@ -621,31 +626,38 @@ Imports app modules: `analysis_params`, `curve_loader`, `db`, `provenance`, `roi
 | `_non_event` | 310–320 | helper/control flow | — |
 | `_stage1` | 340–356 | helper/control flow | — |
 | `current_signature` | 598–617 | helper/control flow | `_db.load_analysis_params` |
-| `analyse_and_classify` | 620–731 | computation/transformation | `_db.delete_event_map`, `_db.dequeue_files`, `_db.get_analysis_result`, `_db.load_analysis_params`, `_db.set_event`, `_db.set_unusable_reason`, `_db.write_analysis_result`, `analyse_and_classify`, `analyse_curve` |
-| `_persist_multi_event_roi` | 736–780 | helper/control flow | `compute_curve_events_coords` |
+| `analyse_and_classify` | 620–730 | computation/transformation | `_db.delete_event_map`, `_db.dequeue_files`, `_db.get_analysis_result`, `_db.load_analysis_params`, `_db.set_event`, `_db.set_unusable_reason`, `_db.write_analysis_result`, `analyse_and_classify`, `analyse_curve` |
+| `_persist_multi_event_roi` | 735–779 | helper/control flow | `compute_curve_events_coords` |
 
-### `curve_loader.py` (501 lines)
+### `curve_loader.py` (719 lines)
 
-Imports app modules: `db`. Top-level classes: `LoadError`, `UnusableCurveError`, `TruncatedCurveError`, `Qualification`, `ForceCurve`.
+Imports app modules: `db`. Top-level classes: `LoadError`, `UnusableCurveError`, `TruncatedCurveError`, `Qualification`, `ForceCurve`, `RawTrace`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
 | `UnusableCurveError.__init__` | 60–62 | construction/wiring | — |
 | `TruncatedCurveError.__init__` | 72–73 | construction/wiring | — |
-| `Qualification.usable` | 135–136 | helper/control flow | — |
-| `_is_truncated` | 139–153 | helper/control flow | — |
-| `_spring_constant` | 156–172 | helper/control flow | — |
-| `_modality` | 175–207 | helper/control flow | — |
-| `qualify_wave` | 210–298 | helper/control flow | — |
-| `ForceCurve.force_appr` | 344–346 | helper/control flow | — |
-| `ForceCurve.force_retr` | 349–351 | helper/control flow | — |
-| `ForceCurve.filename` | 354–355 | helper/control flow | — |
-| `load_force_curve` | 360–501 | read/query/resolve | — |
-| `_safe` | 461–468 | helper/control flow | — |
+| `channel_map` | 116–133 | helper/control flow | — |
+| `piezo_column` | 136–144 | helper/control flow | — |
+| `Qualification.usable` | 169–170 | helper/control flow | — |
+| `_is_truncated` | 173–187 | helper/control flow | — |
+| `_spring_constant` | 190–206 | helper/control flow | — |
+| `_hold_z_sensor` | 209–218 | helper/control flow | — |
+| `_modality` | 221–263 | helper/control flow | — |
+| `qualify_wave` | 266–374 | helper/control flow | — |
+| `_note_float` | 377–384 | helper/control flow | — |
+| `_note_fields` | 387–433 | helper/control flow | — |
+| `ForceCurve.force_appr` | 479–481 | helper/control flow | — |
+| `ForceCurve.force_retr` | 484–486 | helper/control flow | — |
+| `ForceCurve.filename` | 489–490 | helper/control flow | — |
+| `RawTrace.filename` | 524–525 | helper/control flow | — |
+| `RawTrace.force_pn` | 528–532 | helper/control flow | — |
+| `load_raw_trace` | 535–597 | read/query/resolve | — |
+| `load_force_curve` | 602–719 | read/query/resolve | — |
 
-### `dashboard_window.py` (2056 lines)
+### `dashboard_window.py` (2077 lines)
 
-Imports app modules: `add_data_dialog`, `analysis_worker`, `bandwidth_warning`, `bulk_metadata_dialog`, `categorical_window`, `class_lineplot_window`, `criteria_dialog`, `criteria_gate`, `curve_analysis`, `date_picker_dialog`, `db`, `event_summary_window`, `export_utils`, `navigator_bar`, `qt_utils`, `quantities`, `rawcurve_window`, `remove_files_dialog`, `roi_pipeline`, `scanner`, `scatter_window`, `scope`, `signal_processing`, `style`, `variable_window`, `variables`, `widgets`. Top-level classes: `FilesTableModel`, `DashboardWindow`.
+Imports app modules: `add_data_dialog`, `analysis_worker`, `bandwidth_warning`, `bulk_metadata_dialog`, `categorical_window`, `class_lineplot_window`, `criteria_dialog`, `criteria_gate`, `curve_analysis`, `date_picker_dialog`, `db`, `event_summary_window`, `export_utils`, `navigator_bar`, `qt_utils`, `quantities`, `rawcurve_window`, `remove_files_dialog`, `repoint_dialog`, `roi_pipeline`, `scanner`, `scatter_window`, `scope`, `signal_processing`, `style`, `variable_window`, `variables`, `widgets`. Top-level classes: `FilesTableModel`, `DashboardWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
@@ -670,89 +682,90 @@ Imports app modules: `add_data_dialog`, `analysis_worker`, `bandwidth_warning`, 
 | `DashboardWindow._refresh_freshness` | 383–392 | UI/view coordination | — |
 | `DashboardWindow.closeEvent` | 394–410 | UI/event handler | — |
 | `DashboardWindow._confirm_queue_saved` | 412–442 | helper/control flow | `_db.queue_paths` |
-| `DashboardWindow._build_ui` | 445–546 | UI/view coordination | — |
-| `DashboardWindow._relayout_splitter` | 548–566 | helper/control flow | — |
-| `DashboardWindow._build_scope_section` | 568–638 | UI/view coordination | — |
-| `DashboardWindow._build_db_section` | 640–670 | UI/view coordination | — |
-| `DashboardWindow._build_queue_section` | 672–800 | UI/view coordination | — |
-| `DashboardWindow._build_gate_cluster` | 802–825 | UI/view coordination | — |
-| `DashboardWindow._sync_gate_buttons` | 827–835 | helper/control flow | — |
-| `DashboardWindow._on_export_classification_report` | 837–865 | UI/event handler | `_db.classification_report_rows` |
-| `DashboardWindow._on_define_metadata` | 867–879 | UI/event handler | `_db.list_files` |
-| `DashboardWindow._on_remove_files` | 881–894 | UI/event handler | `_db.list_files` |
-| `DashboardWindow._on_recheck_catalog` | 896–960 | UI/event handler | `_db.duplicate_groups`, `_db.list_files`, `_scanner.requalify_catalog` |
-| `DashboardWindow._on_save_queue` | 962–976 | UI/event handler | `_db.queue_paths` |
-| `DashboardWindow._on_export_queue_table` | 978–1018 | UI/event handler | `_db.list_queue` |
-| `DashboardWindow._on_load_queue` | 1020–1048 | UI/event handler | `_db.import_queue_from_paths` |
-| `DashboardWindow._update_export_dir_label` | 1050–1066 | UI/view coordination | `_db.get_app_setting` |
-| `DashboardWindow._on_set_export_folder` | 1068–1075 | UI/event handler | — |
-| `DashboardWindow._refresh_facets` | 1078–1111 | UI/view coordination | `_db.get_facet_options` |
-| `DashboardWindow._current_scope` | 1113–1127 | helper/control flow | — |
-| `DashboardWindow._on_scope_edit` | 1129–1139 | UI/event handler | — |
-| `DashboardWindow._prune_children` | 1141–1150 | helper/control flow | — |
-| `DashboardWindow._clear_filters` | 1152–1161 | helper/control flow | — |
-| `DashboardWindow._refresh_db_and_counts` | 1164–1178 | UI/view coordination | `_db.list_files` |
-| `DashboardWindow._on_db_double_click` | 1180–1183 | UI/event handler | — |
-| `DashboardWindow._on_queue_double_click` | 1185–1189 | UI/event handler | — |
-| `DashboardWindow._selected_db_ids` | 1191–1198 | helper/control flow | — |
-| `DashboardWindow._compute_queue_derived_cols` | 1201–1213 | helper/control flow | `_db.get_queue_analysis_types` |
-| `DashboardWindow._fetch_queue_column_data` | 1215–1220 | helper/control flow | — |
-| `DashboardWindow._queue_cell_value` | 1223–1225 | helper/control flow | `_db.normalize_path` |
-| `DashboardWindow._queue_cell_text` | 1228–1231 | helper/control flow | — |
-| `DashboardWindow._refresh_queue_table` | 1233–1294 | UI/view coordination | `_db.list_queue` |
-| `DashboardWindow._selected_ids` | 1296–1304 | helper/control flow | — |
-| `DashboardWindow._on_send_to_queue` | 1306–1313 | UI/event handler | `_db.enqueue_files` |
-| `DashboardWindow._on_segment_select_changed` | 1315–1318 | UI/event handler | — |
-| `DashboardWindow._on_remove_from_queue` | 1320–1326 | UI/event handler | `_db.dequeue_files` |
-| `DashboardWindow._on_empty_queue` | 1328–1342 | UI/event handler | `_db.clear_analysis_queue` |
-| `DashboardWindow._on_worker_paused_changed` | 1345–1346 | UI/event handler | — |
-| `DashboardWindow._on_worker_playhead_changed` | 1348–1350 | UI/event handler | — |
-| `DashboardWindow._on_worker_direction_changed` | 1352–1354 | UI/event handler | — |
-| `DashboardWindow._on_worker_queue_empty` | 1356–1357 | UI/event handler | — |
-| `DashboardWindow._compute_freshness` | 1359–1366 | helper/control flow | `_db.queue_freshness` |
-| `DashboardWindow._status_class` | 1368–1374 | helper/control flow | — |
-| `DashboardWindow._set_status_cell` | 1376–1401 | helper/control flow | — |
-| `DashboardWindow._raw_status` | 1403–1407 | helper/control flow | — |
-| `DashboardWindow._freshness_line` | 1409–1418 | helper/control flow | — |
-| `DashboardWindow._current_rate` | 1420–1429 | helper/control flow | — |
-| `DashboardWindow._mean_cost` | 1431–1434 | helper/control flow | — |
-| `DashboardWindow._files_ahead` | 1436–1446 | helper/control flow | — |
-| `DashboardWindow._eta_text` | 1448–1476 | helper/control flow | — |
-| `DashboardWindow._update_location_label` | 1478–1505 | UI/view coordination | — |
-| `DashboardWindow._acq_filter_line` | 1507–1525 | helper/control flow | `_db.load_analysis_params` |
-| `DashboardWindow._update_gate_label` | 1527–1578 | UI/view coordination | `_db.active_param_owner`, `_db.list_queue` |
-| `DashboardWindow._filename_for_playhead` | 1580–1590 | helper/control flow | — |
-| `DashboardWindow._on_open_viewer` | 1592–1607 | UI/event handler | — |
-| `DashboardWindow._open_raw_viewer` | 1609–1621 | helper/control flow | `_db.enqueue_files`, `_db.get_file_id` |
-| `DashboardWindow.reveal_raw_at` | 1623–1625 | helper/control flow | — |
-| `DashboardWindow.reveal_roi_at` | 1627–1634 | helper/control flow | — |
-| `DashboardWindow._on_file_started` | 1637–1638 | UI/event handler | — |
-| `DashboardWindow._on_file_done` | 1640–1641 | UI/event handler | — |
-| `DashboardWindow._on_file_error` | 1643–1647 | UI/event handler | — |
-| `DashboardWindow._on_data_unavailable` | 1649–1663 | UI/event handler | — |
-| `DashboardWindow._on_worker_fatal_error` | 1665–1670 | UI/event handler | — |
-| `DashboardWindow._flush_worker_events` | 1672–1761 | helper/control flow | — |
-| `DashboardWindow._fmt_eta` | 1764–1772 | helper/control flow | — |
-| `DashboardWindow._update_queue_row` | 1775–1792 | UI/view coordination | — |
-| `DashboardWindow._on_pick_date` | 1795–1805 | UI/event handler | — |
-| `DashboardWindow._on_add_data` | 1808–1812 | UI/event handler | — |
-| `DashboardWindow._spawn` | 1815–1820 | helper/control flow | — |
-| `DashboardWindow._on_queue_header_clicked` | 1824–1877 | UI/event handler | `_db.list_queue` |
-| `DashboardWindow._gate_hit_and_reasons` | 1879–1885 | helper/control flow | — |
-| `DashboardWindow._set_hit_cell` | 1887–1897 | helper/control flow | — |
-| `DashboardWindow._hit_tooltip` | 1899–1916 | helper/control flow | — |
-| `DashboardWindow._hit_text` | 1919–1925 | helper/control flow | — |
-| `DashboardWindow._count_non_hit` | 1927–1935 | helper/control flow | `_db.list_queue` |
-| `DashboardWindow._refresh_hit_column` | 1937–1947 | UI/view coordination | `_db.list_queue` |
-| `DashboardWindow._queue_event_paths` | 1949–1952 | helper/control flow | `_db.list_queue` |
-| `DashboardWindow._open_event_summary` | 1954–1965 | helper/control flow | — |
-| `DashboardWindow._open_scatter` | 1968–1985 | helper/control flow | — |
-| `DashboardWindow._attach_raw` | 1987–1991 | helper/control flow | — |
-| `DashboardWindow._open_criteria` | 1993–2008 | helper/control flow | — |
-| `DashboardWindow._on_criteria_changed` | 2010–2015 | UI/event handler | — |
-| `DashboardWindow._open_non_events` | 2017–2026 | helper/control flow | — |
-| `DashboardWindow._refresh_population_children` | 2028–2045 | UI/view coordination | — |
-| `_fmt_cell` | 2048–2056 | helper/control flow | — |
+| `DashboardWindow._build_ui` | 445–557 | UI/view coordination | — |
+| `DashboardWindow._relayout_splitter` | 559–577 | helper/control flow | — |
+| `DashboardWindow._build_scope_section` | 579–649 | UI/view coordination | — |
+| `DashboardWindow._build_db_section` | 651–681 | UI/view coordination | — |
+| `DashboardWindow._build_queue_section` | 683–811 | UI/view coordination | — |
+| `DashboardWindow._build_gate_cluster` | 813–836 | UI/view coordination | — |
+| `DashboardWindow._sync_gate_buttons` | 838–846 | helper/control flow | — |
+| `DashboardWindow._on_export_classification_report` | 848–876 | UI/event handler | `_db.classification_report_rows` |
+| `DashboardWindow._on_define_metadata` | 878–890 | UI/event handler | `_db.list_files` |
+| `DashboardWindow._on_remove_files` | 892–905 | UI/event handler | `_db.list_files` |
+| `DashboardWindow._on_recheck_catalog` | 907–971 | UI/event handler | `_db.duplicate_groups`, `_db.list_files`, `_scanner.requalify_catalog` |
+| `DashboardWindow._on_save_queue` | 973–987 | UI/event handler | `_db.queue_paths` |
+| `DashboardWindow._on_export_queue_table` | 989–1029 | UI/event handler | `_db.list_queue` |
+| `DashboardWindow._on_load_queue` | 1031–1059 | UI/event handler | `_db.import_queue_from_paths` |
+| `DashboardWindow._update_export_dir_label` | 1061–1077 | UI/view coordination | `_db.get_app_setting` |
+| `DashboardWindow._on_set_export_folder` | 1079–1086 | UI/event handler | — |
+| `DashboardWindow._refresh_facets` | 1089–1122 | UI/view coordination | `_db.get_facet_options` |
+| `DashboardWindow._current_scope` | 1124–1138 | helper/control flow | — |
+| `DashboardWindow._on_scope_edit` | 1140–1150 | UI/event handler | — |
+| `DashboardWindow._prune_children` | 1152–1161 | helper/control flow | — |
+| `DashboardWindow._clear_filters` | 1163–1172 | helper/control flow | — |
+| `DashboardWindow._refresh_db_and_counts` | 1175–1189 | UI/view coordination | `_db.list_files` |
+| `DashboardWindow._on_db_double_click` | 1191–1194 | UI/event handler | — |
+| `DashboardWindow._on_queue_double_click` | 1196–1200 | UI/event handler | — |
+| `DashboardWindow._selected_db_ids` | 1202–1209 | helper/control flow | — |
+| `DashboardWindow._compute_queue_derived_cols` | 1212–1224 | helper/control flow | `_db.get_queue_analysis_types` |
+| `DashboardWindow._fetch_queue_column_data` | 1226–1231 | helper/control flow | — |
+| `DashboardWindow._queue_cell_value` | 1234–1236 | helper/control flow | `_db.normalize_path` |
+| `DashboardWindow._queue_cell_text` | 1239–1242 | helper/control flow | — |
+| `DashboardWindow._refresh_queue_table` | 1244–1305 | UI/view coordination | `_db.list_queue` |
+| `DashboardWindow._selected_ids` | 1307–1315 | helper/control flow | — |
+| `DashboardWindow._on_send_to_queue` | 1317–1324 | UI/event handler | `_db.enqueue_files` |
+| `DashboardWindow._on_segment_select_changed` | 1326–1329 | UI/event handler | — |
+| `DashboardWindow._on_remove_from_queue` | 1331–1337 | UI/event handler | `_db.dequeue_files` |
+| `DashboardWindow._on_empty_queue` | 1339–1353 | UI/event handler | `_db.clear_analysis_queue` |
+| `DashboardWindow._on_worker_paused_changed` | 1356–1357 | UI/event handler | — |
+| `DashboardWindow._on_worker_playhead_changed` | 1359–1361 | UI/event handler | — |
+| `DashboardWindow._on_worker_direction_changed` | 1363–1365 | UI/event handler | — |
+| `DashboardWindow._on_worker_queue_empty` | 1367–1368 | UI/event handler | — |
+| `DashboardWindow._compute_freshness` | 1370–1377 | helper/control flow | `_db.queue_freshness` |
+| `DashboardWindow._status_class` | 1379–1385 | helper/control flow | — |
+| `DashboardWindow._set_status_cell` | 1387–1412 | helper/control flow | — |
+| `DashboardWindow._raw_status` | 1414–1418 | helper/control flow | — |
+| `DashboardWindow._freshness_line` | 1420–1429 | helper/control flow | — |
+| `DashboardWindow._current_rate` | 1431–1440 | helper/control flow | — |
+| `DashboardWindow._mean_cost` | 1442–1445 | helper/control flow | — |
+| `DashboardWindow._files_ahead` | 1447–1457 | helper/control flow | — |
+| `DashboardWindow._eta_text` | 1459–1487 | helper/control flow | — |
+| `DashboardWindow._update_location_label` | 1489–1516 | UI/view coordination | — |
+| `DashboardWindow._acq_filter_line` | 1518–1536 | helper/control flow | `_db.load_analysis_params` |
+| `DashboardWindow._update_gate_label` | 1538–1589 | UI/view coordination | `_db.active_param_owner`, `_db.list_queue` |
+| `DashboardWindow._filename_for_playhead` | 1591–1601 | helper/control flow | — |
+| `DashboardWindow._on_open_viewer` | 1603–1618 | UI/event handler | — |
+| `DashboardWindow._open_raw_viewer` | 1620–1632 | helper/control flow | `_db.enqueue_files`, `_db.get_file_id` |
+| `DashboardWindow.reveal_raw_at` | 1634–1636 | helper/control flow | — |
+| `DashboardWindow.reveal_roi_at` | 1638–1645 | helper/control flow | — |
+| `DashboardWindow._on_file_started` | 1648–1649 | UI/event handler | — |
+| `DashboardWindow._on_file_done` | 1651–1652 | UI/event handler | — |
+| `DashboardWindow._on_file_error` | 1654–1658 | UI/event handler | — |
+| `DashboardWindow._on_data_unavailable` | 1660–1674 | UI/event handler | — |
+| `DashboardWindow._on_worker_fatal_error` | 1676–1681 | UI/event handler | — |
+| `DashboardWindow._flush_worker_events` | 1683–1772 | helper/control flow | — |
+| `DashboardWindow._fmt_eta` | 1775–1783 | helper/control flow | — |
+| `DashboardWindow._update_queue_row` | 1786–1803 | UI/view coordination | — |
+| `DashboardWindow._on_pick_date` | 1806–1816 | UI/event handler | — |
+| `DashboardWindow._on_add_data` | 1819–1823 | UI/event handler | — |
+| `DashboardWindow._on_repoint_data` | 1826–1833 | UI/event handler | — |
+| `DashboardWindow._spawn` | 1836–1841 | helper/control flow | — |
+| `DashboardWindow._on_queue_header_clicked` | 1845–1898 | UI/event handler | `_db.list_queue` |
+| `DashboardWindow._gate_hit_and_reasons` | 1900–1906 | helper/control flow | — |
+| `DashboardWindow._set_hit_cell` | 1908–1918 | helper/control flow | — |
+| `DashboardWindow._hit_tooltip` | 1920–1937 | helper/control flow | — |
+| `DashboardWindow._hit_text` | 1940–1946 | helper/control flow | — |
+| `DashboardWindow._count_non_hit` | 1948–1956 | helper/control flow | `_db.list_queue` |
+| `DashboardWindow._refresh_hit_column` | 1958–1968 | UI/view coordination | `_db.list_queue` |
+| `DashboardWindow._queue_event_paths` | 1970–1973 | helper/control flow | `_db.list_queue` |
+| `DashboardWindow._open_event_summary` | 1975–1986 | helper/control flow | — |
+| `DashboardWindow._open_scatter` | 1989–2006 | helper/control flow | — |
+| `DashboardWindow._attach_raw` | 2008–2012 | helper/control flow | — |
+| `DashboardWindow._open_criteria` | 2014–2029 | helper/control flow | — |
+| `DashboardWindow._on_criteria_changed` | 2031–2036 | UI/event handler | — |
+| `DashboardWindow._open_non_events` | 2038–2047 | helper/control flow | — |
+| `DashboardWindow._refresh_population_children` | 2049–2066 | UI/view coordination | — |
+| `_fmt_cell` | 2069–2077 | helper/control flow | — |
 
 ### `date_picker_dialog.py` (156 lines)
 
@@ -766,108 +779,111 @@ Imports app modules: `db`, `qt_utils`, `style`. Top-level classes: `DatePickerDi
 | `DatePickerDialog._on_sel_changed` | 136–149 | UI/event handler | — |
 | `DatePickerDialog._on_accept` | 151–156 | UI/event handler | — |
 
-### `db.py` (2313 lines)
+### `db.py` (2402 lines)
 
 Imports app modules: `analysis_params`, `criteria_gate`, `event_processor`, `roi_pipeline`. Top-level classes: none.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `default_db_path` | 33–46 | helper/control flow | — |
-| `normalize_path` | 53–55 | helper/control flow | — |
-| `_this_machine` | 58–60 | helper/control flow | — |
-| `check_db_machine` | 63–85 | helper/control flow | — |
-| `get_connection` | 88–94 | read/query/resolve | — |
-| `initialise` | 134–342 | helper/control flow | — |
-| `add_directory` | 345–359 | state mutation | — |
-| `find_overlapping_directories` | 362–376 | computation/transformation | — |
-| `list_directories` | 379–390 | read/query/resolve | — |
-| `mark_directory_scanned` | 393–399 | state mutation | — |
-| `upsert_file` | 402–444 | state mutation | — |
-| `set_file_descriptors_bulk` | 447–479 | state mutation | — |
-| `_chunks` | 462–464 | helper/control flow | — |
-| `_sql_chunks` | 488–491 | helper/control flow | — |
-| `_file_ids_for_paths` | 494–508 | helper/control flow | — |
-| `_count_by_id` | 511–517 | helper/control flow | — |
-| `_exec_by_id` | 520–526 | helper/control flow | — |
-| `describe_removal_scope` | 529–575 | read/query/resolve | — |
-| `erase_analysis_for_files` | 578–605 | helper/control flow | — |
-| `remove_files_from_catalog` | 608–642 | state mutation | — |
-| `get_distinct_values` | 645–698 | read/query/resolve | — |
-| `_file_filter_clauses` | 717–780 | helper/control flow | — |
-| `add_many` | 729–733 | state mutation | — |
-| `get_facet_options` | 783–819 | read/query/resolve | — |
-| `list_files` | 822–873 | read/query/resolve | — |
-| `duplicate_groups` | 874–899 | helper/control flow | — |
-| `_classification_report_columns` | 910–914 | helper/control flow | — |
-| `classification_report_rows` | 917–953 | helper/control flow | — |
-| `get_distinct_dates` | 956–995 | read/query/resolve | — |
-| `get_measured_dates` | 998–1011 | read/query/resolve | — |
-| `get_measured_datetimes` | 1014–1028 | read/query/resolve | — |
-| `get_file_id` | 1031–1043 | read/query/resolve | — |
-| `get_path` | 1046–1060 | read/query/resolve | — |
-| `get_analysis_result` | 1063–1088 | read/query/resolve | — |
-| `write_analysis_result` | 1091–1118 | state mutation | — |
-| `get_analysis_results_multi` | 1121–1147 | read/query/resolve | — |
-| `write_analysis_results_multi` | 1150–1180 | state mutation | — |
-| `get_derived_results_bulk_latest` | 1183–1230 | read/query/resolve | — |
-| `_chunks` | 1195–1197 | helper/control flow | — |
-| `get_queue_analysis_types` | 1233–1245 | read/query/resolve | — |
-| `set_threshold` | 1248–1270 | state mutation | — |
-| `get_thresholds` | 1273–1290 | read/query/resolve | — |
-| `get_threshold` | 1293–1311 | read/query/resolve | — |
-| `get_experimentalists_for_files` | 1314–1333 | read/query/resolve | — |
-| `resolve_common_experimentalist` | 1336–1345 | read/query/resolve | — |
-| `_invalidate_settings_cache` | 1351–1353 | helper/control flow | — |
-| `get_all_settings` | 1356–1366 | read/query/resolve | — |
-| `get_setting` | 1369–1375 | read/query/resolve | — |
-| `active_param_owner` | 1386–1401 | helper/control flow | — |
-| `view_defaults` | 1404–1418 | helper/control flow | — |
-| `profile_defaults` | 1421–1423 | helper/control flow | — |
-| `_materialized_param_set` | 1426–1508 | helper/control flow | — |
-| `_profile` | 1448–1459 | helper/control flow | — |
-| `load_analysis_params` | 1511–1513 | read/query/resolve | — |
-| `update_analysis_param` | 1516–1522 | helper/control flow | — |
-| `get_param_set` | 1525–1527 | read/query/resolve | — |
-| `set_setting` | 1530–1543 | state mutation | — |
-| `get_app_setting` | 1549–1560 | read/query/resolve | — |
-| `set_app_setting` | 1563–1575 | state mutation | — |
-| `write_event_histogram` | 1578–1594 | state mutation | — |
-| `write_event_histograms_bulk` | 1597–1615 | state mutation | — |
-| `get_event_histogram` | 1618–1639 | read/query/resolve | — |
-| `write_event_map` | 1642–1664 | state mutation | — |
-| `get_event_map` | 1667–1689 | read/query/resolve | — |
-| `get_latest_event_map` | 1692–1708 | read/query/resolve | — |
-| `get_latest_event_map_params` | 1711–1725 | read/query/resolve | — |
-| `get_event_map_provenance_bulk` | 1728–1755 | read/query/resolve | — |
-| `get_segment_override` | 1758–1780 | read/query/resolve | — |
-| `get_segment_overrides_bulk` | 1783–1813 | read/query/resolve | — |
-| `set_primary_segment_idx` | 1816–1832 | state mutation | — |
-| `set_secondary_segment_idx` | 1835–1851 | state mutation | — |
-| `delete_event_map` | 1854–1866 | state mutation | — |
-| `write_file_metadata` | 1869–1902 | state mutation | — |
-| `_write` | 1879–1892 | helper/control flow | — |
-| `get_file_metadata` | 1905–1926 | read/query/resolve | — |
-| `get_file_columns` | 1929–1956 | read/query/resolve | — |
-| `get_directory_by_path` | 1959–1972 | read/query/resolve | — |
-| `get_experimentalist_for_file` | 1975–1988 | read/query/resolve | — |
-| `get_experimentalist_profile` | 1991–2008 | read/query/resolve | — |
-| `set_experimentalist_profile` | 2011–2023 | state mutation | — |
-| `merge_experimentalist_profile` | 2026–2042 | helper/control flow | — |
-| `save_distribution_fit` | 2045–2067 | state mutation | — |
-| `get_distribution_fits` | 2070–2082 | read/query/resolve | — |
-| `save_gmm_fit` | 2085–2111 | state mutation | — |
-| `get_gmm_fits` | 2114–2127 | read/query/resolve | — |
-| `set_event` | 2133–2151 | state mutation | — |
-| `set_unusable_reason` | 2154–2171 | state mutation | — |
-| `clear_analysis_queue` | 2174–2179 | state mutation | — |
-| `enqueue_files` | 2182–2197 | state mutation | — |
-| `dequeue_files` | 2200–2213 | state mutation | — |
-| `set_queue_status` | 2216–2234 | state mutation | — |
-| `queue_paths` | 2237–2239 | helper/control flow | — |
-| `import_queue_from_paths` | 2242–2259 | state mutation | — |
-| `list_queue` | 2262–2276 | read/query/resolve | — |
-| `queue_freshness` | 2282–2309 | helper/control flow | — |
-| `_now` | 2312–2313 | helper/control flow | — |
+| `default_db_path` | 31–44 | helper/control flow | — |
+| `normalize_path` | 51–53 | helper/control flow | — |
+| `_this_machine` | 56–58 | helper/control flow | — |
+| `check_db_machine` | 61–83 | helper/control flow | — |
+| `get_connection` | 86–92 | read/query/resolve | — |
+| `initialise` | 132–335 | helper/control flow | — |
+| `directory_of` | 338–340 | helper/control flow | — |
+| `find_overlapping_directories` | 343–357 | computation/transformation | — |
+| `list_directories` | 360–371 | read/query/resolve | — |
+| `upsert_file` | 374–416 | state mutation | — |
+| `set_file_descriptors_bulk` | 419–451 | state mutation | — |
+| `_chunks` | 434–436 | helper/control flow | — |
+| `_sql_chunks` | 460–463 | helper/control flow | — |
+| `_file_ids_for_paths` | 466–477 | helper/control flow | — |
+| `_count_by_id` | 480–486 | helper/control flow | — |
+| `_exec_by_id` | 489–495 | helper/control flow | — |
+| `describe_removal_scope` | 498–535 | read/query/resolve | — |
+| `erase_analysis_for_files` | 538–565 | helper/control flow | — |
+| `remove_files_from_catalog` | 568–593 | state mutation | — |
+| `_repointed` | 607–617 | helper/control flow | — |
+| `_relocation_plan` | 620–645 | helper/control flow | — |
+| `describe_relocation` | 648–675 | read/query/resolve | — |
+| `relocate_files` | 678–712 | helper/control flow | — |
+| `missing_by_directory` | 715–746 | helper/control flow | — |
+| `get_distinct_values` | 749–801 | read/query/resolve | — |
+| `_file_filter_clauses` | 820–887 | helper/control flow | — |
+| `add_many` | 832–836 | state mutation | — |
+| `get_facet_options` | 890–926 | read/query/resolve | — |
+| `list_files` | 929–979 | read/query/resolve | — |
+| `duplicate_groups` | 980–1005 | helper/control flow | — |
+| `_classification_report_columns` | 1016–1020 | helper/control flow | — |
+| `classification_report_rows` | 1023–1059 | helper/control flow | — |
+| `get_distinct_dates` | 1062–1101 | read/query/resolve | — |
+| `get_measured_dates` | 1104–1117 | read/query/resolve | — |
+| `get_measured_datetimes` | 1120–1134 | read/query/resolve | — |
+| `get_file_id` | 1137–1149 | read/query/resolve | — |
+| `get_path` | 1152–1166 | read/query/resolve | — |
+| `get_analysis_result` | 1169–1194 | read/query/resolve | — |
+| `write_analysis_result` | 1197–1224 | state mutation | — |
+| `get_analysis_results_multi` | 1227–1253 | read/query/resolve | — |
+| `write_analysis_results_multi` | 1256–1286 | state mutation | — |
+| `get_derived_results_bulk_latest` | 1289–1336 | read/query/resolve | — |
+| `_chunks` | 1301–1303 | helper/control flow | — |
+| `get_queue_analysis_types` | 1339–1351 | read/query/resolve | — |
+| `set_threshold` | 1354–1376 | state mutation | — |
+| `get_thresholds` | 1379–1396 | read/query/resolve | — |
+| `get_threshold` | 1399–1417 | read/query/resolve | — |
+| `get_experimentalists_for_files` | 1420–1439 | read/query/resolve | — |
+| `resolve_common_experimentalist` | 1442–1451 | read/query/resolve | — |
+| `_invalidate_settings_cache` | 1457–1459 | helper/control flow | — |
+| `get_all_settings` | 1462–1472 | read/query/resolve | — |
+| `get_setting` | 1475–1481 | read/query/resolve | — |
+| `active_param_owner` | 1492–1507 | helper/control flow | — |
+| `view_defaults` | 1510–1524 | helper/control flow | — |
+| `profile_defaults` | 1527–1529 | helper/control flow | — |
+| `_materialized_param_set` | 1532–1614 | helper/control flow | — |
+| `_profile` | 1554–1565 | helper/control flow | — |
+| `load_analysis_params` | 1617–1619 | read/query/resolve | — |
+| `update_analysis_param` | 1622–1628 | helper/control flow | — |
+| `get_param_set` | 1631–1633 | read/query/resolve | — |
+| `set_setting` | 1636–1649 | state mutation | — |
+| `get_app_setting` | 1655–1666 | read/query/resolve | — |
+| `set_app_setting` | 1669–1681 | state mutation | — |
+| `write_event_histogram` | 1684–1700 | state mutation | — |
+| `write_event_histograms_bulk` | 1703–1721 | state mutation | — |
+| `get_event_histogram` | 1724–1745 | read/query/resolve | — |
+| `write_event_map` | 1748–1770 | state mutation | — |
+| `get_event_map` | 1773–1795 | read/query/resolve | — |
+| `get_latest_event_map` | 1798–1814 | read/query/resolve | — |
+| `get_latest_event_map_params` | 1817–1831 | read/query/resolve | — |
+| `get_event_map_provenance_bulk` | 1834–1861 | read/query/resolve | — |
+| `get_segment_override` | 1864–1886 | read/query/resolve | — |
+| `get_segment_overrides_bulk` | 1889–1919 | read/query/resolve | — |
+| `set_primary_segment_idx` | 1922–1938 | state mutation | — |
+| `set_secondary_segment_idx` | 1941–1957 | state mutation | — |
+| `delete_event_map` | 1960–1972 | state mutation | — |
+| `write_file_metadata` | 1975–2008 | state mutation | — |
+| `_write` | 1985–1998 | helper/control flow | — |
+| `get_file_metadata` | 2011–2032 | read/query/resolve | — |
+| `get_file_columns` | 2035–2062 | read/query/resolve | — |
+| `get_experimentalist_for_file` | 2065–2078 | read/query/resolve | — |
+| `get_experimentalist_profile` | 2081–2098 | read/query/resolve | — |
+| `set_experimentalist_profile` | 2101–2113 | state mutation | — |
+| `merge_experimentalist_profile` | 2116–2132 | helper/control flow | — |
+| `save_distribution_fit` | 2135–2157 | state mutation | — |
+| `get_distribution_fits` | 2160–2172 | read/query/resolve | — |
+| `save_gmm_fit` | 2175–2201 | state mutation | — |
+| `get_gmm_fits` | 2204–2217 | read/query/resolve | — |
+| `set_event` | 2223–2241 | state mutation | — |
+| `set_unusable_reason` | 2244–2261 | state mutation | — |
+| `clear_analysis_queue` | 2264–2269 | state mutation | — |
+| `enqueue_files` | 2272–2287 | state mutation | — |
+| `dequeue_files` | 2290–2303 | state mutation | — |
+| `set_queue_status` | 2306–2324 | state mutation | — |
+| `queue_paths` | 2327–2329 | helper/control flow | — |
+| `import_queue_from_paths` | 2332–2349 | state mutation | — |
+| `list_queue` | 2352–2365 | read/query/resolve | — |
+| `queue_freshness` | 2371–2398 | helper/control flow | — |
+| `_now` | 2401–2402 | helper/control flow | — |
 
 ### `decomposition_window.py` (1148 lines)
 
@@ -1054,71 +1070,71 @@ Imports app modules: `models`. Top-level classes: none.
 | `compute_physical_histogram` | 181–195 | computation/transformation | `compute_physical_histogram_at` |
 | `compute_wlc_histogram` | 198–212 | computation/transformation | — |
 
-### `event_summary_window.py` (1573 lines)
+### `event_summary_window.py` (1571 lines)
 
 Imports app modules: `clustering`, `criteria_gate`, `db`, `dist_fit_window`, `export_utils`, `gmm_fit_window`, `histogram_binning`, `isoforce_window`, `ledger`, `normalized_2dh_window`, `physical_2dh_window`, `qt_utils`, `quantities`, `roi_pipeline`, `style`, `widgets`, `wlc_view_window`. Top-level classes: `EventSummaryWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `_vsep` | 96–102 | helper/control flow | — |
-| `EventSummaryWindow.__init__` | 123–480 | construction/wiring | — |
-| `EventSummaryWindow._prepopulate` | 484–528 | helper/control flow | `_db.normalize_path` |
-| `EventSummaryWindow._window_is_visible` | 531–535 | helper/control flow | — |
-| `EventSummaryWindow._current_data_signature` | 537–553 | helper/control flow | — |
-| `EventSummaryWindow._value` | 543–544 | helper/control flow | — |
-| `EventSummaryWindow._mark_fit_windows_stale` | 555–570 | helper/control flow | — |
-| `EventSummaryWindow._rebuild` | 574–689 | UI/view coordination | — |
-| `EventSummaryWindow._spots` | 613–623 | helper/control flow | — |
-| `EventSummaryWindow._draw_cluster_curves` | 691–727 | UI/view coordination | — |
-| `EventSummaryWindow._update_title` | 729–738 | UI/view coordination | — |
-| `EventSummaryWindow._plottability_ledger` | 740–761 | helper/control flow | — |
-| `EventSummaryWindow._on_show_drops` | 763–788 | UI/event handler | — |
-| `EventSummaryWindow._update_stats` | 790–840 | UI/view coordination | — |
-| `EventSummaryWindow._rebuild_list` | 844–877 | UI/view coordination | — |
-| `EventSummaryWindow._on_list_row_changed` | 879–885 | UI/event handler | — |
-| `EventSummaryWindow._on_scatter_clicked` | 887–894 | UI/event handler | — |
-| `EventSummaryWindow._select_index` | 896–906 | helper/control flow | — |
-| `EventSummaryWindow._update_sel_marker` | 908–918 | UI/view coordination | — |
-| `EventSummaryWindow._update_sel_readout` | 920–934 | UI/view coordination | — |
-| `EventSummaryWindow._update_cursor` | 938–953 | UI/view coordination | — |
-| `EventSummaryWindow._hide_cursor` | 955–959 | helper/control flow | — |
-| `EventSummaryWindow.set_criteria_opener` | 961–965 | state mutation | — |
-| `EventSummaryWindow._on_open_criteria` | 967–969 | UI/event handler | — |
-| `EventSummaryWindow._on_population_toggled` | 971–975 | UI/event handler | — |
-| `EventSummaryWindow.set_raw_window` | 977–979 | state mutation | — |
-| `EventSummaryWindow.set_2dh_window` | 981–986 | state mutation | — |
-| `EventSummaryWindow.set_results` | 988–990 | state mutation | — |
-| `EventSummaryWindow.reload_paths` | 992–1021 | helper/control flow | — |
-| `EventSummaryWindow._population_label` | 1025–1026 | helper/control flow | — |
-| `EventSummaryWindow._live_hit_mask` | 1028–1042 | helper/control flow | — |
-| `EventSummaryWindow._population_mask` | 1044–1049 | helper/control flow | — |
-| `EventSummaryWindow._cluster_caption` | 1051–1054 | helper/control flow | — |
-| `EventSummaryWindow._provenance_caption` | 1056–1077 | helper/control flow | — |
-| `EventSummaryWindow._paths_for_mask` | 1079–1082 | helper/control flow | — |
-| `EventSummaryWindow._on_fit_force` | 1084–1090 | UI/event handler | — |
-| `EventSummaryWindow._on_fit_length` | 1092–1098 | UI/event handler | — |
-| `EventSummaryWindow._on_fit_2d` | 1100–1123 | UI/event handler | — |
-| `EventSummaryWindow._open_fit_window` | 1125–1145 | helper/control flow | — |
-| `EventSummaryWindow.export_provenance` | 1149–1170 | helper/control flow | — |
-| `EventSummaryWindow._on_export_scatter` | 1172–1215 | UI/event handler | `_db.normalize_path` |
-| `EventSummaryWindow._err` | 1190–1192 | helper/control flow | `_db.normalize_path` |
-| `EventSummaryWindow._on_export_roi_segments` | 1237–1304 | UI/event handler | `assemble_rows` |
-| `EventSummaryWindow._on_export_force_hist` | 1306–1307 | UI/event handler | — |
-| `EventSummaryWindow._on_export_length_hist` | 1309–1310 | UI/event handler | — |
-| `EventSummaryWindow._export_histogram` | 1312–1350 | helper/control flow | — |
-| `EventSummaryWindow._experimentalist_id` | 1354–1375 | helper/control flow | `_db.get_experimentalist_for_file` |
-| `EventSummaryWindow.population_ledger` | 1377–1415 | helper/control flow | — |
-| `EventSummaryWindow.population_paths` | 1417–1429 | helper/control flow | — |
-| `EventSummaryWindow._isoforce_paths` | 1431–1448 | helper/control flow | `_db.get_measured_dates`, `_db.normalize_path` |
-| `EventSummaryWindow._on_open_normalized_2dh` | 1450–1471 | UI/event handler | — |
-| `EventSummaryWindow._on_open_physical_2dh` | 1473–1491 | UI/event handler | — |
-| `EventSummaryWindow._drop_2dh_window` | 1493–1496 | helper/control flow | — |
-| `EventSummaryWindow._current_event_paths` | 1500–1517 | helper/control flow | `_db.get_measured_dates` |
-| `EventSummaryWindow._on_view_fit` | 1519–1536 | UI/event handler | — |
-| `EventSummaryWindow._on_view_isoforce` | 1538–1561 | UI/event handler | — |
-| `EventSummaryWindow.closeEvent` | 1571–1573 | UI/event handler | — |
+| `_vsep` | 94–100 | helper/control flow | — |
+| `EventSummaryWindow.__init__` | 121–478 | construction/wiring | — |
+| `EventSummaryWindow._prepopulate` | 482–526 | helper/control flow | `_db.normalize_path` |
+| `EventSummaryWindow._window_is_visible` | 529–533 | helper/control flow | — |
+| `EventSummaryWindow._current_data_signature` | 535–551 | helper/control flow | — |
+| `EventSummaryWindow._value` | 541–542 | helper/control flow | — |
+| `EventSummaryWindow._mark_fit_windows_stale` | 553–568 | helper/control flow | — |
+| `EventSummaryWindow._rebuild` | 572–687 | UI/view coordination | — |
+| `EventSummaryWindow._spots` | 611–621 | helper/control flow | — |
+| `EventSummaryWindow._draw_cluster_curves` | 689–725 | UI/view coordination | — |
+| `EventSummaryWindow._update_title` | 727–736 | UI/view coordination | — |
+| `EventSummaryWindow._plottability_ledger` | 738–759 | helper/control flow | — |
+| `EventSummaryWindow._on_show_drops` | 761–786 | UI/event handler | — |
+| `EventSummaryWindow._update_stats` | 788–838 | UI/view coordination | — |
+| `EventSummaryWindow._rebuild_list` | 842–875 | UI/view coordination | — |
+| `EventSummaryWindow._on_list_row_changed` | 877–883 | UI/event handler | — |
+| `EventSummaryWindow._on_scatter_clicked` | 885–892 | UI/event handler | — |
+| `EventSummaryWindow._select_index` | 894–904 | helper/control flow | — |
+| `EventSummaryWindow._update_sel_marker` | 906–916 | UI/view coordination | — |
+| `EventSummaryWindow._update_sel_readout` | 918–932 | UI/view coordination | — |
+| `EventSummaryWindow._update_cursor` | 936–951 | UI/view coordination | — |
+| `EventSummaryWindow._hide_cursor` | 953–957 | helper/control flow | — |
+| `EventSummaryWindow.set_criteria_opener` | 959–963 | state mutation | — |
+| `EventSummaryWindow._on_open_criteria` | 965–967 | UI/event handler | — |
+| `EventSummaryWindow._on_population_toggled` | 969–973 | UI/event handler | — |
+| `EventSummaryWindow.set_raw_window` | 975–977 | state mutation | — |
+| `EventSummaryWindow.set_2dh_window` | 979–984 | state mutation | — |
+| `EventSummaryWindow.set_results` | 986–988 | state mutation | — |
+| `EventSummaryWindow.reload_paths` | 990–1019 | helper/control flow | — |
+| `EventSummaryWindow._population_label` | 1023–1024 | helper/control flow | — |
+| `EventSummaryWindow._live_hit_mask` | 1026–1040 | helper/control flow | — |
+| `EventSummaryWindow._population_mask` | 1042–1047 | helper/control flow | — |
+| `EventSummaryWindow._cluster_caption` | 1049–1052 | helper/control flow | — |
+| `EventSummaryWindow._provenance_caption` | 1054–1075 | helper/control flow | — |
+| `EventSummaryWindow._paths_for_mask` | 1077–1080 | helper/control flow | — |
+| `EventSummaryWindow._on_fit_force` | 1082–1088 | UI/event handler | — |
+| `EventSummaryWindow._on_fit_length` | 1090–1096 | UI/event handler | — |
+| `EventSummaryWindow._on_fit_2d` | 1098–1121 | UI/event handler | — |
+| `EventSummaryWindow._open_fit_window` | 1123–1143 | helper/control flow | — |
+| `EventSummaryWindow.export_provenance` | 1147–1168 | helper/control flow | — |
+| `EventSummaryWindow._on_export_scatter` | 1170–1213 | UI/event handler | `_db.normalize_path` |
+| `EventSummaryWindow._err` | 1188–1190 | helper/control flow | `_db.normalize_path` |
+| `EventSummaryWindow._on_export_roi_segments` | 1235–1302 | UI/event handler | `assemble_rows` |
+| `EventSummaryWindow._on_export_force_hist` | 1304–1305 | UI/event handler | — |
+| `EventSummaryWindow._on_export_length_hist` | 1307–1308 | UI/event handler | — |
+| `EventSummaryWindow._export_histogram` | 1310–1348 | helper/control flow | — |
+| `EventSummaryWindow._experimentalist_id` | 1352–1373 | helper/control flow | `_db.get_experimentalist_for_file` |
+| `EventSummaryWindow.population_ledger` | 1375–1413 | helper/control flow | — |
+| `EventSummaryWindow.population_paths` | 1415–1427 | helper/control flow | — |
+| `EventSummaryWindow._isoforce_paths` | 1429–1446 | helper/control flow | `_db.get_measured_dates`, `_db.normalize_path` |
+| `EventSummaryWindow._on_open_normalized_2dh` | 1448–1469 | UI/event handler | — |
+| `EventSummaryWindow._on_open_physical_2dh` | 1471–1489 | UI/event handler | — |
+| `EventSummaryWindow._drop_2dh_window` | 1491–1494 | helper/control flow | — |
+| `EventSummaryWindow._current_event_paths` | 1498–1515 | helper/control flow | `_db.get_measured_dates` |
+| `EventSummaryWindow._on_view_fit` | 1517–1534 | UI/event handler | — |
+| `EventSummaryWindow._on_view_isoforce` | 1536–1559 | UI/event handler | — |
+| `EventSummaryWindow.closeEvent` | 1569–1571 | UI/event handler | — |
 
-### `export_utils.py` (331 lines)
+### `export_utils.py` (330 lines)
 
 Imports app modules: `db`, `provenance`, `quantities`. Top-level classes: `ExportGroup`.
 
@@ -1141,9 +1157,9 @@ Imports app modules: `db`, `provenance`, `quantities`. Top-level classes: `Expor
 | `ExportGroup.text` | 225–229 | helper/control flow | — |
 | `ExportGroup._record` | 231–235 | helper/control flow | — |
 | `ExportGroup._validate_complete` | 239–255 | helper/control flow | — |
-| `ExportGroup._write_manifest` | 257–290 | helper/control flow | `_db.active_param_owner`, `_db.get_param_set` |
-| `ExportGroup.message` | 292–297 | helper/control flow | — |
-| `export_group` | 301–331 | helper/control flow | — |
+| `ExportGroup._write_manifest` | 257–289 | helper/control flow | `_db.active_param_owner`, `_db.get_param_set` |
+| `ExportGroup.message` | 291–296 | helper/control flow | — |
+| `export_group` | 300–330 | helper/control flow | — |
 
 ### `fft_window.py` (402 lines)
 
@@ -1239,29 +1255,29 @@ Imports app modules: `curve_loader`, `db`, `export_utils`, `navigator_bar`, `pro
 | `IsoforceWindow._clear_plots` | 453–459 | helper/control flow | — |
 | `IsoforceWindow._load_and_mark` | 463–608 | UI/view coordination | `_db.get_file_id`, `_db.get_latest_event_map_params`, `_db.get_segment_override`, `_db.load_analysis_params`, `compute_curve_events_coords` |
 
-### `ledger.py` (257 lines)
+### `ledger.py` (256 lines)
 
 Imports app modules: none. Top-level classes: `Drop`, `Ledger`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `Drop.label` | 86–89 | helper/control flow | — |
-| `Ledger.__init__` | 112–120 | construction/wiring | — |
-| `Ledger.drop` | 124–134 | helper/control flow | — |
-| `Ledger.drop_all` | 136–138 | state mutation | — |
-| `Ledger.absorb` | 140–149 | helper/control flow | — |
-| `Ledger.n_asked` | 154–155 | helper/control flow | — |
-| `Ledger.n_dropped` | 158–159 | helper/control flow | — |
-| `Ledger.n_kept` | 162–163 | helper/control flow | — |
-| `Ledger.kept` | 165–167 | helper/control flow | — |
-| `Ledger.drops` | 169–170 | helper/control flow | — |
-| `Ledger.by_reason` | 172–189 | helper/control flow | — |
-| `Ledger.journey` | 191–198 | helper/control flow | — |
-| `Ledger.summary` | 202–212 | helper/control flow | — |
-| `Ledger.breakdown_lines` | 214–219 | helper/control flow | — |
-| `Ledger.report` | 221–225 | helper/control flow | — |
-| `Ledger.rows` | 229–240 | helper/control flow | — |
-| `Ledger.manifest` | 242–257 | helper/control flow | — |
+| `Drop.label` | 85–88 | helper/control flow | — |
+| `Ledger.__init__` | 111–119 | construction/wiring | — |
+| `Ledger.drop` | 123–133 | helper/control flow | — |
+| `Ledger.drop_all` | 135–137 | state mutation | — |
+| `Ledger.absorb` | 139–148 | helper/control flow | — |
+| `Ledger.n_asked` | 153–154 | helper/control flow | — |
+| `Ledger.n_dropped` | 157–158 | helper/control flow | — |
+| `Ledger.n_kept` | 161–162 | helper/control flow | — |
+| `Ledger.kept` | 164–166 | helper/control flow | — |
+| `Ledger.drops` | 168–169 | helper/control flow | — |
+| `Ledger.by_reason` | 171–188 | helper/control flow | — |
+| `Ledger.journey` | 190–197 | helper/control flow | — |
+| `Ledger.summary` | 201–211 | helper/control flow | — |
+| `Ledger.breakdown_lines` | 213–218 | helper/control flow | — |
+| `Ledger.report` | 220–224 | helper/control flow | — |
+| `Ledger.rows` | 228–239 | helper/control flow | — |
+| `Ledger.manifest` | 241–256 | helper/control flow | — |
 
 ### `mean_curve_window.py` (592 lines)
 
@@ -1424,7 +1440,7 @@ Imports app modules: `base_2dh_window`, `event_processor`, `mean_curve_window`, 
 | `Physical2DHWindow._on_refresh_extra` | 309–310 | UI/event handler | — |
 | `Physical2DHWindow._open_mean_curve` | 312–365 | helper/control flow | — |
 
-### `provenance.py` (96 lines)
+### `provenance.py` (95 lines)
 
 Imports app modules: `__version__`, `_build_stamp`. Top-level classes: none.
 
@@ -1432,9 +1448,9 @@ Imports app modules: `__version__`, `_build_stamp`. Top-level classes: none.
 |---|---:|---|---|
 | `app_version` | 25–27 | helper/control flow | — |
 | `_frozen_build_commit` | 30–36 | helper/control flow | — |
-| `_checkout_root` | 39–46 | helper/control flow | — |
-| `code_version` | 50–88 | helper/control flow | — |
-| `cache_version` | 91–96 | helper/control flow | — |
+| `_checkout_root` | 39–45 | helper/control flow | — |
+| `code_version` | 49–87 | helper/control flow | — |
+| `cache_version` | 90–95 | helper/control flow | — |
 
 ### `qt_utils.py` (376 lines)
 
@@ -1485,39 +1501,44 @@ Imports app modules: none. Top-level classes: `SiUnit`, `Quantity`.
 | `configure_spinbox` | 369–394 | helper/control flow | — |
 | `audit_stored_precision` | 399–423 | helper/control flow | — |
 
-### `rawcurve_window.py` (844 lines)
+### `rawcurve_window.py` (975 lines)
 
 Imports app modules: `curve_analysis`, `curve_loader`, `db`, `decomposition_window`, `display_roi`, `fft_window`, `navigator_bar`, `provenance`, `qt_utils`, `quantities`, `roi_events`, `roi_pipeline`, `style`. Top-level classes: `RawCurveWindow`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `RawCurveWindow.__init__` | 89–319 | construction/wiring | — |
-| `RawCurveWindow.go_to_path` | 321–341 | helper/control flow | `_db.enqueue_files`, `_db.get_file_id` |
-| `RawCurveWindow._toggle_decomp` | 343–358 | helper/control flow | — |
-| `RawCurveWindow._toggle_fft` | 360–370 | helper/control flow | — |
-| `RawCurveWindow.set_roi_window` | 372–375 | state mutation | — |
-| `RawCurveWindow.open_roi_window` | 377–384 | helper/control flow | — |
-| `RawCurveWindow._show_roi_window` | 386–396 | helper/control flow | — |
-| `RawCurveWindow._on_analysis_params_changed` | 398–401 | UI/event handler | — |
-| `RawCurveWindow._detach_live_work` | 407–417 | helper/control flow | — |
-| `RawCurveWindow._attach_live_work` | 419–431 | helper/control flow | — |
-| `RawCurveWindow.closeEvent` | 433–435 | UI/event handler | — |
-| `RawCurveWindow.showEvent` | 437–439 | UI/event handler | — |
-| `RawCurveWindow._on_worker_playhead` | 443–465 | UI/event handler | `_db.get_connection` |
-| `RawCurveWindow._on_worker_file_done` | 470–484 | UI/event handler | — |
-| `RawCurveWindow._on_worker_file_error` | 486–490 | UI/event handler | — |
-| `RawCurveWindow._on_worker_data_unavailable` | 492–498 | UI/event handler | — |
-| `RawCurveWindow._on_worker_queue_empty` | 500–502 | UI/event handler | — |
-| `RawCurveWindow._show_worker_hint` | 504–509 | helper/control flow | — |
-| `RawCurveWindow._do_draw` | 513–566 | helper/control flow | — |
-| `RawCurveWindow._show_overlay_error` | 568–572 | helper/control flow | — |
-| `RawCurveWindow._draw_persisted_overlays` | 574–625 | UI/view coordination | `_db.get_analysis_result`, `_db.get_analysis_results_multi`, `_db.get_event_map`, `_db.load_analysis_params` |
-| `RawCurveWindow._clear_markers` | 627–640 | helper/control flow | — |
-| `RawCurveWindow._draw_contact_markers` | 642–660 | UI/view coordination | — |
-| `RawCurveWindow._draw_event_markers` | 662–666 | UI/view coordination | — |
-| `RawCurveWindow._draw_event_marker_coords` | 668–687 | UI/view coordination | — |
-| `RawCurveWindow._draw_derived` | 689–804 | UI/view coordination | `_db.get_file_id`, `_db.load_analysis_params`, `analyse_curve`, `compute_curve_events_coords` |
-| `RawCurveWindow._draw` | 806–844 | UI/view coordination | — |
+| `RawCurveWindow.__init__` | 107–357 | construction/wiring | — |
+| `RawCurveWindow.go_to_path` | 359–379 | helper/control flow | `_db.enqueue_files`, `_db.get_file_id` |
+| `RawCurveWindow._toggle_decomp` | 381–396 | helper/control flow | — |
+| `RawCurveWindow._toggle_fft` | 398–408 | helper/control flow | — |
+| `RawCurveWindow.set_roi_window` | 410–413 | state mutation | — |
+| `RawCurveWindow.open_roi_window` | 415–422 | helper/control flow | — |
+| `RawCurveWindow._show_roi_window` | 424–434 | helper/control flow | — |
+| `RawCurveWindow._on_analysis_params_changed` | 436–439 | UI/event handler | — |
+| `RawCurveWindow._detach_live_work` | 445–455 | helper/control flow | — |
+| `RawCurveWindow._attach_live_work` | 457–469 | helper/control flow | — |
+| `RawCurveWindow.closeEvent` | 471–473 | UI/event handler | — |
+| `RawCurveWindow.showEvent` | 475–477 | UI/event handler | — |
+| `RawCurveWindow._on_worker_playhead` | 481–503 | UI/event handler | `_db.get_connection` |
+| `RawCurveWindow._on_worker_file_done` | 508–522 | UI/event handler | — |
+| `RawCurveWindow._on_worker_file_error` | 524–528 | UI/event handler | — |
+| `RawCurveWindow._on_worker_data_unavailable` | 530–536 | UI/event handler | — |
+| `RawCurveWindow._on_worker_queue_empty` | 538–540 | UI/event handler | — |
+| `RawCurveWindow._show_worker_hint` | 542–547 | helper/control flow | — |
+| `RawCurveWindow._do_draw` | 551–609 | helper/control flow | — |
+| `RawCurveWindow._show_load_failure` | 611–621 | helper/control flow | — |
+| `RawCurveWindow._show_overlay_error` | 623–627 | helper/control flow | — |
+| `RawCurveWindow._draw_persisted_overlays` | 629–686 | UI/view coordination | `_db.get_analysis_result`, `_db.get_analysis_results_multi`, `_db.get_event_map`, `_db.load_analysis_params` |
+| `RawCurveWindow._clear_markers` | 688–701 | helper/control flow | — |
+| `RawCurveWindow._draw_contact_markers` | 703–721 | UI/view coordination | — |
+| `RawCurveWindow._draw_event_markers` | 723–727 | UI/view coordination | — |
+| `RawCurveWindow._draw_event_marker_coords` | 729–748 | UI/view coordination | — |
+| `RawCurveWindow._draw_derived` | 750–865 | UI/view coordination | `_db.get_file_id`, `_db.load_analysis_params`, `analyse_curve`, `compute_curve_events_coords` |
+| `RawCurveWindow._on_axes_changed` | 869–883 | UI/event handler | — |
+| `RawCurveWindow._ramp_series` | 886–898 | helper/control flow | — |
+| `RawCurveWindow._trace_series` | 901–904 | helper/control flow | — |
+| `RawCurveWindow._plot_axes` | 906–935 | helper/control flow | — |
+| `RawCurveWindow._draw` | 937–975 | UI/view coordination | — |
 
 ### `regression.py` (220 lines)
 
@@ -1534,17 +1555,32 @@ Imports app modules: none. Top-level classes: `Correlation`, `LinearFit`.
 | `per_hour` | 166–170 | helper/control flow | — |
 | `manifest_fields` | 173–220 | helper/control flow | — |
 
-### `remove_files_dialog.py` (188 lines)
+### `remove_files_dialog.py` (176 lines)
 
 Imports app modules: `db`, `qt_utils`, `style`. Top-level classes: `RemoveFilesDialog`.
 
 | Callable | Lines | Structural role | Direct app calls |
 |---|---:|---|---|
-| `RemoveFilesDialog.__init__` | 52–62 | construction/wiring | `_db.describe_removal_scope` |
-| `RemoveFilesDialog._build_ui` | 66–118 | UI/view coordination | — |
-| `RemoveFilesDialog._muted` | 120–124 | helper/control flow | — |
-| `RemoveFilesDialog._mode` | 128–129 | helper/control flow | — |
-| `RemoveFilesDialog._on_accept` | 131–188 | UI/event handler | `_db.erase_analysis_for_files`, `_db.remove_files_from_catalog` |
+| `RemoveFilesDialog.__init__` | 46–56 | construction/wiring | `_db.describe_removal_scope` |
+| `RemoveFilesDialog._build_ui` | 60–111 | UI/view coordination | — |
+| `RemoveFilesDialog._muted` | 113–117 | helper/control flow | — |
+| `RemoveFilesDialog._mode` | 121–122 | helper/control flow | — |
+| `RemoveFilesDialog._on_accept` | 124–176 | UI/event handler | `_db.erase_analysis_for_files`, `_db.remove_files_from_catalog` |
+
+### `repoint_dialog.py` (248 lines)
+
+Imports app modules: `db`, `qt_utils`, `style`. Top-level classes: `RepointDataDialog`.
+
+| Callable | Lines | Structural role | Direct app calls |
+|---|---:|---|---|
+| `RepointDataDialog.__init__` | 51–59 | construction/wiring | — |
+| `RepointDataDialog._build_ui` | 63–119 | UI/view coordination | — |
+| `RepointDataDialog._field_row` | 121–129 | helper/control flow | — |
+| `RepointDataDialog._reload` | 133–164 | helper/control flow | `_db.missing_by_directory` |
+| `RepointDataDialog._on_row_selected` | 166–171 | UI/event handler | — |
+| `RepointDataDialog._on_browse` | 173–179 | UI/event handler | — |
+| `RepointDataDialog._preview` | 183–215 | helper/control flow | `_db.describe_relocation` |
+| `RepointDataDialog._on_accept` | 219–248 | UI/event handler | `_db.relocate_files` |
 
 ### `roi_assembly.py` (170 lines)
 
@@ -1557,7 +1593,7 @@ Imports app modules: `roi_events`. Top-level classes: none.
 | `project_curve_events` | 91–144 | computation/transformation | — |
 | `summarise_deltas` | 147–170 | helper/control flow | — |
 
-### `roi_detection.py` (313 lines)
+### `roi_detection.py` (309 lines)
 
 Imports app modules: none. Top-level classes: `DetectionSignals`, `RuptureSearchResult`, `OnsetSearchResult`.
 
@@ -1565,12 +1601,12 @@ Imports app modules: none. Top-level classes: `DetectionSignals`, `RuptureSearch
 |---|---:|---|---|
 | `signal_d1` | 33–62 | helper/control flow | — |
 | `signal_mean_dev` | 65–84 | helper/control flow | — |
-| `compute_detection_signals` | 105–141 | computation/transformation | — |
-| `rupture_search_bounds` | 165–182 | helper/control flow | — |
-| `find_rupture` | 185–232 | computation/transformation | — |
-| `find_onset` | 248–294 | computation/transformation | — |
-| `_ensure_odd` | 299–302 | helper/control flow | — |
-| `_bounded_odd` | 305–313 | helper/control flow | — |
+| `compute_detection_signals` | 105–137 | computation/transformation | — |
+| `rupture_search_bounds` | 161–178 | helper/control flow | — |
+| `find_rupture` | 181–228 | computation/transformation | — |
+| `find_onset` | 244–290 | computation/transformation | — |
+| `_ensure_odd` | 295–298 | helper/control flow | — |
+| `_bounded_odd` | 301–309 | helper/control flow | — |
 
 ### `roi_events.py` (1094 lines)
 
@@ -1603,7 +1639,7 @@ Imports app modules: `models`, `roi_detection`. Top-level classes: `Rupture`, `S
 | `events_to_payload` | 1000–1049 | helper/control flow | — |
 | `payload_to_events` | 1052–1094 | helper/control flow | — |
 
-### `roi_pipeline.py` (838 lines)
+### `roi_pipeline.py` (827 lines)
 
 Imports app modules: `analysis_params`, `curve_analysis`, `curve_loader`, `db`, `provenance`, `roi_assembly`, `roi_detection`, `roi_events`, `roi_selection`, `signal_processing`. Top-level classes: `EventParams`, `CurveEventsResult`.
 
@@ -1616,10 +1652,10 @@ Imports app modules: `analysis_params`, `curve_analysis`, `curve_loader`, `db`, 
 | `_cached` | 258–260 | helper/control flow | `_db.get_analysis_result` |
 | `populate_event_map` | 415–490 | helper/control flow | `_db.get_connection`, `_db.get_event_map`, `_db.get_file_id`, `_db.load_analysis_params`, `compute_curve_events` |
 | `assemble_rows` | 495–535 | computation/transformation | `_db.get_connection`, `_db.get_event_map`, `_db.get_file_id`, `_db.load_analysis_params` |
-| `segment_summary_bulk` | 571–789 | computation/transformation | `_db.get_connection`, `_db.get_segment_overrides_bulk`, `_db.normalize_path` |
-| `_chunks` | 675–677 | helper/control flow | — |
-| `roi_count_histogram` | 792–821 | helper/control flow | `_db.get_connection`, `_db.get_event_map`, `_db.get_file_id`, `_db.load_analysis_params` |
-| `coverage` | 824–838 | read/query/resolve | `_db.get_connection`, `_db.get_event_map`, `_db.get_file_id`, `_db.load_analysis_params` |
+| `segment_summary_bulk` | 570–778 | computation/transformation | `_db.get_connection`, `_db.get_segment_overrides_bulk`, `_db.normalize_path` |
+| `_chunks` | 664–666 | helper/control flow | — |
+| `roi_count_histogram` | 781–810 | helper/control flow | `_db.get_connection`, `_db.get_event_map`, `_db.get_file_id`, `_db.load_analysis_params` |
+| `coverage` | 813–827 | read/query/resolve | `_db.get_connection`, `_db.get_event_map`, `_db.get_file_id`, `_db.load_analysis_params` |
 
 ### `roi_selection.py` (153 lines)
 
@@ -1636,7 +1672,7 @@ Imports app modules: `db`. Top-level classes: `ReportedSegmentChoice`, `SegmentO
 | `resolve_segment_override` | 122–132 | read/query/resolve | — |
 | `resolve_isoforce_pair` | 135–153 | read/query/resolve | — |
 
-### `scanner.py` (768 lines)
+### `scanner.py` (757 lines)
 
 Imports app modules: `curve_loader`, `db`. Top-level classes: none.
 
@@ -1649,16 +1685,16 @@ Imports app modules: `curve_loader`, `db`. Top-level classes: none.
 | `_measured_at` | 96–120 | helper/control flow | — |
 | `_note_float` | 123–130 | helper/control flow | — |
 | `_note_str` | 133–136 | helper/control flow | — |
-| `_parse_ibw` | 185–311 | helper/control flow | — |
-| `_file_meta` | 316–321 | helper/control flow | — |
-| `_find_ibw_files` | 328–338 | helper/control flow | `db.normalize_path` |
-| `leaf_ibw_dirs` | 348–354 | helper/control flow | `db.normalize_path` |
-| `experimentalist_from_path` | 357–405 | helper/control flow | `db.normalize_path` |
-| `known_experimentalists` | 408–421 | helper/control flow | `db.get_distinct_values` |
-| `scan_tree` | 424–517 | helper/control flow | `db.add_directory`, `db.get_directory_by_path`, `db.list_files`, `db.normalize_path`, `db.set_file_descriptors_bulk` |
-| `leaf_cb` | 473–476 | helper/control flow | — |
-| `scan_directory` | 522–664 | helper/control flow | `db.get_connection`, `db.get_file_id`, `db.list_files`, `db.mark_directory_scanned`, `db.upsert_file`, `db.write_file_metadata` |
-| `requalify_catalog` | 667–766 | helper/control flow | `db.get_connection` |
+| `_parse_ibw` | 185–313 | helper/control flow | — |
+| `_file_meta` | 318–323 | helper/control flow | — |
+| `_find_ibw_files` | 330–340 | helper/control flow | `db.normalize_path` |
+| `leaf_ibw_dirs` | 350–356 | helper/control flow | `db.normalize_path` |
+| `experimentalist_from_path` | 359–407 | helper/control flow | `db.normalize_path` |
+| `known_experimentalists` | 410–423 | helper/control flow | `db.get_distinct_values` |
+| `scan_tree` | 426–513 | helper/control flow | `db.list_files`, `db.normalize_path`, `db.set_file_descriptors_bulk` |
+| `leaf_cb` | 470–473 | helper/control flow | — |
+| `scan_directory` | 518–651 | helper/control flow | `db.get_connection`, `db.get_file_id`, `db.list_files`, `db.upsert_file`, `db.write_file_metadata` |
+| `requalify_catalog` | 654–755 | helper/control flow | `db.get_connection` |
 
 ### `scatter_window.py` (542 lines)
 
@@ -1822,7 +1858,7 @@ Imports app modules: `db`, `quantities`, `roi_pipeline`. Top-level classes: `Var
 | `values` | 302–371 | helper/control flow | `_db.get_derived_results_bulk_latest`, `_db.get_file_columns`, `_db.normalize_path` |
 | `columns` | 374–392 | helper/control flow | `_db.normalize_path` |
 
-### `widgets.py` (330 lines)
+### `widgets.py` (329 lines)
 
 Imports app modules: `clustering`, `style`. Top-level classes: `FlowLayout`, `LabeledControl`, `CollapsibleSection`, `ClusterColourBar`.
 
@@ -1849,11 +1885,11 @@ Imports app modules: `clustering`, `style`. Top-level classes: `FlowLayout`, `La
 | `ClusterColourBar.__init__` | 234–266 | construction/wiring | — |
 | `ClusterColourBar.is_active` | 270–272 | helper/control flow | — |
 | `ClusterColourBar.refresh` | 274–301 | helper/control flow | — |
-| `ClusterColourBar.legend_text` | 303–311 | helper/control flow | — |
-| `ClusterColourBar._on_clear` | 313–314 | UI/event handler | — |
-| `ClusterColourBar._on_registry_changed` | 316–320 | UI/event handler | — |
-| `ClusterColourBar.closeEvent` | 322–324 | UI/event handler | — |
-| `ClusterColourBar.detach` | 326–330 | helper/control flow | — |
+| `ClusterColourBar.legend_text` | 303–310 | helper/control flow | — |
+| `ClusterColourBar._on_clear` | 312–313 | UI/event handler | — |
+| `ClusterColourBar._on_registry_changed` | 315–319 | UI/event handler | — |
+| `ClusterColourBar.closeEvent` | 321–323 | UI/event handler | — |
+| `ClusterColourBar.detach` | 325–329 | helper/control flow | — |
 
 ### `wlc_view_window.py` (796 lines)
 
