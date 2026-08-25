@@ -128,14 +128,90 @@ def test_unknown_build_identity_disables_scientific_cache(tmp_path):
         conn.close()
 
 
-def test_dirty_checkout_is_not_a_persistent_cache_identity(monkeypatch):
-    monkeypatch.setattr(_provenance, "code_version", lambda: "abc123-dirty")
-    assert _provenance.cache_version() is None
+def _cache_version_of(monkeypatch, code_version, digest):
+    """cache_version() for a stated build identity and package-source digest."""
+    monkeypatch.setattr(_provenance, "code_version", lambda: code_version)
+    monkeypatch.setattr(_provenance, "_checkout_root", lambda: _ROOT)
+    monkeypatch.setattr(_provenance, "_package_source_digest", lambda root: digest)
+    _provenance.cache_version.cache_clear()
+    try:
+        return _provenance.cache_version()
+    finally:
+        _provenance.cache_version.cache_clear()
 
 
 def test_clean_build_is_its_persistent_cache_identity(monkeypatch):
-    monkeypatch.setattr(_provenance, "code_version", lambda: "abc123")
-    assert _provenance.cache_version() == "abc123"
+    assert _cache_version_of(monkeypatch, "abc123", None) == "abc123"
+
+
+def test_dirty_checkout_is_identified_by_what_it_changed(monkeypatch):
+    """A dirty tree earns an identity; it is never the bare commit."""
+    got = _cache_version_of(monkeypatch, "abc123-dirty", "deadbeef1234")
+    assert got is not None, "a dirty checkout must still be cacheable"
+    assert got != "abc123", "edits must not be served under the commit they left"
+    assert "deadbeef1234" in got
+
+
+def test_different_dirty_trees_never_share_an_identity(monkeypatch):
+    """
+    The property that matters.  'abc123-dirty' was refused as an identity
+    because two unrelated sets of edits produce that same string, and a
+    result cached under one would be served as fresh to the other.  A digest
+    of the changed package source cannot collide that way.
+    """
+    one = _cache_version_of(monkeypatch, "abc123-dirty", "1111aaaa2222")
+    two = _cache_version_of(monkeypatch, "abc123-dirty", "3333bbbb4444")
+    assert one != two
+
+
+def test_same_dirty_tree_is_stable_across_processes(monkeypatch):
+    """Cache reuse is worthless if the identity moves while the tree does not."""
+    one = _cache_version_of(monkeypatch, "abc123-dirty", "1111aaaa2222")
+    two = _cache_version_of(monkeypatch, "abc123-dirty", "1111aaaa2222")
+    assert one == two
+
+
+def test_an_edit_outside_the_package_keeps_the_commits_cache(monkeypatch):
+    """
+    Editing a test or a doc leaves the package source identical to HEAD.  The
+    application never imports those, so they cannot change a result, and
+    invalidating a whole cohort's cache over one would be a lie about what ran.
+    """
+    assert _cache_version_of(monkeypatch, "abc123-dirty", "") == "abc123"
+
+
+def test_an_unreadable_tree_is_still_refused(monkeypatch):
+    """No digest means no honest identity, and the cache stays off."""
+    assert _cache_version_of(monkeypatch, "abc123-dirty", None) is None
+
+
+def test_editing_the_package_moves_the_cache_identity():
+    """
+    End to end, against git rather than a stubbed digest: adding a file to
+    the package must change the identity results are cached under, whatever
+    the tree looked like when the suite started.
+    """
+    probe = _ROOT / "smfs_catalog" / "_dirty_probe.py"
+    assert not probe.exists(), "leftover probe from an earlier run"
+
+    def identity():
+        _provenance.code_version.cache_clear()
+        _provenance.cache_version.cache_clear()
+        return _provenance.cache_version()
+
+    try:
+        before = identity()
+        probe.write_text("# transient probe\n")
+        after = identity()
+    finally:
+        probe.unlink(missing_ok=True)
+        _provenance.code_version.cache_clear()
+        _provenance.cache_version.cache_clear()
+
+    assert after is not None, "a dirty checkout must still be cacheable"
+    assert after != before, "an edited package was served the old identity"
+    assert "+wt." in after
+    assert identity() == before, "removing the edit did not restore the identity"
 
 
 # ── (c) the dangerous fall-through ───────────────────────────────────────────
