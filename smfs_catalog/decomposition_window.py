@@ -180,6 +180,7 @@ class DecompositionWindow(QWidget):
         if self._worker is not None:
             self._nav = WorkerNavBar(self._worker, db_path)
             self._nav.curve_selected.connect(self._on_nav_curve_selected)
+            self._nav.curve_cleared.connect(self._on_nav_curve_cleared)
             root.addWidget(self._nav)
 
         # ── Cutoff slider row ──────────────────────────────────────────────────
@@ -1134,6 +1135,15 @@ class DecompositionWindow(QWidget):
             self._clear()
             return
         self.update_curve(curve)
+
+    def _on_nav_curve_cleared(self) -> None:
+        """The displayed curve left the queue — show nothing rather than it."""
+        # Dropped as well as blanked: every slider and spin box redraws from
+        # _current_curve, so leaving it set would put the removed curve back on
+        # screen at the next nudge of a control.
+        self._current_curve = None
+        self._n_appr = 0
+        self._clear()
 
     def _clear(self) -> None:
         self._context_label.setText("No curve")

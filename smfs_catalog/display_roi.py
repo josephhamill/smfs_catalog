@@ -207,6 +207,7 @@ class ROIWindow(QWidget):
         if self._worker is not None:
             self._nav = WorkerNavBar(self._worker, db_path)
             self._nav.curve_selected.connect(self._on_nav_curve_selected)
+            self._nav.curve_cleared.connect(self._on_nav_curve_cleared)
             root.addWidget(self._nav)
 
         # Controls row.  FlowLayout so the strip wraps to another line instead
@@ -525,6 +526,15 @@ class ROIWindow(QWidget):
         """Worker moved the playhead — load and redraw the new curve."""
         self.set_results([{"path": path}])
         self.update_curve(0)
+
+    def _on_nav_curve_cleared(self) -> None:
+        """The displayed curve left the queue — show nothing rather than it."""
+        self.set_results([])
+        self._current_index = -1
+        self._last_curve = None
+        self._last_path  = None
+        self._set_file_label(None)
+        self._clear()
 
     def _recompute_and_draw(self, curve: ForceCurve) -> None:
         """

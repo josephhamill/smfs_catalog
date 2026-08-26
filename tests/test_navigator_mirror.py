@@ -282,6 +282,52 @@ app.processEvents()
 check("removing the current file does not select another file implicitly",
       bar_a._pos_label.text() == "— / 2" and compact._label.text() == "— / 2")
 
+# ── (i) a curve that leaves the queue stops being displayed (#53) ─────────────
+# The worker keeps its playhead on a removed file and emits no
+# playhead_changed, so the diagnostics following this bar hear nothing about
+# the removal unless the bar says so.  Saying "— / 2" in the label while the
+# plot beside it still shows the discarded curve is the bug.
+cleared = []
+compact.curve_cleared.connect(lambda: cleared.append(True))
+# Shown, because a hidden bar defers its per-curve work to sync_now() and this
+# is about what a window with the curve in front of the user does.
+compact.show()
+
+# Back onto a queued file first, so the next check is about the removal.
+worker._playhead = IDS[1]
+worker.playhead_changed.emit(IDS[1])
+app.processEvents()
+check("a queued playhead is not reported as cleared", not cleared)
+
+_db.dequeue_files([IDS[1]], DB)
+worker.invalidate_queue_cache()
+app.processEvents()
+check("removing the displayed file tells the window to stop showing it",
+      len(cleared) == 1)
+check("...and the bar no longer claims a curve",
+      compact.current_path() is None)
+
+# Re-showing a window hidden across the removal must not replay the removed
+# curve — sync_now() is what its showEvent calls to catch up.
+cleared.clear()
+compact.sync_now()
+check("catching up on a removed playhead draws nothing",
+      len(cleared) == 1 and compact.current_path() is None)
+
+# An unrelated membership change while a queued curve is shown is not a clear.
+_db.enqueue_files([IDS[1]], DB)
+worker.invalidate_queue_cache()
+app.processEvents()
+worker._playhead = IDS[1]
+worker.playhead_changed.emit(IDS[1])
+app.processEvents()
+cleared.clear()
+_db.enqueue_files([IDS[2]], DB)
+worker.invalidate_queue_cache()
+app.processEvents()
+check("enqueueing more files leaves a still-queued curve on display",
+      not cleared and compact.current_path() == PATHS[1])
+
 print()
 
 

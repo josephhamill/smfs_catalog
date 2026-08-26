@@ -405,11 +405,17 @@ class WorkerNavBar(QWidget):
 
     This compact variant omits playback and throttle controls. It also resolves
     the worker's file ID and emits ``curve_selected(path, file_id)`` for its
-    owning diagnostic window. Hidden windows defer that lookup and redraw until
+    owning diagnostic window, or ``curve_cleared()`` when the displayed curve
+    leaves the queue. Hidden windows defer that lookup and redraw until
     :meth:`sync_now` is called from their ``showEvent``.
     """
 
     curve_selected = pyqtSignal(str, int)   # (path, file_id)
+    # The displayed curve left the queue (removed, or the queue was emptied).
+    # The worker keeps its playhead there, so no curve_selected follows and the
+    # owning window would otherwise keep showing a curve that is no longer in
+    # the run it claims to be displaying.
+    curve_cleared = pyqtSignal()
 
     def __init__(self, worker, db_path: str, parent=None) -> None:
         super().__init__(parent)
@@ -472,8 +478,14 @@ class WorkerNavBar(QWidget):
         """Redraw the current playhead — called by the owning window on show so a
         window hidden while the playhead moved catches up immediately."""
         fid = self._worker.playhead()
-        if fid is not None:
-            self._apply_playhead(int(fid))
+        if fid is None:
+            return
+        if not self._in_queue(fid):
+            # Catching up on a playhead that left the queue while we were hidden
+            # means catching up on nothing to draw.
+            self.curve_cleared.emit()
+            return
+        self._apply_playhead(int(fid))
 
     def _on_playhead(self, file_id: int) -> None:
         # Skip all per-curve work while the owning window is hidden; sync_now()
@@ -486,7 +498,18 @@ class WorkerNavBar(QWidget):
 
     def _on_queue_changed(self) -> None:
         """Re-range against the worker's invalidated queue cache."""
-        self._sync_scrubber(self._worker.playhead())
+        fid = self._worker.playhead()
+        self._sync_scrubber(fid)
+        if not self._in_queue(fid):
+            self._file_id = None
+            self._path = None
+            self.curve_cleared.emit()
+
+    def _in_queue(self, file_id: int | None) -> bool:
+        # Asked of the worker rather than the local _queue_ids copy, so this
+        # answers correctly however long ago the scrubber was last re-ranged.
+        # Served from the worker's cache, so it is a lookup, not a queue JOIN.
+        return file_id is not None and int(file_id) in self._worker.queue_ids()
 
     def _apply_playhead(self, file_id: int) -> None:
         self._file_id = file_id

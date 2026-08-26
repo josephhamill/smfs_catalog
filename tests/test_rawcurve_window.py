@@ -282,3 +282,90 @@ def test_a_wave_with_no_channel_for_an_axis_says_so(monkeypatch):
         assert "no piezo channel" in win._status_label.text()
     finally:
         win.close()
+
+
+def _plotted(item):
+    """Points currently on a trace item.  setData([], []) leaves xData None."""
+    return [] if item.xData is None else list(item.xData)
+
+
+def _drawn_window(monkeypatch, *, file_id=7):
+    """A worker-mode viewer with one curve on screen, as after a playhead step."""
+    win = _window(monkeypatch)
+    monkeypatch.setattr(raw, "load_force_curve", lambda _path: _curve())
+    monkeypatch.setattr(win, "_draw_persisted_overlays", lambda *_a, **_k: True)
+    win._paths = ["curve.ibw"]
+    win._current_file_id = file_id
+    win._do_draw(0)
+    win._last_displayed_index = 0
+    return win
+
+
+def test_emptying_the_queue_clears_the_displayed_curve(monkeypatch):
+    # #53: the worker leaves its playhead on a removed file and emits no
+    # playhead_changed, so without this the discarded curve stayed on screen
+    # until the user stepped the queue.
+    win = _drawn_window(monkeypatch)
+    try:
+        assert _plotted(win._curve_appr) == [0.0, 1.0]
+
+        monkeypatch.setattr(win._worker, "queue_ids", lambda: [])
+        win._worker.queue_changed.emit()
+
+        assert _plotted(win._curve_appr) == []
+        assert _plotted(win._curve_retr) == []
+        assert win._meta_vals["filename"].text() == "—"
+        assert win._drawn is None
+        assert win._current_file_id is None
+        assert "queue empty" in win._status_label.text()
+    finally:
+        win.close()
+
+
+def test_repopulating_the_queue_does_not_restore_the_old_curve(monkeypatch):
+    win = _drawn_window(monkeypatch)
+    try:
+        monkeypatch.setattr(win._worker, "queue_ids", lambda: [])
+        win._worker.queue_changed.emit()
+
+        # A fresh selection: different files, and none of them is the one that
+        # was on screen.  Nothing may be drawn until the worker names a curve.
+        monkeypatch.setattr(win._worker, "queue_ids", lambda: [11, 12, 13])
+        win._worker.queue_changed.emit()
+
+        assert _plotted(win._curve_appr) == []
+        assert win._current_file_id is None
+        assert "3 files in queue" in win._status_label.text()
+    finally:
+        win.close()
+
+
+def test_an_unrelated_queue_change_leaves_the_displayed_curve_alone(monkeypatch):
+    win = _drawn_window(monkeypatch)
+    try:
+        # Enqueueing more files while the shown curve is still queued must not
+        # blank the view — the curve on screen is still part of the run.
+        monkeypatch.setattr(win._worker, "queue_ids", lambda: [7, 8, 9])
+        win._worker.queue_changed.emit()
+
+        assert _plotted(win._curve_appr) == [0.0, 1.0]
+        assert win._current_file_id == 7
+        assert win._meta_vals["filename"].text() == "curve.ibw"
+    finally:
+        win.close()
+
+
+def test_a_queue_emptied_while_hidden_is_caught_up_on_reopen(monkeypatch):
+    win = _drawn_window(monkeypatch)
+    try:
+        win._detach_live_work()          # what close() does: signals stop arriving
+        monkeypatch.setattr(win._worker, "queue_ids", lambda: [])
+        win._worker.queue_changed.emit() # arrives at no one
+
+        assert _plotted(win._curve_appr) == [0.0, 1.0]
+
+        win._attach_live_work()
+        assert _plotted(win._curve_appr) == []
+        assert win._current_file_id is None
+    finally:
+        win.close()

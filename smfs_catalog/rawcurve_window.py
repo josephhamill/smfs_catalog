@@ -317,6 +317,7 @@ class RawCurveWindow(QWidget):
         # ── Follow the worker ─────────────────────────────────────────────────
         if self._worker is not None:
             self._worker.playhead_changed.connect(self._on_worker_playhead)
+            self._worker.queue_changed.connect(self._on_worker_queue_changed)
             self._worker.queue_empty.connect(self._on_worker_queue_empty)
             self._worker.file_done.connect(self._on_worker_file_done)
             self._worker.file_error.connect(self._on_worker_file_error)
@@ -327,6 +328,7 @@ class RawCurveWindow(QWidget):
             # loading and drawing each analysed curve.
             self._worker_signal_links = [
                 (self._worker.playhead_changed,  self._on_worker_playhead),
+                (self._worker.queue_changed,     self._on_worker_queue_changed),
                 (self._worker.queue_empty,       self._on_worker_queue_empty),
                 (self._worker.file_done,         self._on_worker_file_done),
                 (self._worker.file_error,        self._on_worker_file_error),
@@ -471,6 +473,9 @@ class RawCurveWindow(QWidget):
         for signal, slot in links:
             signal.connect(slot)
         self._worker_linked = True
+        # The queue may have been emptied while we were detached; that change
+        # arrived at no one, so check for it once on the way back in.
+        self._on_worker_queue_changed()
 
     def closeEvent(self, event) -> None:
         self._detach_live_work()
@@ -538,6 +543,39 @@ class RawCurveWindow(QWidget):
             self._status_label.setText(
                 f"raw data unavailable: {str(detail)[:160]}"
             )
+
+    def _on_worker_queue_changed(self) -> None:
+        """
+        Queue membership changed — stop showing a curve that has left it.
+
+        The worker keeps its playhead on a removed file (its next advance
+        restarts from the queue edge instead), so nothing emits
+        playhead_changed after Empty Queue or Remove From Queue and this
+        window would go on drawing a curve from the discarded selection —
+        beside a navigator already reading — / n against the new one.
+        """
+        if self._worker is None:
+            return
+        fid = self._current_file_id
+        if fid is not None and int(fid) in self._worker.queue_ids():
+            return
+        self._clear_display()
+        self._show_worker_hint()
+
+    def _clear_display(self) -> None:
+        """Blank the plot and the metadata panel: nothing is on display."""
+        self._clear_markers()
+        for item in (self._curve_appr, self._curve_retr, self._curve_raw):
+            item.setData([], [])
+        for label in self._meta_vals.values():
+            label.setText("—")
+        # _drawn is what an axis change re-plots from, so it has to go too.
+        self._drawn = None
+        self._paths = []
+        self._index = 0
+        self._n_total = 0
+        self._last_displayed_index = -1
+        self._current_file_id = None
 
     def _on_worker_queue_empty(self) -> None:
         """Worker auto-paused because the queue ran out in the current direction."""
