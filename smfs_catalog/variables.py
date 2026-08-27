@@ -106,17 +106,26 @@ _ANALYSIS_LABELS: dict[str, str] = {
     "invols_rms":       "InvOLS RMS (nm)",
 }
 
+# THE label for each key — one name, wherever it is shown.  The dashboard's
+# queue headers come from here too (see label() below); it used to keep a
+# second hand-written list, and six of twenty-one keys had drifted apart on it.
+#
+# "ΔX" is deliberately absent: roi_events uses it for the PIEZO separation
+# (ROI.dX_pairs, "the raw stage displacement"), so labelling an extension-axis
+# quantity with it names the wrong coordinate.
 _SEG_LABELS: dict[str, str] = {
     "seg_n_segments":  "ROI Segments",
     "seg_force_pN":    "Seg Force (pN)",
+    "seg_x_rupture_nm":  "Seg rupture extension (nm)",
+    "seg_x_junction_nm": "Seg junction extension (nm)",
     "seg_l_p_nm":      "Seg l_p (nm)",
     "seg_l_p_err":     "Seg l_p err (nm)",
     "seg_l_c_nm":      "Seg l_c (nm)",
     "seg_l_c_err":     "Seg l_c err (nm)",
-    "seg_tau":         "Seg tau (samples)",
+    "seg_tau":         "Seg τ (samples)",
     "seg_z_max":       "Seg z_max",
     "seg_edge_pinned": "Seg edge-pinned",
-    "seg_dF_pN":       "Seg dF (pN)",
+    "seg_dF_pN":       "ΔF ult−pen (pN)",
     "seg_dX_iso_nm":   "Reload distance (nm)",
     "seg_dX_ext_nm":   "Rupture separation (nm)",
 }
@@ -128,14 +137,16 @@ _SEG_LABELS: dict[str, str] = {
 DESCRIPTIONS: dict[str, str] = {
     "snapoff_piezo_nm": "Absolute piezo position where the tip leaves the surface on retract. Plot it against acquisition time to inspect stage drift.",
     "contact_dx_nm": "Piezo travel from approach contact to retract snap-off. It tracks whether the tip engages the surface consistently.",
-    "rupture_dx_nm": "Distance from snap-off to the outermost rupture, using the same zero as the WLC contour-length fit.",
-    "onset_dx_nm": "Distance from snap-off to the beginning of the outermost rupture's loading ramp.",
+    "rupture_dx_nm": "Commanded piezo travel from snap-off to the outermost rupture, read at the d1 peak. Stage displacement, not extension — the cantilever's own bending is still in it. See Seg rupture extension.",
+    "onset_dx_nm": "Commanded piezo travel from snap-off to the start of the outermost rupture's loading ramp. Stage displacement, not extension — see Seg junction extension for the corrected span.",
     "offset_retr": "Deflection baseline offset subtracted before converting deflection to force.",
     "flatness_slope": "Slope of the retract baseline, used as one indication that a curve contains a real event.",
     "baseline_rms": "Residual RMS of the far-retract baseline fit. Larger values indicate a noisier or drifting baseline.",
     "invols_slope": "Per-curve inverse optical-lever sensitivity fitted in the deep-contact approach region; ideally close to one.",
     "invols_rms": "Residual RMS of the per-curve InvOLS fit. Larger values indicate a noisier or more nonlinear contact region.",
-    "seg_force_pN": "Rupture force terminating the currently selected Ultimate or Penultimate segment.",
+    "seg_force_pN": "Rupture force terminating the currently selected Ultimate or Penultimate segment, or a manually picked Primary segment on curves that have one.",
+    "seg_x_rupture_nm": "Extension at that same rupture, from snap-off, on the deflection-corrected axis the WLC fits use. The junction's end-to-end length when it broke, so it is the one comparable with Seg l_c.",
+    "seg_x_junction_nm": "How far the junction had stretched when that rupture happened: the same extension measured from the junction's onset, not snap-off. A stretch, not a length — not comparable with Seg l_c.",
     "seg_l_p_nm": "WLC persistence length fitted to the currently selected Ultimate or Penultimate segment.",
     "seg_l_c_nm": "WLC contour length fitted to the currently selected Ultimate or Penultimate segment.",
     "seg_l_p_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's persistence length; it is a lower bound on total uncertainty.",
@@ -144,8 +155,8 @@ DESCRIPTIONS: dict[str, str] = {
     "seg_z_max": "Maximum fitted extension divided by contour length. Higher values generally mean the WLC fit is better conditioned.",
     "seg_edge_pinned": "Whether the force peak lies on the fitted window's right edge (1 = edge, 0 = interior), where force may be underestimated.",
     "seg_dF_pN": "Ultimate rupture force minus penultimate rupture force. Blank when fewer than two ruptures are available.",
-    "seg_dX_iso_nm": "Reload distance at the penultimate rupture force after that rupture. Blank if the force is not reached again.",
-    "seg_dX_ext_nm": "Extension gap between the last two rupture points, without force matching. Blank when fewer than two ruptures are available.",
+    "seg_dX_iso_nm": "Reload distance at the penultimate rupture force after that rupture — the force-matched twin of Rupture separation. Blank if the force is not reached again.",
+    "seg_dX_ext_nm": "Extension gap between the last two rupture points, without force matching — the unmatched twin of Reload distance. Blank when fewer than two ruptures are available.",
     "seg_n_segments": "Number of ruptured segments in the right-most outer ROI; two or more means a distinct penultimate segment exists.",
     TIME_KEY: "Instrument acquisition time. Put it on the X axis to measure drift; older files may have date-only resolution.",
     "spring_constant_pn_nm": "Cantilever stiffness recorded by the instrument. It scales every force converted from deflection.",
@@ -233,6 +244,20 @@ NOT_A_VARIABLE = EXCLUDED_VARIABLE_KEYS
 def _label(key: str) -> str:
     return (_SEG_LABELS.get(key) or _ANALYSIS_LABELS.get(key)
             or _FILE_COLUMNS.get(key) or key)
+
+
+def label(key: str) -> str:
+    """The name this key is shown under — asked of the register, never spelled
+    out a second time by a consumer.
+
+    The dashboard used to keep its own (key, label) list for the queue headers.
+    Six of twenty-one keys had drifted: seg_dX_ext_nm read "Ext ΔX (nm)" in the
+    queue and "Rupture separation (nm)" in the scatter — the same number under
+    two names on two screens, with nothing to say they were the same number.
+    Two lists that merely agree today are the fork; asking one register is the
+    only version that cannot come apart.
+    """
+    return _label(key)
 
 
 def provenance_key(key: str) -> str:

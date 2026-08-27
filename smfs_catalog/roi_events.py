@@ -136,6 +136,13 @@ class Segment:
     # (same reason isoforce_x_nm is stored).  Set even when the FIT fails, so a
     # failed fit can still say how far it got. Feeds z_max below.
     x_max_nm: Optional[float] = None
+    # Extension (nm) at left_idx, on the SAME coordinate Rupture.extension_nm
+    # uses.  Stored for the same reason x_max_nm is: recovering it later would
+    # mean rebuilding this segment's extension trace, which the event_map
+    # document does not keep.  For an ROI's FIRST segment this is the junction's
+    # onset — the far end of the junction extension.  Set before the fit is
+    # attempted, so a segment too short to fit still says where it started.
+    left_extension_nm: Optional[float] = None
     # True when the force peak sat on the fit window's right edge — the real
     # peak is outside the window, so the rupture force is an underestimate and
     # the fit stopped early. See ramp_peak_is_edge_pinned, which is the
@@ -745,6 +752,11 @@ def fit_segments(
         prev_rup: Optional[Rupture] = None
         for seg, rup in zip(roi.segments, roi.ruptures):
             a, b = seg.left_idx, seg.right_idx
+            # Where this segment starts, on the shared extension coordinate.
+            # Recorded before every guard below: it is a property of the data,
+            # not of the fit, so a segment too short to fit still reports it.
+            if 0 <= a < len(extension):
+                seg.left_extension_nm = float(extension[a])
             if b - a < 5:
                 seg.fit_status = "no_fit"
                 seg.fit_detail = "insufficient segment points"
@@ -984,7 +996,11 @@ def _fit_wlc_window(
             float(perr[0]) * scale, float(perr[1]) * scale, float(tau))
 
 
-_PAYLOAD_VERSION = 4   # v4: segments carry tau (residual autocorrelation time),
+_PAYLOAD_VERSION = 5   # v5: segments carry left_extension_nm — where the
+                       # segment starts on the extension coordinate. For an
+                       # ROI's first segment that is the junction's onset, so a
+                       # v4 document cannot answer how far a junction stretched.
+                       # v4: segments carry tau (residual autocorrelation time),
                        # x_max_nm and edge_pinned. The l_p_err/
                        # l_c_err in a v4 document are sqrt(tau)-corrected and are
                        # NOT comparable with a v3 document's.
@@ -992,6 +1008,24 @@ _PAYLOAD_VERSION = 4   # v4: segments carry tau (residual autocorrelation time),
                        # isoforce_x_nm (both fit-independent).
                        # v2: ruptures carry d1-peak rise_idx/fall_idx; segments
                        # are d1-edge loading ramps (prev fall → this rise)
+
+# The keys events_to_payload writes, pinned so a schema change cannot slip
+# through without a version bump.  Asserting the version alone is
+# one-directional: it fires when the number MOVES, and stays silent when a
+# field is added and the number does not — which reads every stored document
+# back with that field missing, catalog-wide, with every test green.  These
+# two sets close that direction; see test_fit_uncertainty's payload guards.
+PAYLOAD_RUPTURE_KEYS: frozenset[str] = frozenset({
+    "idx", "piezo_nm", "d1_height", "prominence", "force_pN", "force_idx",
+    "rise_idx", "fall_idx", "extension_nm",
+})
+PAYLOAD_SEGMENT_KEYS: frozenset[str] = frozenset({
+    "left_idx", "right_idx", "left_piezo_nm", "right_piezo_nm",
+    "l_p_nm", "l_c_nm", "l_p_err", "l_c_err", "n_pts",
+    "fit_lo_idx", "fit_hi_idx", "isoforce_x_nm",
+    "tau", "x_max_nm", "left_extension_nm", "edge_pinned",
+    "fit_status", "fit_detail",
+})
 
 
 def events_to_payload(events: CurveEvents) -> dict:
@@ -1035,6 +1069,10 @@ def events_to_payload(events: CurveEvents) -> dict:
                      # derived from x_max_nm/l_c_nm on read, so there is one
                      # definition of it and it cannot go stale against them.
                      "tau": s.tau, "x_max_nm": s.x_max_nm,
+                     # v5.  The junction's onset extension is
+                     # segments[0].left_extension_nm; it cannot be recovered
+                     # from the rest of this document.
+                     "left_extension_nm": s.left_extension_nm,
                      "edge_pinned": s.edge_pinned,
                      "fit_status": s.fit_status,
                      "fit_detail": s.fit_detail}
@@ -1074,6 +1112,7 @@ def payload_to_events(payload: dict) -> Optional[CurveEvents]:
                     fit_lo_idx=s.get("fit_lo_idx"), fit_hi_idx=s.get("fit_hi_idx"),
                     isoforce_x_nm=s.get("isoforce_x_nm"),
                     tau=s.get("tau"), x_max_nm=s.get("x_max_nm"),
+                    left_extension_nm=s.get("left_extension_nm"),
                     edge_pinned=s.get("edge_pinned"),
                     fit_status=s.get(
                         "fit_status",
