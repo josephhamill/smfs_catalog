@@ -82,6 +82,11 @@ def _payload(params_tag: str) -> dict:
             # as l_p/l_c, so a tau can never describe a different fit than the
             # error bar it explains.
             "tau": 10.0 * (i + 1), "x_max_nm": l_c * 0.8,
+            # v5. Only segments[0]'s value is the junction's onset; the others
+            # start mid-snapback of the preceding rupture and are deliberately
+            # different, so a junction extension computed off the wrong segment
+            # would show up in the checks below.
+            "left_extension_nm": 4.0 if i == 0 else float(i * 100),
             "edge_pinned": (i == 1),
         }
 
@@ -147,6 +152,26 @@ summ_pen = _rp.segment_summary_bulk([FILE_PATH], "penultimate", DB)[_db.normaliz
 check("(a) no override, penultimate: force_pN is the SECOND-TO-LAST rupture (80)",
       summ_pen["force_pN"] == 80.0)
 
+# ── (a2) the reported rupture's own (x, y) ─────────────────────────────────
+# force_pN and both extensions are read off ONE Rupture. A row that paired a
+# force with an extension from a different rupture is the defect these exist
+# to remove, so the check is that they move together, not that each is right
+# on its own.
+check("(a2) ultimate: x_rupture_nm is ruptures[2].extension_nm (30)",
+      summ["x_rupture_nm"] == 30.0)
+check("(a2) ultimate: x_junction_nm is that rupture minus the ONSET segment's "
+      "left_extension_nm (30 - 4 = 26), not minus its own segment's (100)",
+      abs(summ["x_junction_nm"] - 26.0) < 1e-9)
+check("(a2) penultimate: force AND extension both step back to ruptures[1] "
+      "(80 pN, x=20, junction 20-4=16)",
+      summ_pen["force_pN"] == 80.0
+      and summ_pen["x_rupture_nm"] == 20.0
+      and abs(summ_pen["x_junction_nm"] - 16.0) < 1e-9)
+check("(a2) the two extensions differ by the onset offset alone, the same "
+      "constant under either select",
+      abs((summ["x_rupture_nm"] - summ["x_junction_nm"])
+          - (summ_pen["x_rupture_nm"] - summ_pen["x_junction_nm"])) < 1e-9)
+
 # ── (b) Primary override takes precedence over `select` entirely ───────────
 _db.set_primary_segment_idx(fid, 0, PARAMS_V1, DB)
 summ_p0 = _rp.segment_summary_bulk([FILE_PATH], "ultimate", DB)[_db.normalize_path(FILE_PATH)]
@@ -157,6 +182,10 @@ check("(b) Primary=0 overrides 'penultimate' too — same absolute pick regardle
       summ_p0_pen["force_pN"] == 50.0)
 check("(b) Primary set alone (no Secondary): dF/isoforce still fall back to the last-two default",
       summ_p0["dF_pN"] == 40.0)
+check("(b) Primary=0: the extensions follow the override with the force — "
+      "ruptures[0] (x=10), junction 10-4=6",
+      summ_p0["x_rupture_nm"] == 10.0
+      and abs(summ_p0["x_junction_nm"] - 6.0) < 1e-9)
 
 # ── (c)/(d) Primary+Secondary, non-adjacent: dF works, isoforce doesn't ────
 _db.set_secondary_segment_idx(fid, 2, PARAMS_V1, DB)   # primary=0, secondary=2 (non-adjacent)

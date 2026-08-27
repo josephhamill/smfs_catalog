@@ -541,7 +541,10 @@ def assemble_rows(
 # gained a column.
 SEG_SUMMARY_KEYS = (
     "seg_l_p_nm", "seg_l_c_nm", "seg_l_p_err", "seg_l_c_err",
-    "seg_force_pN", "seg_dF_pN", "seg_dX_iso_nm", "seg_dX_ext_nm",
+    # force and the two extensions are the reported rupture's own (x, y) —
+    # kept adjacent because they are read off one Rupture and must stay so.
+    "seg_force_pN", "seg_x_rupture_nm", "seg_x_junction_nm",
+    "seg_dF_pN", "seg_dX_iso_nm", "seg_dX_ext_nm",
     "seg_n_segments",
     # Fit-conditioning diagnostics.  Adding a key here makes
     # it a queue column, a variable_window drill-down AND a criteria-gate
@@ -559,6 +562,7 @@ SEG_SUMMARY_FIELD = {
     "seg_l_p_nm": "l_p_nm", "seg_l_c_nm": "l_c_nm",
     "seg_l_p_err": "l_p_err", "seg_l_c_err": "l_c_err",
     "seg_force_pN": "force_pN",
+    "seg_x_rupture_nm": "x_rupture_nm", "seg_x_junction_nm": "x_junction_nm",
     "seg_dF_pN": "dF_pN", "seg_dX_iso_nm": "dX_iso_nm",
     "seg_dX_ext_nm": "dX_ext_nm",
     "seg_n_segments": "n_segments",
@@ -570,11 +574,27 @@ def segment_summary_bulk(
     paths: list[str], select: str, db_path: str,
 ) -> dict[str, dict[str, "float | None"]]:
     """
-    Per-path {"l_p_nm", "l_c_nm", "l_p_err", "l_c_err", "force_pN", "dF_pN",
-    "dX_iso_nm", "dX_ext_nm", "n_segments", "tau", "z_max", "edge_pinned"},
+    Per-path {"l_p_nm", "l_c_nm", "l_p_err", "l_c_err", "force_pN",
+    "x_rupture_nm", "x_junction_nm", "dF_pN", "dX_iso_nm", "dX_ext_nm",
+    "n_segments", "tau", "z_max", "edge_pinned"},
     read from each curve's latest event_map (whatever params/code produced it —
     like the 2DH windows, this never silently drops a curve pending a
     recompute).
+
+    x_rupture_nm/x_junction_nm are the reported rupture's position on the
+    extension coordinate — (piezo - snapoff) - deflection, the axis every WLC
+    fit runs against — under its two useful zeros:
+      * x_rupture_nm  — from snap-off. The junction's end-to-end LENGTH when it
+                        broke, and the number commensurable with l_c (z_max is
+                        x_max/l_c, so the app already treats this coordinate as
+                        the chain's extension).
+      * x_junction_nm — from the junction's onset (segments[0].left_extension_nm).
+                        How far it STRETCHED under load. Not a length, and not
+                        comparable with l_c.
+    Both are read off the SAME Rupture as force_pN and therefore follow the
+    same select/override rule, so a row's force and extension always describe
+    one point.  NOT raw piezo: onset_dx_nm/rupture_dx_nm are that, on a
+    different axis and (for the rupture) a different sample.
 
     tau/z_max/edge_pinned are the SELECTED segment's fit-
     conditioning diagnostics, following the same selection rule as l_p/l_c so
@@ -607,6 +627,12 @@ def segment_summary_bulk(
     It exists so a caller who wants "only curves with a real, distinct
     penultimate segment" can filter on it explicitly (seg_n_segments >= 2)
     instead of relying on `select` to narrow the population silently.
+
+    x_rupture_nm/x_junction_nm ARE selection-dependent, for the reason above:
+    they belong to the reported rupture, so flipping `select` moves them
+    exactly as it moves force_pN.  Pinning x_junction_nm to the terminal
+    rupture instead would put one row's force and extension on two different
+    ruptures whenever "penultimate" is in force.
 
     dF_pN/dX_iso_nm/dX_ext_nm are NOT selection-dependent (`select`) either by
     default — they are the gap between the last two ruptures (ultimate minus
@@ -651,7 +677,8 @@ def segment_summary_bulk(
     out: dict[str, dict[str, float | None]] = {
         _db.normalize_path(p): {
             "l_p_nm": None, "l_c_nm": None, "l_p_err": None, "l_c_err": None,
-            "force_pN": None, "dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None,
+            "force_pN": None, "x_rupture_nm": None, "x_junction_nm": None,
+            "dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None,
             "n_segments": None,
             "tau": None, "z_max": None, "edge_pinned": None,
         }
@@ -773,6 +800,20 @@ def segment_summary_bulk(
             )
         if rup is not None:
             row["force_pN"] = rup.force_pN
+            # The x of the SAME point force_pN is the y of — fit_segments sets
+            # both from one sample (roi_events: rup.force_pN / rup.extension_nm
+            # at peak_rel).  Read off the same `rup` here so a row can never
+            # pair a force with an extension from a different rupture.
+            row["x_rupture_nm"] = rup.extension_nm
+            # The same rupture measured from the junction's onset instead of
+            # from snap-off: how far the junction stretched under load, rather
+            # than how long it was.  segments[0] is the onset segment, so its
+            # left edge is the junction's onset whichever segment is reported.
+            _onset_x = roi.segments[0].left_extension_nm
+            row["x_junction_nm"] = (
+                None if rup.extension_nm is None or _onset_x is None
+                else rup.extension_nm - _onset_x
+            )
     return out
 
 

@@ -108,29 +108,40 @@ _DB_COLUMNS: list[tuple[str, str]] = [
     ("indent_mode",           "Indent"),
 ]
 
-_QUEUE_DERIVED = [
-    ("snapoff_piezo_nm", "Snap-off, abs. piezo (nm)"),
-    ("contact_dx_nm",    "Contact→snap-off (nm)"),
-    ("offset_retr",      "Offset"),
-    ("flatness_slope",   "Flatness"),
-    ("baseline_rms",     "Baseline RMS (nm)"),
-    ("invols_slope",     "InvOLS"),
-    ("invols_rms",       "InvOLS RMS (nm)"),
-    ("onset_dx_nm",      "Onset from snap-off (nm)"),
-    ("rupture_dx_nm",    "Rupture from snap-off (nm)"),
-    ("seg_n_segments",   "ROI Segments"),
-    ("seg_force_pN",     "Seg Force (pN)"),
-    ("seg_l_p_nm",       "Seg l_p (nm)"),
-    ("seg_l_p_err",      "Seg l_p err (nm)"),
-    ("seg_l_c_nm",       "Seg l_c (nm)"),
-    ("seg_l_c_err",      "Seg l_c err (nm)"),
-    ("seg_tau",          "Fit τ (samples)"),
-    ("seg_z_max",        "Fit z_max"),
-    ("seg_edge_pinned",  "Edge-pinned"),
-    ("seg_dF_pN",        "ΔF ult−pen (pN)"),
-    ("seg_dX_iso_nm",    "Isoforce ΔX (nm)"),
-    ("seg_dX_ext_nm",    "Ext ΔX (nm)"),
-]
+# The queue's derived columns, in display order.  KEYS ONLY: the label comes
+# from variables.label, which is the one register the scatter and the
+# variable window already ask.  This list used to carry its own labels and six
+# of them had drifted from it — seg_dX_ext_nm was "Ext ΔX (nm)" here and
+# "Rupture separation (nm)" in the scatter, one number under two names.
+_QUEUE_DERIVED_KEYS = (
+    "snapoff_piezo_nm",
+    "contact_dx_nm",
+    "offset_retr",
+    "flatness_slope",
+    "baseline_rms",
+    "invols_slope",
+    "invols_rms",
+    "onset_dx_nm",
+    "rupture_dx_nm",
+    "seg_n_segments",
+    # The reported rupture's force and its two extensions, adjacent because
+    # they are one point: (x from snap-off, x from onset, y).
+    "seg_force_pN",
+    "seg_x_rupture_nm",
+    "seg_x_junction_nm",
+    "seg_l_p_nm",
+    "seg_l_p_err",
+    "seg_l_c_nm",
+    "seg_l_c_err",
+    "seg_tau",
+    "seg_z_max",
+    "seg_edge_pinned",
+    "seg_dF_pN",
+    "seg_dX_iso_nm",
+    "seg_dX_ext_nm",
+)
+
+_QUEUE_DERIVED = [(k, _vars.label(k)) for k in _QUEUE_DERIVED_KEYS]
 
 
 _ETA_COST_SAMPLES = 200
@@ -202,16 +213,22 @@ _FIXED_COL_TOOLTIPS: dict[str, str] = {
 }
 _QUEUE_COLUMNS = _QUEUE_COLUMNS_FIXED + _QUEUE_DERIVED
 
-_QUEUE_BASE_KEYS = [k for k, _ in _QUEUE_DERIVED]
+_QUEUE_BASE_KEYS = list(_QUEUE_DERIVED_KEYS)
 
 _QUEUE_HIDE = _vars.EXCLUDED_VARIABLE_KEYS
 
-_QUEUE_DERIVED_LABELS = dict(_QUEUE_DERIVED)
 _QUEUE_DERIVED_ORDER = _QUEUE_BASE_KEYS
 
 
 def _prettify_key(key: str) -> str:
-    return _QUEUE_DERIVED_LABELS.get(key, key.replace("_", " "))
+    """The register's name for a column, or a readable form of the raw key.
+
+    An analysis_type present in the queue but not in the register still gets a
+    column (see _compute_queue_derived_cols); variables.label hands such a key
+    straight back, and the underscore swap is what it used to be shown as.
+    """
+    lbl = _vars.label(key)
+    return key.replace("_", " ") if lbl == key else lbl
 
 
 class FilesTableModel(QAbstractTableModel):

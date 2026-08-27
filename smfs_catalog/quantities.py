@@ -175,6 +175,10 @@ QUANTITIES: dict[str, Quantity] = {
     "seg_l_p_err":     Quantity(NM, 4),    # median 0.0057 — 2 decimals reads 0.00
     "seg_l_c_err":     Quantity(NM, 3),    # median 0.184
     "seg_force_pN":    Quantity(PN, 1),    # median 166, p95 353
+    # The reported rupture's position on the extension axis, under its two
+    # zeros. Same scale as the other extension-axis distances below.
+    "seg_x_rupture_nm":  Quantity(NM, 1),
+    "seg_x_junction_nm": Quantity(NM, 1),
     "seg_dF_pN":       Quantity(PN, 1),
     "seg_dX_iso_nm":   Quantity(NM, 1),
     "seg_dX_ext_nm":   Quantity(NM, 1),

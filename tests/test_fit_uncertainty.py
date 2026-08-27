@@ -54,6 +54,7 @@ Run with the smfs-catalog env, from the repo root:
 """
 import json
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -65,6 +66,8 @@ from smfs_catalog.models import wlc  # noqa: E402
 from smfs_catalog.roi_events import (  # noqa: E402
     _PAYLOAD_VERSION,
     _TAU_MIN_PTS,
+    PAYLOAD_RUPTURE_KEYS,
+    PAYLOAD_SEGMENT_KEYS,
     ROI,
     CurveEvents,
     Rupture,
@@ -360,11 +363,12 @@ def _segment(**kw) -> Segment:
     return Segment(**base)
 
 
-def test_v4_payload_round_trips_the_new_fields() -> None:
+def test_the_payload_round_trips_the_stored_fit_fields() -> None:
     events = CurveEvents(detector="test", rois=[ROI(
         onset_idx=0, return_idx=200, onset_piezo_nm=0.0, return_piezo_nm=200.0,
         ruptures=[Rupture(idx=100, piezo_nm=100.0, d1_height=1.0, prominence=1.0)],
-        segments=[_segment(tau=63.5, x_max_nm=82.8, edge_pinned=True)],
+        segments=[_segment(tau=63.5, x_max_nm=82.8, edge_pinned=True,
+                           left_extension_nm=12.5)],
     )])
     back = payload_to_events(json.loads(json.dumps(events_to_payload(events))))
     assert back is not None
@@ -372,26 +376,56 @@ def test_v4_payload_round_trips_the_new_fields() -> None:
     assert seg.tau == 63.5
     assert seg.x_max_nm == 82.8
     assert seg.edge_pinned is True
+    assert seg.left_extension_nm == 12.5
 
 
-def test_a_v3_document_reads_as_a_miss() -> None:
+def test_an_older_document_reads_as_a_miss() -> None:
     """
-    The bump is the whole reason old and new error bars cannot coexist
-    unlabelled: a v3 document's l_p_err has no sqrt(tau) in it, and there is
-    nothing in the numbers themselves to say so.  It must read as absent and be
-    recomputed, not be silently mixed into a cohort.
+    The bump is the whole reason old and new documents cannot coexist
+    unlabelled: a v3 document's l_p_err has no sqrt(tau) in it, and a v4's has
+    no left_extension_nm, and there is nothing in the numbers themselves to say
+    so.  Such a document must read as absent and be recomputed, not be silently
+    mixed into a cohort.
     """
     events = CurveEvents(detector="test", rois=[ROI(
         onset_idx=0, return_idx=200, onset_piezo_nm=0.0, return_piezo_nm=200.0,
         ruptures=[Rupture(idx=100, piezo_nm=100.0, d1_height=1.0, prominence=1.0)],
         segments=[_segment()],
     )])
-    stale = events_to_payload(events)
-    stale["v"] = 3
-    assert payload_to_events(stale) is None
-    assert _PAYLOAD_VERSION == 4, (
-        "payload version changed; if the segment schema moved again, this test "
-        "and both need the new number."
+    for older in (3, 4):
+        stale = events_to_payload(events)
+        stale["v"] = older
+        assert payload_to_events(stale) is None, f"a v{older} document was accepted"
+
+
+def test_the_stored_schema_cannot_change_without_the_version() -> None:
+    """The version guard has to work in BOTH directions.
+
+    Pinning the number alone only fires when someone MOVES it.  It says
+    nothing in the case that actually costs a catalog: a field is added to
+    Segment and to events_to_payload, the number is left alone, every test
+    stays green — and every stored document then reads that field back as
+    missing, silently, for every curve.  Pinning the emitted key set closes
+    that direction: a new field fails here until the key set and the version
+    are updated together.
+    """
+    events = CurveEvents(detector="test", rois=[ROI(
+        onset_idx=0, return_idx=200, onset_piezo_nm=0.0, return_piezo_nm=200.0,
+        ruptures=[Rupture(idx=100, piezo_nm=100.0, d1_height=1.0, prominence=1.0)],
+        segments=[_segment()],
+    )])
+    doc = events_to_payload(events)
+    assert set(doc["rois"][0]["ruptures"][0]) == PAYLOAD_RUPTURE_KEYS, (
+        "the rupture schema moved; bump _PAYLOAD_VERSION and update "
+        "PAYLOAD_RUPTURE_KEYS together"
+    )
+    assert set(doc["rois"][0]["segments"][0]) == PAYLOAD_SEGMENT_KEYS, (
+        "the segment schema moved; bump _PAYLOAD_VERSION and update "
+        "PAYLOAD_SEGMENT_KEYS together"
+    )
+    assert _PAYLOAD_VERSION == 5, (
+        "payload version changed; this test and the key sets above need the "
+        "new number."
     )
 
 
@@ -421,9 +455,55 @@ def test_the_three_diagnostics_are_real_summary_keys() -> None:
     """Being in SEG_SUMMARY_KEYS is what makes them queue columns, gate criteria
     and variable-window drill-downs — criteria_gate branches generically on this
     tuple, so this is the whole of the wiring."""
-    for key in ("seg_tau", "seg_z_max", "seg_edge_pinned"):
+    for key in ("seg_tau", "seg_z_max", "seg_edge_pinned",
+                "seg_x_rupture_nm", "seg_x_junction_nm"):
         assert key in SEG_SUMMARY_KEYS, f"{key} is not a summary key"
         assert key in SEG_SUMMARY_FIELD, f"{key} has no field mapping"
+
+
+def test_a_segment_reports_where_it_started_even_when_the_fit_fails() -> None:
+    """left_extension_nm is a property of the data, not of the fit.
+
+    It is the far end of the junction extension, so losing it on a segment the
+    optimiser could not fit would blank that curve's junction extension for a
+    reason that has nothing to do with the junction.  Same argument the code
+    already makes for x_max_nm — except this one must survive the EARLIER
+    guards too (too short, no force peak), which return before x_max_nm is
+    ever reached.
+    """
+    from smfs_catalog.roi_events import fit_segments
+
+    n = 60
+    curve = types.SimpleNamespace(
+        piezo_retr=np.linspace(0.0, 120.0, n),
+        defl_retr=np.zeros(n),          # flat: no force peak anywhere
+        spring_constant=20.0,
+    )
+    # Two segments, both unfittable: the first far too short to try, the
+    # second long enough to reach the peak search and fail it.
+    events = CurveEvents(detector="test", rois=[ROI(
+        onset_idx=0, return_idx=n - 1, onset_piezo_nm=0.0, return_piezo_nm=120.0,
+        ruptures=[Rupture(idx=2, piezo_nm=4.0, d1_height=1.0),
+                  Rupture(idx=n - 1, piezo_nm=120.0, d1_height=1.0)],
+        segments=[Segment(left_idx=0, right_idx=2,
+                          left_piezo_nm=0.0, right_piezo_nm=4.0),
+                  Segment(left_idx=10, right_idx=n - 1,
+                          left_piezo_nm=20.0, right_piezo_nm=120.0)],
+    )])
+    fit_segments(curve, events, offset_retr=0.0, invols_slope=1.0,
+                 snapoff_piezo_nm=0.0)
+
+    # With zero deflection, no offset and unit invOLS, the extension
+    # coordinate collapses to the piezo one — so each segment's recorded start
+    # must be its own left_idx sample, whichever guard turned the fit away.
+    segs = events.rois[0].segments
+    for seg in segs:
+        assert seg.fit_status == "no_fit", "these segments are unfittable by design"
+        assert seg.l_c_nm is None, "no fit should have been recorded"
+        assert seg.left_extension_nm == curve.piezo_retr[seg.left_idx], (
+            f"segment at {seg.left_idx} lost where it started ("
+            f"{seg.fit_detail})"
+        )
 
 
 def test_every_diagnostic_declares_its_unit_and_precision() -> None:

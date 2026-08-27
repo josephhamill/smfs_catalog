@@ -118,6 +118,38 @@ def test_the_dashboard_and_the_registry_share_one_exclusion_object():
     assert _dash._QUEUE_HIDE is _vars.NOT_A_VARIABLE
 
 
+def test_a_key_is_shown_under_exactly_one_name():
+    """The queue header and the scatter dropdown must not name a key twice.
+
+    They did, for six of twenty-one keys: seg_dX_ext_nm was "Ext ΔX (nm)" in
+    the queue and "Rupture separation (nm)" in the scatter — one number, two
+    names, on two screens, with nothing to say they were the same number.  The
+    fork was a second hand-written label list in dashboard_window; this asserts
+    it is gone rather than merely agreeing today, which is the state it was
+    already in before it drifted.
+    """
+    pytest.importorskip("PyQt6.QtWidgets")
+    from smfs_catalog import dashboard_window as _dash
+    divergent = {
+        key: (label, _vars.label(key))
+        for key, label in _dash._QUEUE_DERIVED
+        if label != _vars.label(key)
+    }
+    assert not divergent, (
+        "queue header != registry label for:\n  "
+        + "\n  ".join(f"{k}: {q!r} vs {r!r}" for k, (q, r) in divergent.items())
+    )
+
+
+def test_every_offered_variable_says_what_it_means():
+    """A variable with no description reaches a dropdown as a bare label and a
+    tooltip that says nothing — which is how rupture_dx_nm came to be read as
+    the extension.  Offering a number without a definition is what this
+    register exists to prevent."""
+    undescribed = [v.key for v in _vars.available(ALL, DB) if not v.description]
+    assert not undescribed, f"offered with no description: {undescribed}"
+
+
 def test_the_dead_fitter_a_columns_can_never_be_plotted_beside_the_live_ones():
     """wlc_l_c_nm is Fitter A's contour length: fit to the RAW retract
     (sawtooth noise), one event per curve, on a cache key of frozen literals
