@@ -20,7 +20,7 @@
 #            ├─ ROI 1 …
 #            └─ …
 #
-# Division of labour (unchanged from the discussion):
+# Division of labour:
 #   • d1        → detect ruptures (the sharp jumps).  Two interchangeable
 #                 detectors are provided so they can be A/B'd on real curves.
 #   • mean_dev  → draw the baseline fences that bound each ROI (a LEVEL signal;
@@ -28,8 +28,8 @@
 #
 # This module is PURE: no Qt, no DB, no file I/O.  It produces GEOMETRY only —
 # rupture/segment indices and piezo landmarks.  Per-segment forces and WLC fits
-# are left as None here and filled by a later force/fit pass (see fit_segments,
-# stubbed at the bottom) so this stays trivially testable.
+# are left as None here and filled by fit_segments, so this stays trivially
+# testable.
 #
 # Orientation follows roi_detection: all arrays are forward (index 0 = in-contact
 # end, last index = far baseline).  Within one ROI a pull loads at LOWER index
@@ -139,8 +139,7 @@ class Segment:
     # True when the force peak sat on the fit window's right edge — the real
     # peak is outside the window, so the rupture force is an underestimate and
     # the fit stopped early. See ramp_peak_is_edge_pinned, which is the
-    # one definition; this field is only where its answer is kept.  Common
-    # rather than rare on real cohorts — measure the rate on your own.
+    # one definition; this field is only where its answer is kept.
     edge_pinned: Optional[bool] = None
     # Compact, user-facing outcome of the fit attempt.  Detailed numerical
     # diagnostics remain in their dedicated fields; this distinguishes a
@@ -772,8 +771,7 @@ def fit_segments(
                 continue
             # Diagnostic, recorded for every segment that gets this far.
             # Nothing acts on it — it is here so a user can SEE which fits
-            # stopped at the window edge and choose to exclude them, rather than
-            # the app quietly deciding for them.
+            # stopped at the window edge and choose to exclude them.
             seg.edge_pinned = ramp_peak_is_edge_pinned(peak_abs, a, b)
 
             peak_rel = peak_abs - a
@@ -989,8 +987,7 @@ def _fit_wlc_window(
 _PAYLOAD_VERSION = 4   # v4: segments carry tau (residual autocorrelation time),
                        # x_max_nm and edge_pinned. The l_p_err/
                        # l_c_err in a v4 document are sqrt(tau)-corrected and are
-                       # NOT comparable with a v3 document's — which is the whole
-                       # reason this bumped rather than adding fields quietly.
+                       # NOT comparable with a v3 document's.
                        # v3: ruptures carry extension_nm; segments carry
                        # isoforce_x_nm (both fit-independent).
                        # v2: ruptures carry d1-peak rise_idx/fall_idx; segments

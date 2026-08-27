@@ -367,11 +367,10 @@ def analyse_curve(
                 "baseline_rms", "baseline_fit_lo_idx",
                 "baseline_fit_hi_idx")
     _bl_cached = _get_multi(_BL_KEYS, p.params_bl)   # one round-trip, not six
-    # Require ALL SIX rows, not just offset/flatness. A row cached back when
-    # only offset/flatness existed would
-    # otherwise register as a permanent cache hit and never backfill missing
-    # diagnostic fields. Recomputing here is cheap: a small polyfit over the anchor
-    # window, not a curve reload/decompose.
+    # Require ALL SIX rows, not just offset/flatness: a row holding only those
+    # two would register as a permanent cache hit and never backfill the
+    # diagnostic fields. Recomputing here is cheap — a small polyfit over the
+    # anchor window, not a curve reload/decompose.
     if all(k in _bl_cached for k in _BL_KEYS):
         offset, flatness        = float(_bl_cached["offset_retr"]), float(_bl_cached["flatness_slope"])
         baseline_intercept_val  = float(_bl_cached["baseline_intercept"])

@@ -10,7 +10,7 @@
 #
 # Computation, cache orchestration, persistence, and stored-result queries for
 # multi-event ROIs. Presentation policy and manual segment-pick resolution live
-# in roi_selection; names are re-exported here temporarily for compatibility.
+# in roi_selection; names are re-exported here for callers that import them.
 #
 # ONE place computes a curve's full events-within-events structure (so the
 # viewer and the batch populate step can never drift):
@@ -273,10 +273,9 @@ def compute_curve_events_coords(
     # The signature is asdict(ep) — EVERY parameter the finder reads — so a
     # match means the parameters have not changed and the stored marks are
     # the marks these numbers produce.  A miss means they HAVE changed, and
-    # the finder runs again.  That contract only holds while `ep` comes from
-    # ONE owner: when it was assembled from two profiles (the curve's for the
-    # thresholds, the queue's for the rest) a "match" certified a parameter
-    # set nobody had chosen. See event_params_from/db.load_analysis_params.
+    # the finder runs again.  That contract holds only while `ep` comes from
+    # ONE owner — assembled from two profiles, a "match" certifies a parameter
+    # set nobody chose.  See event_params_from/db.load_analysis_params.
     _pj = None
     _cached_events = None
     if can_read_cache and not force:

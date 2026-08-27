@@ -44,8 +44,8 @@ from .curve_analysis import analyse_file
 # the dashboard's batched 150 ms flush).  Its only real purpose is to slow
 # autoplay down so a human can watch curves scroll past in the viewer; raise it
 # from the viewer's speed slider when you want that.  For headless batch
-# processing it should stay 0 — at ~44 ms compute/curve a non-zero delay was the
-# dominant cost (a 1000 ms reset here is what made 9k traces take ~3 h).
+# processing it should stay 0: at ~44 ms compute/curve a non-zero delay
+# dominates, and 1000 ms here turns 9k traces into ~3 h.
 THROTTLE_MS = 0
 
 

@@ -223,15 +223,11 @@ class ROIWindow(QWidget):
         ctrl.addWidget(LabeledControl("Window (pts):", self._spin_window))
 
         self._spin_threshold = QDoubleSpinBox()
-        # No policy ceiling on a detection threshold: inform rather than gate;
-        # mathematical necessity is enforced, taste is not).  It was +-10, which
-        # is not a limit anyone chose against data — and on a genuinely noisy
-        # cohort a d1 threshold above 10 is the right answer, not an error.
-        # Shahma's data needs it.  The clamp in the drag handler is what made
-        # this bite silently: dragging the line past 10 snapped back with
+        # No policy ceiling on a detection threshold: mathematical necessity is
+        # enforced, taste is not.  On a noisy cohort a d1 threshold above 10 is
+        # the right answer, and a clamp would snap the dragged line back with
         # nothing on screen saying why.  +-1e6 is a spin-box necessity (a
-        # QDoubleSpinBox must have SOME range), five orders of magnitude past
-        # anything real, not a judgement about the science.
+        # QDoubleSpinBox must have SOME range), not a claim about the science.
         self._spin_threshold.setRange(-1e6, 1e6)
         _quant.configure_spinbox(self._spin_threshold, "roi_threshold_nm_per_nm", suffix=False)
         self._spin_threshold.setValue(self._threshold_nm_per_nm)
@@ -559,11 +555,11 @@ class ROIWindow(QWidget):
             # These seven have no control in this window, so they come from a
             # stored profile — and it MUST be the profile of the curve on
             # screen (self._experimentalist, kept in step by
-            # _sync_profile_owner), not db.get_param's queue owner.  Using
-            # get_param here built one EventParams out of two people: the
-            # knobs above from the curve's owner, these from whoever was
-            # queued.  Nobody ever chose that combination, and it silently
-            # decided where the search band went.
+            # _sync_profile_owner), not db.get_param's queue owner.  Reading
+            # these from the queue owner builds one EventParams out of two
+            # people — the knobs above from the curve's owner, these from
+            # whoever is queued — and that combination silently decides where
+            # the search band goes.
             # ONE read of THE parameter set in force — the file at position
             # one of the analysis queue decides it (db.active_param_owner),
             # exactly as it does for the worker and for every other window.
@@ -788,10 +784,9 @@ class ROIWindow(QWidget):
             n_rup = len(roi.ruptures)
             # On the F-x panel the markers carry the ROI's own hue (matching the
             # WLC window), and terminal-vs-inner is carried by SYMBOL instead of
-            # by colour: the green/magenta landmark pair used here before sat
-            # only 3.2 dE from the orange ROI hue under protanopia once the
-            # fits stopped using a private palette.  Shape is a cleaner channel
-            # for a two-way distinction than a hue that has to dodge the fits.
+            # by colour: green/magenta sits only 3.2 dE from the orange ROI hue
+            # under protanopia.  Shape is a cleaner channel for a two-way
+            # distinction than a hue that has to dodge the fits.
             mark_brush = pg.mkBrush(
                 style.roi_segment_qcolor(ri, n_rois, 0, 1, alpha=235))
             for i, rup in enumerate(roi.ruptures):
@@ -874,8 +869,8 @@ class ROIWindow(QWidget):
     # owner (experimentalist of the file's watched directory) and, when it
     # changes, loads that user's stored knobs into the controls + settings
     # table.  A key frozen at construction breaks in worker mode, where one
-    # queue interleaves several users' files — that was the recurring
-    # "changing her settings changes his" bug.
+    # queue interleaves several users' files, so one person's edits land under
+    # another's key.
 
     def _sync_profile_owner(self, path: str | None) -> None:
         """Re-key the profile to THE parameter set in force, and load its
@@ -961,9 +956,9 @@ class ROIWindow(QWidget):
 
         # No mirror into the `settings` table. The parameter set lives in
         # exactly one place - the queue owner's profile - and the pipeline
-        # reads it there (db.get_param). Copying it into a catalog-wide
-        # table is what made that table mean "whoever was displayed last",
-        # so every other experimentalist silently inherited it.
+        # reads it there (db.get_param). Copying it into a catalog-wide table
+        # makes that table mean "whoever was displayed last", and every other
+        # experimentalist inherits it.
 
     def _save_user_profile(self) -> None:
         """
