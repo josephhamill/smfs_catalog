@@ -188,6 +188,8 @@ QUANTITIES: dict[str, Quantity] = {
     # x_max/l_c is dimensionless; three decimals preserve useful conditioning
     # differences near the WLC pole.
     "seg_z_max":       Quantity(RATIO, 3),
+    # z_max's numerator, in nm — same scale as the other extension distances.
+    "seg_x_max_nm":    Quantity(NM, 1),
     # A flag, carried as 0/1 so it can be bounded like any other criterion
     # ("seg_edge_pinned <= 0" = exclude edge-pinned fits).
     "seg_edge_pinned": Quantity(COUNT, 0, integer=True),

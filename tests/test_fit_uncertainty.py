@@ -455,7 +455,7 @@ def test_the_three_diagnostics_are_real_summary_keys() -> None:
     """Being in SEG_SUMMARY_KEYS is what makes them queue columns, gate criteria
     and variable-window drill-downs — criteria_gate branches generically on this
     tuple, so this is the whole of the wiring."""
-    for key in ("seg_tau", "seg_z_max", "seg_edge_pinned",
+    for key in ("seg_tau", "seg_z_max", "seg_x_max_nm", "seg_edge_pinned",
                 "seg_x_rupture_nm", "seg_x_junction_nm"):
         assert key in SEG_SUMMARY_KEYS, f"{key} is not a summary key"
         assert key in SEG_SUMMARY_FIELD, f"{key} has no field mapping"

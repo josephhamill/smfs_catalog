@@ -556,7 +556,7 @@ SEG_SUMMARY_KEYS = (
     # Checking a variable REQUIRES it: the gate ANDs across checked
     # variables, so a missing value is an automatic non-hit and checking
     # seg_z_max silently drops every curve whose fit failed.
-    "seg_tau", "seg_z_max", "seg_edge_pinned",
+    "seg_tau", "seg_z_max", "seg_x_max_nm", "seg_edge_pinned",
 )
 SEG_SUMMARY_FIELD = {
     "seg_l_p_nm": "l_p_nm", "seg_l_c_nm": "l_c_nm",
@@ -566,7 +566,8 @@ SEG_SUMMARY_FIELD = {
     "seg_dF_pN": "dF_pN", "seg_dX_iso_nm": "dX_iso_nm",
     "seg_dX_ext_nm": "dX_ext_nm",
     "seg_n_segments": "n_segments",
-    "seg_tau": "tau", "seg_z_max": "z_max", "seg_edge_pinned": "edge_pinned",
+    "seg_tau": "tau", "seg_z_max": "z_max", "seg_x_max_nm": "x_max_nm",
+    "seg_edge_pinned": "edge_pinned",
 }
 
 
@@ -680,7 +681,7 @@ def segment_summary_bulk(
             "force_pN": None, "x_rupture_nm": None, "x_junction_nm": None,
             "dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None,
             "n_segments": None,
-            "tau": None, "z_max": None, "edge_pinned": None,
+            "tau": None, "z_max": None, "x_max_nm": None, "edge_pinned": None,
         }
         for p in paths
     }
@@ -792,6 +793,10 @@ def segment_summary_bulk(
             # never come from different segments.
             row["tau"]   = seg.tau
             row["z_max"] = seg.z_max
+            # z_max's own numerator. Offered beside it so a low ratio can be
+            # read as a short pull or an overlong contour length, rather than
+            # only as a number that is too small.
+            row["x_max_nm"] = seg.x_max_nm
             # Numeric 0/1, not a bool: this reaches criteria_gate (which bounds
             # numbers) and quantities.format_value (which formats them).  The
             # dataclass keeps the bool; only this projection flattens it.

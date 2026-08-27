@@ -135,6 +135,7 @@ _QUEUE_DERIVED_KEYS = (
     "seg_l_c_err",
     "seg_tau",
     "seg_z_max",
+    "seg_x_max_nm",
     "seg_edge_pinned",
     "seg_dF_pN",
     "seg_dX_iso_nm",
