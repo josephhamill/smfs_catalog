@@ -10,8 +10,8 @@
 #
 # Non-GUI curve-analysis physics and persistence orchestration.
 #
-# One AnalysisParams snapshot is acquired by analyse_and_classify and projected by
-# pipeline_params_from. Every stage in one curve pass receives that immutable
+# One AnalysisParams snapshot is acquired by the force-extension lane and
+# projected by pipeline_params_from. Every stage in one curve pass receives that immutable
 # snapshot. If the stored revision changes while a curve is running, the wrapper
 # reruns it before publishing the verdict/current event map.
 #
@@ -22,10 +22,12 @@
 #     per-segment characterization in roi_events.fit_segments. Stage1Search
 #     carries same-pass arrays and indices into that characterization step.
 #
-# analyse_and_classify(file_id, path, db_path) → (verdict, was_cached)
-#     Loads one AnalysisParams snapshot, checks the verdict cache, loads and
-#     analyses on a miss, persists the event map/verdict, and rejects publication
-#     if the snapshot revision changed during the pass. Read/qualification failure
+# analyse_file(file_id, path, db_path) → (verdict, was_cached)
+#     Sends a file down the lane its stored modality names. MODALITY_PIPELINES
+#     holds one lane per modality; the force-extension lane loads one
+#     AnalysisParams snapshot, checks the verdict cache, loads and analyses on a
+#     miss, persists the event map/verdict, and rejects publication if the
+#     snapshot revision changed during the pass. Read/qualification failure
 #     remains distinct from a scientifically verified non-event.
 #
 # This module has no Qt dependencies and is safe on the analysis worker thread.
@@ -617,35 +619,36 @@ def current_signature(db_path: str) -> tuple[str, str | None]:
             cache_version())
 
 
-def analyse_and_classify(
+def _lane_no_pipeline_yet(
+    file_id: int, path: str, db_path: str, conn=None,
+) -> tuple[str, bool]:
+    """The lane for a modality whose analysis is not written yet."""
+    return "unanalysed", True
+
+
+def _lane_force_extension(
     file_id: int,
     path:    str,
     db_path: str,
     conn=None,
 ) -> tuple[str, bool]:
     """
-    Thin persistence wrapper around analyse_curve.  Caches the verdict (and,
-    via analyse_curve, all derived values) in analysis_results and returns the
-    verdict string plus whether the FAST PATH served it.
+    The force-extension lane: persistence wrapper around analyse_curve, caching
+    the verdict and every derived value in analysis_results.
 
     Returns (verdict, was_cached):
         verdict:
-            'event'       — pipeline located a valid event (an ROI excursion)
+            'event'       — a valid event (an ROI excursion) was located
             'non_event'   — no ROI / event could be identified
             'unavailable' — the curve could not be READ at all (e.g. a
-                             disconnected drive). Distinct from
-                             'non_event' on purpose: a load failure is not a
-                             classification, and must not be able to
-                             masquerade as one. No verdict is cached for this
-                             outcome, so the next pass retries.
-            'unusable'    — the curve read fine but does not qualify (e.g. a
-                             channel full of NaN). Also not a
-                             classification. Unlike 'unavailable' this will
-                             never fix itself, so the file is dequeued and
-                             labelled with its reason instead of retried.
-        was_cached: True iff the fast path served this verdict (no disk read,
-            no recompute, no writes) rather than the slow path actually
-            loading and analysing the curve.
+                             disconnected drive). Not a classification, and it
+                             must not masquerade as one. No verdict is cached,
+                             so the next pass retries.
+            'unusable'    — the curve's own data is damaged (e.g. a channel
+                             full of NaN). Also not a classification. Unlike
+                             'unavailable' it will not fix itself, so the
+                             reason is recorded on the file.
+        was_cached: True iff the answer came without a disk read.
     """
     code_ver = cache_version()
     param_set = _db.load_analysis_params(db_path)
@@ -660,7 +663,7 @@ def analyse_and_classify(
     )
     if cached_verdict is not None:
         if _db.load_analysis_params(db_path).revision != param_set.revision:
-            return analyse_and_classify(file_id, path, db_path, conn=conn)
+            return _lane_force_extension(file_id, path, db_path, conn=conn)
         return ("event" if cached_verdict >= 0.5 else "non_event"), True
 
     # ── SLOW PATH ─────────────────────────────────────────────────────────────
@@ -668,22 +671,17 @@ def analyse_and_classify(
     try:
         curve = load_force_curve(path)
     except UnusableCurveError as exc:
-        # The file read fine but does not qualify (curve_loader.qualify_wave):
+        # The file read fine but its data is damaged (curve_loader.qualify_wave):
         # a dead channel, a constant channel, no turnaround, or an all-zero
-        # retract. That is a durable fact about the file, so:
-        #   - record WHY, on the file, where the user can see it. The file is
-        #     kept in the catalog rather than dropped — a curve that silently
-        #     vanishes is one the user goes looking for.
-        #   - drop it from the queue so the worker never loads it again.
-        #   - return 'unusable', NOT 'non_event'. It was never classified;
-        #     calling it a non_event would be a verdict we did not reach, the
-        #     same disguise avoided for 'unavailable'.
-        # No verdict is cached, but nothing retries it either: unlike
-        # 'unavailable' this will not fix itself, and re-qualifying it on every
-        # pass is work with a known answer.
+        # retract.  Record WHY on the file, where the user can see it, and
+        # return 'unusable' rather than 'non_event' — nothing was classified,
+        # and calling it a non_event would report a verdict never reached.
+        #
+        # Queue membership is untouched.  The queue is the timeline the
+        # navigator walks, so removing a row here would delete curves out from
+        # under someone paging through them.
         _db.set_unusable_reason(file_id, exc.reason, str(exc), db_path, conn=conn)
         _db.set_event(file_id, "unusable", db_path, conn=conn)
-        _db.dequeue_files([file_id], db_path)
         return "unusable", False
     except LoadError:
         # A generic LoadError is a READ failure and may be transient (e.g. a
@@ -702,7 +700,7 @@ def analyse_and_classify(
     # calculation already in flight.  If this curve finished under an older
     # snapshot, rerun before publishing its verdict/current event map.
     if _db.load_analysis_params(db_path).revision != param_set.revision:
-        return analyse_and_classify(file_id, path, db_path, conn=conn)
+        return _lane_force_extension(file_id, path, db_path, conn=conn)
 
     # A non_event still purges the legacy rupture_force_pn row, if any — see
     # db._EVENT_BUNDLE_TYPES. rupture/onset/invOLS are NOT purged here: they
@@ -718,7 +716,7 @@ def analyse_and_classify(
         )
 
     if _db.load_analysis_params(db_path).revision != param_set.revision:
-        return analyse_and_classify(file_id, path, db_path, conn=conn)
+        return _lane_force_extension(file_id, path, db_path, conn=conn)
 
     # Cache the verdict so the next up-to-date pass short-circuits before load.
     _db.write_analysis_result(
@@ -727,6 +725,37 @@ def analyse_and_classify(
         p.all_params, code_ver, db_path, conn=conn,
     )
     return result.verdict, False
+
+
+# One lane per acquisition modality, covering every value curve_loader._modality
+# can return.  Indexed, not searched: a modality with no lane raises here rather
+# than being quietly treated as something else.
+MODALITY_PIPELINES = {
+    "continuous_stretch": _lane_force_extension,
+    "stretch_hold":       _lane_no_pipeline_yet,
+    "force_clamp":        _lane_no_pipeline_yet,
+    "indentation":        _lane_no_pipeline_yet,
+    "image_contact":      _lane_no_pipeline_yet,
+    "image_ac":           _lane_no_pipeline_yet,
+    "unknown":            _lane_no_pipeline_yet,
+}
+
+
+def analyse_file(
+    file_id: int,
+    path:    str,
+    db_path: str,
+    conn=None,
+) -> tuple[str, bool]:
+    """Send one file down the lane its modality names.
+
+    The scanner reads the modality from the file's own wave note at import and
+    stores it, so this is a lookup.  Nothing else takes part in the decision:
+    what a file IS settles where it goes, and what is wrong with its data is
+    the lane's business once it gets there.
+    """
+    lane = MODALITY_PIPELINES[_db.get_curve_type(file_id, db_path, conn=conn)]
+    return lane(file_id, path, db_path, conn=conn)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
