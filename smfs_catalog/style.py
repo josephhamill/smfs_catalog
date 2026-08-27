@@ -35,28 +35,12 @@
 #   GUIDE  (thresholds, anchors, zero lines, ROI spans) is bold-dashed (2.0 px)
 #          or a <=10% fill.  Guides for the eye are allowed to be assertive.
 #
-# The first rule makes a coloured fit over identically coloured data
-# structurally impossible: data is never a series hue, and red is reserved for
-# status rather than models.
-#
 # ── The palettes ──────────────────────────────────────────────────────────────
 #
-# Both are subsets of the validated data-viz reference palette, re-checked for
-# THIS app's surface (pyqtgraph background is pure white "w", not the reference
-# #fcfcfb) on the ALL-PAIRS pairlist, because everything here is drawn
-# simultaneously on one plot rather than as adjacent stack segments.
-# tests/test_palette.py re-runs those checks — if you edit a hex here, that test
-# tells you whether it still passes instead of you finding out from a colleague
-# who can't read the figure.
-#
-# Measured (OKLab dE x100, Machado-Oliveira-Fernandes severity 1.0):
-#
-#   SERIES_LINE  worst CVD 13.0, worst normal-vision 16.3, all >= 3:1 on white.
-#   SERIES_LABELED  worst CVD 13.0, worst normal-vision 16.3.  Two slots sit
-#                below 3:1 on white, which is legal ONLY because every consumer
-#                of this palette ships a legend or a coloured dot in a table.
-#   LANDMARK + the two signal hues, as co-drawn in the piezo-space panels:
-#                worst CVD 13.0, worst normal-vision 16.3.
+# Every hex here is checked by tests/test_palette.py for separation, contrast
+# and colour-vision deficiency, all-pairs, against this app's white surface.
+# SERIES_LABELED spends the 3:1 contrast floor on two slots, which is legal only
+# because every consumer of that palette ships a legend or a table dot.
 #
 # Colours never cycle into a new hue. Past the last slot the same hues repeat
 # with a dashed line style as the secondary encoding, preserving distinguishable
@@ -68,15 +52,11 @@
 # (colours, weights, alphas, font roles, QSS fragments, static geometry) and
 # pure functions over that data.  It holds no application state or interaction.
 #
-# The boundary is mechanical, so it needs no judgement call and no memory:
-#
 #     style.py may import QtCore, QtGui and pyqtgraph.
 #     style.py may NEVER import QtWidgets.
 #
-# Appearance needs QColor, QFont, pen styles, and QSS strings; it never needs a
-# widget.  Anything that reacts to a user belongs in widgets.py or its owning
-# window.  Returning an appearance value stays here; applying it is the
-# caller's job.
+# Anything that reacts to a user belongs in widgets.py or its owning window.
+# Returning an appearance value stays here; applying it is the caller's job.
 #
 # tests/test_style_is_single_source.py enforces the import boundary and prevents
 # other modules from naming colours or inventing typography.
@@ -131,8 +111,7 @@ _COLOR_DIVIDER = GRID
 _COLOR_MUTED   = "#555555"   # unchanged: this one is UI text, not a plot ink
 
 # ── D. Status — RESERVED.  Never a series colour, never a fit. ────────────────
-# Red exists only here and as the 2DH over-exposure marker.  That reservation is
-# reserved from data-series and model palettes.
+# Red exists only here and as the 2DH over-exposure marker.
 
 STATUS_GOOD     = "#0ca30c"
 STATUS_WARNING  = "#fab219"
@@ -147,23 +126,22 @@ _COLOR_FAIL = "#c00000"
 # Force-extension panels use ROI hues for their markers instead, keeping the
 # ROI and WLC windows visually consistent.
 
-LM_CONTACT   = "#008300"     # contact onset          (green — unchanged)
-LM_SNAPOFF   = "#eb6834"     # snap-off               (orange — unchanged)
-LM_ONSET     = "#eda100"     # ROI onset              (amber)
-LM_RUPTURE   = "#008300"     # terminal/outer rupture (green — unchanged)
-LM_RUPTURE_I = "#e87ba4"     # inner sub-event rupture (magenta — unchanged)
+LM_CONTACT   = "#008300"     # contact onset           (green)
+LM_SNAPOFF   = "#eb6834"     # snap-off                (orange)
+LM_ONSET     = "#eda100"     # ROI onset               (amber)
+LM_RUPTURE   = "#008300"     # terminal/outer rupture  (green)
+LM_RUPTURE_I = "#e87ba4"     # inner sub-event rupture (magenta)
 LM_THRESHOLD = INK_STRONG    # draggable threshold line
 
 # Signal traces in the piezo panels.  Two derived signals share a panel, so they
-# take identity hues rather than the neutral of rule 1.  d1 was red, which
-# collided with the rupture markers drawn ON it — a collision display_roi.py's
-# own comment had already noticed and half-worked-around.
+# take identity hues rather than the neutral of rule 1.  None may be red: these
+# carry rupture markers drawn ON them, and red is reserved for status.
 SIG_MEAN_DEV = SERIES_LINE[0]   # blue
 SIG_D1       = SERIES_LINE[2]   # violet
-SIG_APPROACH = SERIES_LINE[1]   # orange (was 'r' — red is reserved now)
+SIG_APPROACH = SERIES_LINE[1]   # orange
 SIG_RETRACT  = SERIES_LINE[0]   # blue
 SIG_DEFL     = SERIES_LINE[0]   # blue
-SIG_PIEZO    = SERIES_LINE[1]   # orange (was red)
+SIG_PIEZO    = SERIES_LINE[1]   # orange
 SIG_FILTERED = SERIES_LINE[2]   # violet
 
 # ── F. Hit / non-hit — tone, not hue ─────────────────────────────────────────
@@ -200,9 +178,7 @@ DOT_LABEL_SIZE_PX = 15
 SAMPLE_DOT_SIZE = 3.0
 
 # The app's quiet signature: a two-event force-extension trace, echoing the
-# application icon.  It is used only as line art in genuinely empty panels,
-# never behind data.  Keeping its geometry here makes the decorative motif as
-# centralized and reproducible as the palette.
+# application icon.  Line art in genuinely empty panels only, never behind data.
 SIGNATURE_X = np.array([0.08, 0.24, 0.34, 0.43, 0.435, 0.50,
                         0.61, 0.615, 0.70, 0.82, 0.92])
 SIGNATURE_Y = np.array([0.34, 0.34, 0.39, 0.64, 0.29, 0.35,
@@ -228,11 +204,9 @@ def data_pen(color=DATA, width: float = W_DATA,
     """Rule 1: the substrate.  Thin, opaque, neutral unless it's one of several
     signals sharing a panel (then pass a SERIES_LINE hue).
 
-    `alpha` defaults to opaque, so rule 1 stays the default.  It exists because
-    the detection panels stack signals, thresholds, masks and rupture markers
-    on one plot and each has to read through the others — a genuine exception
-    that had no way to say so, so display_roi.py built its four data pens by
-    hand instead and drifted off W_DATA while it was there.
+    `alpha` defaults to opaque, so rule 1 stays the default.  The detection
+    panels stack signals, thresholds, masks and rupture markers on one plot and
+    each has to read through the others, which is the one exception.
     """
     return pg.mkPen(rgba(color, alpha), width=width)
 
@@ -246,9 +220,8 @@ def data_marks(color=DATA, width: float = W_DATA, alpha: int = 255,
     segment it did not, so the line draws motion that never happened.
     Dots say only where the samples are.
 
-    The dot carries no ring: MARKER_PEN's dark outline is for a landmark, which
-    is one mark that must be found, and 100k of them would read as a black
-    band.  It is also the expensive half of drawing them.
+    No ring on the dot: at ~100k samples a trace, MARKER_PEN's dark outline
+    would read as a black band, and it is the expensive half of drawing them.
     """
     if not dots:
         return {"pen": data_pen(color, width, alpha), "symbol": None}
@@ -303,9 +276,7 @@ def scatter_brush(color, alpha: int = DOT_ALPHA) -> pg.mkBrush:
 # ── H. Overlay casing — required, not decorative ──────────────────────────────
 # A coloured trace drawn over the 2DH heatmap is unreadable wherever the ramp
 # passes through mid-grey: measured against a #8a8a85 cell, EVERY candidate hue
-# falls below 3:1 (the best, violet, manages 2.47).  Making the ramp monochrome
-# does not fix this by itself; it just moves the collision to the middle of the
-# ramp.  So an overlay is drawn twice — a white casing underneath, the colour on
+# falls below 3:1 (the best, violet, manages 2.47).  So an overlay is drawn twice — a white casing underneath, the colour on
 # top — which is legible against any ramp value including the black clip.
 
 CASING_COLOR = "#ffffff"
@@ -317,8 +288,7 @@ W_OVERLAY    = 2.5
 # the Δx=0 / F* registration lines, the ROI selection rectangle.  Orange
 # deliberately, because orange is the one SERIES_LINE hue that is NOT in
 # SERIES_LABELED — so a reference line can never be mistaken for an overlay
-# trace no matter how many traces are ticked.  It replaces black (now the
-# over-exposure colour) and blue (now the first overlay).
+# trace no matter how many traces are ticked.
 REFERENCE = SERIES_LINE[1]
 
 
@@ -405,8 +375,6 @@ def intensity_lut(clip_color: tuple[int, int, int] = CLIP_RGB) -> np.ndarray:
 # PCA loadings are signed, so they need a diverging map centred on a neutral
 # zero. These are the published ColorBrewer RdBu 11-class control points;
 # reversing them maps negative loadings to blue and positive loadings to red.
-# Keeping the values local avoids a matplotlib dependency solely for palette
-# lookup and makes the rendering deterministic on fresh installations.
 _RDBU = np.array([
     [103,   0,  31], [178,  24,  43], [214,  96,  77], [244, 165, 130],
     [253, 219, 199], [247, 247, 247], [209, 229, 240], [146, 197, 222],
@@ -458,8 +426,7 @@ UI_FAINT = "#777777"    # de-emphasised secondary (empty states, bounds hints)
 
 # Status AS TEXT.  Section D's STATUS_* are marks — STATUS_GOOD/#0ca30c and
 # STATUS_WARNING/#fab219 are far too light to read as words on white.  These are
-# the darkened text equivalents, which is exactly why _COLOR_PASS/_COLOR_FAIL
-# provide dark text equivalents. All three clear 4.5:1 on white, as asserted
+# the darkened text equivalents.  All three clear 4.5:1 on white, as asserted
 # by the guard test.
 TEXT_GOOD    = _COLOR_PASS      # #006400
 TEXT_WARNING = "#bb5700"
@@ -473,10 +440,7 @@ CHROME_FILL = "#f0f0f0"
 # ── L2. Typography ────────────────────────────────────────────────────────────
 # QFont uses points because it follows display scaling.  QSS helpers accept
 # pixels because Qt stylesheet syntax does; callers should still use a named
-# semantic size rather than introducing a literal at the call site.
-# Typography is part of the same visual system as colour.  These are semantic
-# roles, not a bag of numbers: a caption should not become a different size
-# merely because it lives in a PCA window rather than an FFT window.  Keep the
+# semantic size rather than introducing a literal at the call site.  Keep the
 # native platform UI face for controls; reserve a modern monospace face for
 # numerical readouts where alignment carries information.  Qt falls back to the
 # platform monospace family if Cascadia Mono is not installed.
@@ -504,10 +468,8 @@ def font(base: QFont | None = None, *, size_pt: int | None = None,
 # so the tint follows the verdict rather than a private list in one window.
 # 'unavailable' must read as visibly different from both 'running' and a
 # real 'non_event', or a disconnected drive looks like a normal queue state.
-# 'unusable' is warm-vs-cool from 'unavailable' on purpose: both are
-# data problems rather than verdicts, but one is expected to fix itself and
-# will be retried, and the other never will. Reading them as the same colour
-# would hide exactly the distinction that matters when deciding what to do.
+# 'unusable' and 'unavailable' must not read alike: one is retried, the other
+# never is.
 ROW_TINT: dict[str, str] = {
     "event":       "#dcf5dc",   # pale green
     "non_event":   "#e8e8e8",   # grey

@@ -575,9 +575,8 @@ def scan_directory(
     # it — both correct SQLite behaviour for a usage pattern it does not
     # expect.  A connection is meant to be long-lived.
     #
-    # Crash behaviour is deliberate and unchanged in kind: an interrupted scan
-    # loses at most the current batch, which the next scan re-derives by reading
-    # the same files.
+    # An interrupted scan loses at most the current batch, which the next scan
+    # re-derives by reading the same files.
     conn      = db.get_connection(db_path)
     pending   = 0
     cancelled = False

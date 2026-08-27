@@ -26,8 +26,8 @@ from .db import normalize_path  # single source of truth for files.path identity
 # reshape-failure path logs `logger.error('could not reshape data ...', shape,
 # data_b)` where data_b is the wave's RAW byte buffer — Python's last-resort
 # handler then dumps that entire binary blob to stderr.  igor2 re-raises the
-# exception anyway (we catch it and return "non_event"), so the log record carries
-# no information we act on; muting it only stops the per-bad-file binary spew.
+# exception anyway, so the log record carries no information any caller acts on;
+# muting it only stops the per-bad-file binary spew.
 # Scoped to the "igor2" logger so genuine errors elsewhere still surface.
 logging.getLogger("igor2").setLevel(logging.CRITICAL)
 
@@ -626,27 +626,22 @@ def load_force_curve(path: str) -> ForceCurve:
     # repeated rather than trusted because a file can be overwritten on disk
     # after it was catalogued, and because the loader has other callers.
     #
-    # indent_mode is deliberately passed as None here, and that is not an
-    # oversight.  It answers "which experiment did the operator intend", which
-    # is a cataloguing fact the scanner needs in order to scope; this function
-    # is being asked "can these samples be split into an approach and a
-    # retract", which is about structure.  An indentation wave has the
-    # force-extension layout and loads fine, so refusing it here would break
-    # viewers over a label rather than over the data.  Same function, different
-    # question, the information each caller actually has.
+    # indent_mode is passed as None.  It answers "which experiment did the
+    # operator intend", a cataloguing fact; this call asks "can these samples be
+    # split into an approach and a retract", which is structural.  An
+    # indentation wave has the force-extension layout and loads fine, so passing
+    # indent_mode here would refuse a viewable curve over a label.
     k = _spring_constant(note)
     q = qualify_wave(
         wdata, labels=wave["wave"]["labels"], indent_mode=None,
         hold_z=_hold_z_sensor(note), spring_constant=k,
     )
     if q.curve_type != "continuous_stretch":
-        # Durable, so UnusableCurveError and not a plain LoadError: a file that
-        # is a force-clamp trace, an image, or a wave with no spring constant
-        # will still be all of those things next pass.  Raised as a plain
-        # LoadError it read as "couldn't load" → 'unavailable' → retried
-        # forever.  The file itself is not
-        # rejected from the catalog — it keeps its own curve_type and stays
-        # visible; this only says the force-curve pipeline cannot consume it.
+        # UnusableCurveError and not a plain LoadError: a force-clamp trace, an
+        # image, or a wave with no spring constant is durably not a force
+        # curve, where a LoadError means a read that may succeed next time.
+        # The file keeps its curve_type and stays visible; this says only that
+        # the force-extension loader cannot consume it.
         raise UnusableCurveError(
             f"{Path(path).name}: not a force-extension curve "
             f"(wData shape {wdata.shape}, SpringConstant {k!r} → {q.curve_type})",

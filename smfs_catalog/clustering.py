@@ -10,7 +10,7 @@
 #
 # The session's current cluster assignment. Qt-free, DB-free.
 #
-# DELIBERATELY EPHEMERAL — this is the whole design, not a shortcut.
+# The session's clustering is EPHEMERAL.
 #
 # A k-means label is not a property of a curve.  It is a property of the SET:
 # the centroids are determined by every member together, so removing a third
@@ -20,22 +20,17 @@
 #
 # Storing one would therefore mean keeping it true against cohort membership,
 # the 2DH's align mode / segment / grid / selected area, the analysis
-# parameters underneath, k, the seed, n_pcs and the code version — MORE inputs
-# than the gate verdict had, and that was deleted (files.hit) for exactly this
-# reason.  The queue is cleared at every launch, so a stored label would
-# describe a cohort that is not even loaded.
+# parameters underneath, k, the seed, n_pcs and the code version.  The queue is
+# cleared at every launch, so a stored label would describe a cohort that is not
+# even loaded.
 #
-# What makes ephemeral safe rather than lossy is that re-running costs seconds
-# — unlike an analysis result, which costs hours — and THE EXPORT IS THE
-# DURABLE RECORD: pca_window's _scores.csv already carries path, PC1..PCn and
-# cluster, with k and the seed in its manifest.  That is the artefact that
-# leaves the app and reaches a figure.  Nothing worth keeping is lost.
+# THE EXPORT IS THE DURABLE RECORD: pca_window's _scores.csv carries path,
+# PC1..PCn and cluster, with k and the seed in its manifest.
 #
-# Consequence: there is nothing to invalidate, so there are no staleness rules
-# here.  A cohort can still move under a live clustering (edit a criterion,
-# repopulate the queue), and the answer to that is the COVERAGE LINE every
-# consumer draws plus the user's own Clear button — never an automatic rule
-# deciding on their behalf. The view informs but does not gate.
+# Nothing here persists, so there is nothing to invalidate and no staleness
+# rules.  A cohort can move under a live clustering (edit a criterion,
+# repopulate the queue); the COVERAGE LINE every consumer draws reports that,
+# and the user's Clear button acts on it.  The view informs, it does not gate.
 
 from __future__ import annotations
 
@@ -137,8 +132,7 @@ def current() -> Clustering | None:
 def set_current(clustering: Clustering) -> None:
     """Publish a new run, replacing whatever was there.
 
-    Replacing rather than accumulating reflects that only the current
-    exploratory clustering is active; durable results belong in exports.
+    Replacing, not accumulating: durable results belong in exports.
     """
     global _current
     _current = clustering
@@ -150,9 +144,8 @@ def clear() -> None:
 
     Needed even though this all dies at exit, and for a different moment:
     change the criteria or repopulate the queue mid-session and the colouring
-    is stale immediately.  Deliberately NOT automatic on a cohort change —
-    that would be an invalidation rule, which is what this design exists
-    without; the coverage line reports the mismatch and the user decides.
+    is stale immediately.  NOT automatic on a cohort change: the coverage line
+    reports the mismatch and the user decides.
     """
     global _current
     _current = None
@@ -163,8 +156,7 @@ def subscribe(callback) -> None:
     """Register a plain callable, invoked with no arguments on any change.
 
     Plain callables rather than a Qt signal so this module stays importable
-    headless and testable without a QApplication — the same reason
-    scanner.scan_directory takes a progress callback instead of a QObject.
+    headless and testable without a QApplication.
     """
     if callback not in _subscribers:
         _subscribers.append(callback)
@@ -228,9 +220,8 @@ def provenance(paths: list[str], shown: bool) -> dict:
     manifest key spelled differently in each is a file nobody can join on.
 
     `shown` records whether the colouring was actually ON SCREEN, separately
-    from whether a clustering existed — a figure and its CSV must agree about
-    what was drawn, the same reason mean_curve_window records which of
-    +-1sigma / +-SE was displayed.
+    from whether a clustering existed: a figure and its CSV must agree about
+    what was drawn.
 
     Always emits the keys, with nulls when there is no clustering: an absent
     key is indistinguishable from an older export that never had one.

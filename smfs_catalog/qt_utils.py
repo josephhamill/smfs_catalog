@@ -10,10 +10,9 @@
 #
 # Shared Qt and pyqtgraph display helpers.  No window classes live here.
 #
-# _TAB10 is gone.  It was cycled by index for rug tints, param tints, category
-# tints and 2DH trace overlays, which is how it ended up drawing an orange and a
-# green 0.7 dE apart under protanopia.  Callers now take style.series_labeled(i)
-# (a fixed order that stops rather than wrapping into a new hue).
+# Tints for rugs, params, categories and 2DH trace overlays all come from
+# style.series_labeled(i) — a fixed order that stops rather than wrapping into a
+# new hue, which is what puts two barely separable colours on one plot.
 
 from __future__ import annotations
 

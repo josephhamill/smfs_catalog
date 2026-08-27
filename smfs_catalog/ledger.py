@@ -29,11 +29,9 @@
 # therefore stores one record per reported exclusion. A path can have several
 # records when it is refused at several stages or for several reasons.
 #
-# Shape copied deliberately from criteria_gate.explain(), which already
-# returns per-file exactly which criterion failed and against what bound.
-# That was the proven pattern; this extends it to the stages that skipped it
-# rather than inventing a second one.  Kept Qt-free for the same reason
-# criteria_gate is: the windows adapt it, it never reaches for them.
+# Same shape as criteria_gate.explain(), which returns per-file which criterion
+# failed and against what bound.  Qt-free for the same reason criteria_gate is:
+# the windows adapt it, it never reaches for them.
 #
 # NOT a cache.  A Ledger describes one pass of one stage and is rebuilt with
 # whatever rebuilt the view.  Nothing persists it, so nothing has to
