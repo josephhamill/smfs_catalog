@@ -34,7 +34,7 @@ import time
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker, QWaitCondition
 
 from . import db as _db
-from .curve_analysis import analyse_and_classify
+from .curve_analysis import analyse_file
 
 
 # Default inter-file delay (ms).  Can be tuned at runtime via set_throttle_ms().
@@ -98,6 +98,7 @@ class AnalysisWorker(QThread):
         self._throttle_ms = THROTTLE_MS
         self._direction = +1                 # +1 = forward, -1 = backward
         self._playhead: int | None = None    # current/last-processed file_id
+        self._playhead_index: int | None = None  # its position in queue order
         self._step_requests: deque[int] = deque() # one-shot manual steps (Prev/Next)
         self._mutex   = QMutex()
         self._cond    = QWaitCondition()    # signalled when paused → resumed, or new work arrives
@@ -256,8 +257,7 @@ class AnalysisWorker(QThread):
             # 1. Manual steps trump everything — process even when paused.
             fid = self._pop_step_request()
             if fid is not None:
-                with QMutexLocker(self._mutex):
-                    self._playhead = fid
+                self._set_playhead(fid)
                 self.playhead_changed.emit(fid)
                 outcome = self._process_one(fid)
                 if outcome == "unavailable":
@@ -308,8 +308,7 @@ class AnalysisWorker(QThread):
                 continue
 
             self._idle_emitted = False
-            with QMutexLocker(self._mutex):
-                self._playhead = next_id
+            self._set_playhead(next_id)
             self.playhead_changed.emit(next_id)
             outcome = self._process_one(next_id)
             with QMutexLocker(self._mutex):
@@ -354,17 +353,31 @@ class AnalysisWorker(QThread):
             # it every cache read and result write inside the pipeline opened
             # and closed its own connection, and closing the last connection
             # to a WAL database checkpoints it.
-            event, was_cached = analyse_and_classify(
+            event, was_cached = analyse_file(
                 file_id, path, self._db_path, conn=self._conn
             )
         except Exception as exc:
             return self._fail(file_id, f"analysis failed: {exc!r}")
 
+        if event == "unanalysed":
+            # No pipeline for this modality.  The file is intact and stays in
+            # the queue to be navigated to and plotted; there is just no
+            # analysis to record, so files.event is left alone.
+            try:
+                _db.set_queue_status(file_id, "done", self._db_path, conn=self._conn)
+            except Exception as exc:
+                return self._fail(file_id, f"saving completion status failed: {exc!r}")
+            self.file_done.emit(file_id, event, was_cached)
+            return "done"
+
         if event == "unusable":
-            # The pipeline has already stored the reason/verdict and removed
-            # this durable failure from the queue.  Publish the membership
-            # change, but do not repeat those writes against a deleted row.
-            self.invalidate_queue_cache()
+            # The pipeline stored the reason and the verdict on the file, and
+            # left the row in the queue.  Settle the row rather than repeating
+            # those writes.
+            try:
+                _db.set_queue_status(file_id, "done", self._db_path, conn=self._conn)
+            except Exception as exc:
+                return self._fail(file_id, f"saving completion status failed: {exc!r}")
             self.file_done.emit(file_id, event, was_cached)
             return "done"
 
@@ -487,8 +500,23 @@ class AnalysisWorker(QThread):
                     self._queue_ids_cache = cache
                     return cache
 
-    # Navigation always follows queue order from the user's playhead. If that
-    # playhead was removed, restart at the appropriate edge.
+    def _set_playhead(self, file_id: int) -> None:
+        """Move the playhead, remembering the queue position it lands on.
+
+        The position is what navigation needs if the file is later removed from
+        the queue: an id that is gone says nothing about where the user was
+        standing.
+        """
+        ids = self._queue_ids()
+        try:
+            index = ids.index(int(file_id))
+        except ValueError:
+            index = None
+        with QMutexLocker(self._mutex):
+            self._playhead = file_id
+            self._playhead_index = index
+
+    # Navigation always follows queue order from the user's playhead.
 
     def _neighbour_file_id(self, current: int | None, delta: int) -> int | None:
         ids = self._queue_ids()
@@ -499,8 +527,15 @@ class AnalysisWorker(QThread):
         try:
             i = ids.index(int(current))
         except ValueError:
-            # Current playhead was removed from queue — restart from edge.
-            return ids[0] if delta >= 0 else ids[-1]
+            with QMutexLocker(self._mutex):
+                i = self._playhead_index if current == self._playhead else None
+            if i is None:
+                return ids[0] if delta >= 0 else ids[-1]
+            # Rows below the vacated position shifted up one, so that position
+            # now holds the successor: forward starts there, backward steps off
+            # it.
+            j = i + delta - 1 if delta > 0 else i + delta
+            return ids[j] if 0 <= j < len(ids) else None
         j = i + delta
         if 0 <= j < len(ids):
             return ids[j]

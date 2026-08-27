@@ -36,7 +36,7 @@ def test_unavailable_data_stays_pending_and_is_not_a_classification(monkeypatch)
     worker.file_done.connect(lambda *args: done.append(args))
     worker.file_error.connect(lambda *args: errors.append(args))
     monkeypatch.setattr(
-        worker_module, "analyse_and_classify",
+        worker_module, "analyse_file",
         lambda *args, **kwargs: ("unavailable", False),
     )
 
@@ -59,7 +59,7 @@ def test_analysis_failure_has_one_error_outcome_and_persists_it(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("broken pipeline")
 
-    monkeypatch.setattr(worker_module, "analyse_and_classify", fail)
+    monkeypatch.setattr(worker_module, "analyse_file", fail)
 
     assert worker._process_one(8) == "error"
     assert statuses[0] == "running"
@@ -76,7 +76,7 @@ def test_event_write_failure_is_not_also_reported_done(monkeypatch):
     worker.file_done.connect(lambda *args: done.append(args))
     worker.file_error.connect(lambda *args: errors.append(args))
     monkeypatch.setattr(
-        worker_module, "analyse_and_classify",
+        worker_module, "analyse_file",
         lambda *args, **kwargs: ("event", False),
     )
     monkeypatch.setattr(
@@ -90,22 +90,44 @@ def test_event_write_failure_is_not_also_reported_done(monkeypatch):
     assert done == []
 
 
-def test_unusable_is_published_without_rewriting_deleted_queue_row(monkeypatch):
+def test_damaged_data_settles_its_row_and_keeps_it_in_the_queue(monkeypatch):
+    """The queue is the timeline the navigator walks, so analysing a file never
+    removes it: a damaged curve is still one the user can step to and plot."""
     worker, statuses, saved_events = _worker_with_fake_db(monkeypatch)
     done = []
     queue_changes = []
     worker.file_done.connect(lambda *args: done.append(args))
     worker.queue_changed.connect(lambda: queue_changes.append(True))
     monkeypatch.setattr(
-        worker_module, "analyse_and_classify",
+        worker_module, "analyse_file",
         lambda *args, **kwargs: ("unusable", False),
     )
 
     assert worker._process_one(10) == "done"
-    assert statuses == ["running"]
+    assert statuses == ["running", "done"]
     assert saved_events == []
     assert done == [(10, "unusable", False)]
-    assert queue_changes == [True]
+    assert queue_changes == []
+
+
+def test_a_modality_with_no_pipeline_settles_without_a_verdict(monkeypatch):
+    """A force-clamp or held trace is intact and browsable; there is simply no
+    analysis for it yet, so no event is written and the row stays queued."""
+    worker, statuses, saved_events = _worker_with_fake_db(monkeypatch)
+    done = []
+    queue_changes = []
+    worker.file_done.connect(lambda *args: done.append(args))
+    worker.queue_changed.connect(lambda: queue_changes.append(True))
+    monkeypatch.setattr(
+        worker_module, "analyse_file",
+        lambda *args, **kwargs: ("unanalysed", True),
+    )
+
+    assert worker._process_one(11) == "done"
+    assert statuses == ["running", "done"]
+    assert saved_events == []
+    assert done == [(11, "unanalysed", True)]
+    assert queue_changes == []
 
 
 def test_stop_interrupts_long_throttle_wait():
@@ -125,3 +147,52 @@ def test_stop_interrupts_long_throttle_wait():
 
     assert finished.is_set()
     assert time.monotonic() - started < 0.5
+
+
+def _worker_over_queue(monkeypatch, ids):
+    """A worker whose queue is `ids`, mutable by the caller."""
+    worker = AnalysisWorker("catalog.db")
+    monkeypatch.setattr(
+        worker_module._db, "list_queue",
+        lambda db_path: [{"file_id": i} for i in ids],
+    )
+    return worker
+
+
+def test_a_step_from_a_vacated_position_moves_one_place(monkeypatch):
+    """Removing the playhead's file must cost one step, not throw the user to
+    the far end of the queue."""
+    ids = [101, 102, 103, 104, 105]
+    worker = _worker_over_queue(monkeypatch, ids)
+
+    worker._set_playhead(103)
+    ids.remove(103)
+    worker.invalidate_queue_cache()
+
+    assert worker._neighbour_file_id(103, -1) == 102
+    assert worker._neighbour_file_id(103, +1) == 104
+
+
+def test_stepping_back_from_the_first_position_stays_put(monkeypatch):
+    """Position one has nothing behind it, whether or not its file is still in
+    the queue."""
+    ids = [101, 102, 103]
+    worker = _worker_over_queue(monkeypatch, ids)
+
+    worker._set_playhead(101)
+    assert worker._neighbour_file_id(101, -1) is None
+
+    ids.remove(101)
+    worker.invalidate_queue_cache()
+    assert worker._neighbour_file_id(101, -1) is None
+    assert worker._neighbour_file_id(101, +1) == 102
+
+
+def test_a_playhead_never_seen_in_the_queue_restarts_at_the_edge(monkeypatch):
+    """With no remembered position there is nothing to step from, so the edge
+    is the only honest answer."""
+    ids = [101, 102, 103]
+    worker = _worker_over_queue(monkeypatch, ids)
+
+    assert worker._neighbour_file_id(999, -1) == 103
+    assert worker._neighbour_file_id(999, +1) == 101

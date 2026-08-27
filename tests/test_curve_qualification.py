@@ -512,3 +512,54 @@ def test_the_queue_exposes_owner_and_bandwidth(tmp_path):
     row = db.list_queue(p)[0]
     assert row["experimentalist"] == "Anthony"
     assert row["force_filter_bw_hz"] == 2000.0
+
+
+def test_a_modality_with_no_pipeline_is_not_recorded_as_damage(tmp_path):
+    """A force-clamp trace is an intact recording of a different experiment.
+    Labelling it unusable puts a fault on a file that has none, and a catalog
+    carrying that label is corrected on open."""
+    from smfs_catalog import db as _db
+    db = str(tmp_path / "c.db")
+    _db.initialise(db)
+    conn = _db.get_connection(db)
+    with conn:
+        conn.execute(
+            "INSERT INTO files (path, filename, curve_type, event, "
+            "unusable_reason, unusable_detail, first_seen, last_seen) "
+            "VALUES ('/d/fc.ibw', 'fc.ibw', 'force_clamp', 'unusable', "
+            "'not_force_extension', 'wrong shape', 'x', 'x')")
+    conn.close()
+
+    _db.initialise(db)
+
+    conn = _db.get_connection(db)
+    row = conn.execute(
+        "SELECT event, unusable_reason, unusable_detail, curve_type "
+        "FROM files WHERE filename = 'fc.ibw'").fetchone()
+    conn.close()
+    assert row["event"] is None
+    assert row["unusable_reason"] is None
+    assert row["unusable_detail"] is None
+    assert row["curve_type"] == "force_clamp", "what the file IS is untouched"
+
+
+def test_every_modality_has_a_lane():
+    """A file is sent down the lane its modality names, so every modality the
+    classifier can report must have one.  Read from _modality's own source: a
+    new experiment type added there fails here until it is given a lane."""
+    import ast
+    import inspect
+    from smfs_catalog import curve_analysis as _ca
+
+    tree = ast.parse(inspect.getsource(cl._modality))
+    reported = {
+        lit.value
+        for ret in ast.walk(tree) if isinstance(ret, ast.Return)
+        for lit in ast.walk(ret)
+        if isinstance(lit, ast.Constant) and isinstance(lit.value, str)
+    }
+    assert reported, "no modality literals found — did _modality stop returning them?"
+    assert reported == set(_ca.MODALITY_PIPELINES), (
+        f"classifier reports {sorted(reported)}, "
+        f"lanes exist for {sorted(_ca.MODALITY_PIPELINES)}"
+    )

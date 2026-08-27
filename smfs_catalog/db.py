@@ -209,6 +209,15 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
             conn.execute("ALTER TABLE files DROP COLUMN directory_id")
         conn.execute("DROP TABLE IF EXISTS watched_directories")
 
+        # An acquisition modality the analysis has no pipeline for is not a
+        # damaged file.  Clear the label where a catalog holds one; the string
+        # is spelled out because curve_loader imports this module, not the
+        # other way round.
+        conn.execute(
+            "UPDATE files SET event = NULL, unusable_reason = NULL, "
+            "unusable_detail = NULL WHERE unusable_reason = 'not_force_extension'"
+        )
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS meta (
                 key     TEXT PRIMARY KEY,
@@ -2240,6 +2249,27 @@ def set_event(
     finally:
         if conn is None:
             c.close()
+
+
+def get_curve_type(
+    file_id: int,
+    db_path: str = DEFAULT_DB_PATH,
+    conn: Optional[sqlite3.Connection] = None,
+) -> Optional[str]:
+    """Return files.curve_type — which acquisition modality the file records.
+
+    Written by the scanner at import from the wave itself, so it is known for
+    every catalogued file without opening one.
+    """
+    c = conn or get_connection(db_path)
+    try:
+        row = c.execute(
+            "SELECT curve_type FROM files WHERE id = ?", (file_id,)
+        ).fetchone()
+    finally:
+        if conn is None:
+            c.close()
+    return row["curve_type"] if row else None
 
 
 def set_unusable_reason(
