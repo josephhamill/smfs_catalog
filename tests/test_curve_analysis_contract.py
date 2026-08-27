@@ -25,6 +25,7 @@ def test_one_parameter_snapshot_reaches_multi_event_persistence(monkeypatch):
     )
     monkeypatch.setattr(_ca._db, "load_analysis_params", load_params)
     monkeypatch.setattr(_ca._db, "get_analysis_result", lambda *a, **k: None)
+    monkeypatch.setattr(_ca._db, "get_curve_type", lambda *a, **k: "continuous_stretch")
     monkeypatch.setattr(_ca._db, "write_analysis_result", lambda *a, **k: None)
     monkeypatch.setattr(_ca, "load_force_curve", lambda _path: object())
     monkeypatch.setattr(_ca, "cache_version", lambda: "test-build")
@@ -34,7 +35,7 @@ def test_one_parameter_snapshot_reaches_multi_event_persistence(monkeypatch):
         lambda *a, **k: captured.append(k["param_set"]),
     )
 
-    verdict, cached = _ca.analyse_and_classify(1, "curve.ibw", "catalog.db")
+    verdict, cached = _ca.analyse_file(1, "curve.ibw", "catalog.db")
 
     assert (verdict, cached) == ("event", False)
     assert len(loads) == 3  # acquire once; validate before both publications
@@ -65,6 +66,7 @@ def test_edit_during_curve_reruns_before_current_result_is_published(monkeypatch
 
     monkeypatch.setattr(_ca._db, "load_analysis_params", lambda _p: next(snapshots))
     monkeypatch.setattr(_ca._db, "get_analysis_result", lambda *a, **k: None)
+    monkeypatch.setattr(_ca._db, "get_curve_type", lambda *a, **k: "continuous_stretch")
     monkeypatch.setattr(_ca._db, "write_analysis_result", lambda *a, **k: None)
     monkeypatch.setattr(_ca, "load_force_curve", lambda _path: object())
     monkeypatch.setattr(_ca, "cache_version", lambda: "test-build")
@@ -80,7 +82,7 @@ def test_edit_during_curve_reruns_before_current_result_is_published(monkeypatch
         lambda *a, **k: persisted.append(k["param_set"]),
     )
 
-    verdict, cached = _ca.analyse_and_classify(1, "curve.ibw", "catalog.db")
+    verdict, cached = _ca.analyse_file(1, "curve.ibw", "catalog.db")
 
     assert (verdict, cached) == ("event", False)
     assert analysed == [old.spectral_cutoff_hz, new.spectral_cutoff_hz]
