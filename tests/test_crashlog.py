@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: the crash log actually catches crashes (#119).
+Regression test: the crash log actually catches crashes.
 
 The bug this guards against is a logger that looks installed and writes
 nothing when it matters.  So the three fatal cases are tested by CRASHING A

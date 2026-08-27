@@ -248,7 +248,7 @@ class CollapsibleSection(QWidget):
 class ClusterColourBar(QWidget):
     """The 'Colour by cluster' control, shared by every window that offers it.
 
-    One implementation because there are three consumers (#63: Explore Events,
+    One implementation because there are three consumers (Explore Events,
     the any-vs-any scatter, the variable timeseries) and three copies of a
     checkbox plus a caption plus a subscribe/unsubscribe pair is three
     copies to keep in step.

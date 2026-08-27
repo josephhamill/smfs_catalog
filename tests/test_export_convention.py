@@ -109,12 +109,12 @@ check(
     "export_csv" not in db_funcs,
 )
 check(
-    "(b) db.export_classification_report no longer writes a file itself",
+    "(b) db.export_classification_report does not write a file itself",
     "export_classification_report" not in db_funcs,
     "replaced by classification_report_rows(), which returns (header, rows)",
 )
 check(
-    "(b) db.export_queue_paths no longer writes a file itself",
+    "(b) db.export_queue_paths does not write a file itself",
     "export_queue_paths" not in db_funcs,
     "replaced by queue_paths(), which returns a list",
 )
@@ -285,16 +285,11 @@ for mod, needle in (("dist_fit_window.py", '"ci_lo", "ci_hi"'),
 
 # ── (g) The export folder is ONE DB-wide setting, with no owner ──────────────
 #
-# #123: the folder was set with the app's own button and
-# four hours later the app was writing to the database directory instead, with
-# nothing on screen saying so. It was stored per-experimentalist and resolved
-# through "whose data is this" — the first file in the catalog carrying a name.
-# Adding files changed that answer, so the setting was written under one person
-# and read back under another, and ended up recorded under two at once.
-#
-# The rule now: one setting, no experimentalist dimension anywhere in the
-# resolution path. These checks are what stops an owner being reintroduced
-# "just for the folder".
+# One setting, no experimentalist dimension anywhere in the resolution path.
+# An owner dimension resolves through "whose data is this", an answer that
+# changes as files are added — so the setting gets written under one person and
+# read back under another. These checks are what stops an owner being
+# reintroduced "just for the folder".
 import inspect                                            # noqa: E402
 
 for fn in (_export.resolve_export_dir, _export.set_export_dir_override):
@@ -315,8 +310,8 @@ check("(g) the export folder is not stored on a per-experimentalist profile",
       not _profile_calls, ", ".join(_profile_calls))
 
 # The behaviour those signatures exist to guarantee: the folder a person set
-# must survive the catalog gaining files owned by someone else. Under the old
-# storage this exact sequence silently changed the answer.
+# must survive the catalog gaining files owned by someone else. Per-owner
+# storage changes the answer on this exact sequence, silently.
 DB2 = str(Path(tempfile.mkdtemp()) / "t2.db")
 _db.initialise(DB2)
 chosen = tempfile.mkdtemp()
@@ -345,7 +340,7 @@ check("(g) an explicit 'no folder' ignores retired profile data",
       _export.resolve_export_dir(DB2) == Path(DB2).resolve().parent,
       str(_export.resolve_export_dir(DB2)))
 
-# The dashboard must SHOW it. The only way to learn the folder used to be to
+# The dashboard must SHOW it. Otherwise the only way to learn the folder is to
 # perform an export and read the confirmation dialog.
 check("(g) the dashboard puts the export folder on screen",
       "_update_export_dir_label" in SRC["dashboard_window.py"]

@@ -8,7 +8,7 @@
 
 """
 Guards for smfs_catalog.variables — the one accessor answering "what per-file
-variables exist, and give me some of them for this cohort" (#143).
+variables exist, and give me some of them for this cohort".
 
 The load-bearing test is (e): criteria_gate._values must still return exactly
 what its own hand-written routing returned, because that routing decides which
@@ -121,7 +121,7 @@ def test_the_dashboard_and_the_registry_share_one_exclusion_object():
 def test_the_dead_fitter_a_columns_can_never_be_plotted_beside_the_live_ones():
     """wlc_l_c_nm is Fitter A's contour length: fit to the RAW retract
     (sawtooth noise), one event per curve, on a cache key of frozen literals
-    that never invalidated (#80). It was deleted and its rows are
+    that never invalidated. It was deleted and its rows are
     frozen at that date. seg_l_c_nm is the SAME physical quantity measured
     correctly. Offering both puts a corpse on an axis beside the living thing
     under near-identical names, which is worse than offering neither."""
@@ -191,8 +191,8 @@ def test_time_prefers_the_full_timestamp_and_falls_back_to_the_date():
 
 
 def test_time_is_an_ordinary_variable_so_drift_is_a_special_case():
-    """#13 is #143 with x = time. If time ever stops being offered, the drift
-    fit becomes a second implementation of the same arithmetic."""
+    """Drift is the registry with x = time. If time ever stops being offered,
+    the drift fit becomes a second implementation of the same arithmetic."""
     keys = {v.key for v in _vars.available(ALL, DB)}
     assert _vars.TIME_KEY in keys
     assert next(v for v in _vars.available(ALL, DB) if v.key == _vars.TIME_KEY).is_time

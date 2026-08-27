@@ -8,7 +8,7 @@
 
 # smfs_catalog/ledger.py
 #
-# The drop ledger (issue #117).  Pure logic, no UI, no DB.
+# The drop ledger.  Pure logic, no UI, no DB.
 #
 # THE RULE: a stage that narrows a set reports what it was GIVEN, not only
 # what it KEPT.  The event-summary and 2DH stages take cohorts and shrink
@@ -50,8 +50,7 @@ from dataclasses import dataclass
 # shown on screen and written into manifests — stated as what is MISSING, so
 # it reads as an explanation rather than an accusation.
 #
-# #117 requires these to be distinguishable from each other; that list is
-# where this vocabulary came from.
+# These must be distinguishable from each other.
 DROP_REASONS: dict[str, str] = {
     "not_in_population": "not in the selected population (hit/non-hit)",
     "no_stored_segments": "no stored segmentation under the current parameter set",
@@ -190,8 +189,8 @@ class Ledger:
     def journey(self, path: str) -> list[Drop]:
         """Every stage that refused this one curve, in the order recorded.
 
-        The owner's framing, and the bigger half of #117: "we'd like to see
-        how each trace travels through the filtering." An empty list means
+        The owner's framing: "we'd like to see how each trace travels through
+        the filtering." An empty list means
         the curve survived every stage this ledger knows about.
         """
         return [d for d in self._drops if d.path == path]

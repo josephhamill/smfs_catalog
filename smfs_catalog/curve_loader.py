@@ -42,7 +42,7 @@ class LoadError(Exception):
     A file whose CONTENTS disqualify it raises UnusableCurveError below, which
     is a durable fact about the file and is never retried.  Keeping those two
     apart is the whole point: they need opposite responses, and conflating them
-    is what sent a user to check a healthy hard drive (#122).
+    sends a user to check a healthy hard drive.
     """
     pass
 
@@ -283,9 +283,7 @@ def qualify_wave(
 
     THE one implementation.  The scanner calls it at import (where wData is
     already in memory, so it is free) and the loader calls it on every load;
-    they cannot drift into disagreeing about what a valid curve is, which they
-    previously did — the scanner's copy swallowed exceptions and silently kept
-    a file the loader would go on to reject on every pass.
+    they cannot drift into disagreeing about what a valid curve is.
 
     The checks run in a fixed order and each one may assume its predecessors
     passed.  That ordering is load-bearing, not stylistic:
@@ -646,7 +644,7 @@ def load_force_curve(path: str) -> ForceCurve:
         # is a force-clamp trace, an image, or a wave with no spring constant
         # will still be all of those things next pass.  Raised as a plain
         # LoadError it read as "couldn't load" → 'unavailable' → retried
-        # forever, the same fail-open shape as #122.  The file itself is not
+        # forever.  The file itself is not
         # rejected from the catalog — it keeps its own curve_type and stays
         # visible; this only says the force-curve pipeline cannot consume it.
         raise UnusableCurveError(

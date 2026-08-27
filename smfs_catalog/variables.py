@@ -348,7 +348,7 @@ def values(
                 v = d.get(SEG_SUMMARY_FIELD[k])
                 # edge_pinned is a bool downstream of the dataclass and a 0/1
                 # everywhere else, so that it can be bounded like any other
-                # criterion (#137).  An axis needs the number.
+                # criterion.  An axis needs the number.
                 out[rp][k] = float(v) if isinstance(v, bool) else v
 
     if file_keys:

@@ -17,9 +17,9 @@ loaded from the global last-writer-wins settings table.
 
 The contract under test — ONE parameter set is in force, and the file at
 POSITION ONE OF THE ANALYSIS QUEUE decides whose it is (this
-supersedes the older "profile follows the curve on screen" rule, which was a
-SECOND way of deciding the same thing and let one computation be assembled
-from two people's profiles — see db.active_param_owner):
+rules out "profile follows the curve on screen", which is a SECOND way of
+deciding the same thing and lets one computation be assembled from two
+people's profiles — see db.active_param_owner):
 (a) each user's profile row holds their own values,
 (b) widgets switch when the QUEUE changes whose set is in force — not when the
     playhead crosses to a curve owned by somebody else,
@@ -66,7 +66,7 @@ DANA_FILE   = _db.normalize_path("/tank/testdata/dana/Image0004.ibw")
 
 conn = _db.get_connection(DB)
 with conn:
-    # experimentalist is file-level (#110), and a file's folder is read off
+    # experimentalist is file-level, and a file's folder is read off
     # its own path — there is no directory registry to seed.
     for path, who in [
         (ALEX_FILE, "alexandre"), (ANA_FILE, "anastasiia"),
@@ -192,8 +192,8 @@ check("backfilling carlos did not touch her profile",
       abs(p_ana["roi_threshold_nm_per_nm"] - 0.9) < 1e-9)
 
 # ── Queue-level: ONE parameter set in force, decided by the QUEUE ────────────
-# The set no longer follows the curve on screen, and the worker no longer
-# swaps it per file. It is the queue owner's set, derived from the queue
+# The set does not follow the curve on screen, and the worker does not swap it
+# per file. It is the queue owner's set, derived from the queue
 # itself (db.active_param_owner) so it cannot go stale, and adding anyone new
 # re-decides it.
 _db.clear_analysis_queue(DB)
@@ -250,9 +250,9 @@ check("dana at row one puts her set in force, not alexandre's",
 # ── Lost-update race: two independent partial writes to the SAME profile
 #    must never clobber each other ("old undone by new").
 #    display_roi.py / decomposition_window.py / base_2dh_window.py /
-#    export_utils.py each used to save their own subset of a profile by
+#    export_utils.py each save their own subset of a profile.  Doing that by
 #    reading the WHOLE stored blob, editing it in Python, and writing the
-#    WHOLE blob back — a classic TOCTOU: whichever of two racing writers
+#    WHOLE blob back is a classic TOCTOU: whichever of two racing writers
 #    (a GUI window vs. the analysis worker's QThread, or two open windows)
 #    landed second, based on a now-stale read, silently discarded the
 #    other's just-saved keys. db.merge_experimentalist_profile replaces

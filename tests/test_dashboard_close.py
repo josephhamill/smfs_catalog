@@ -8,7 +8,7 @@
 
 """
 Regression test: closing the dashboard quits, and offers to keep the queue
-(#127).
+.
 
 The contract under test:
 (a) An empty queue asks NOTHING.  The prompt is not a nag; it appears only when
@@ -20,7 +20,7 @@ The contract under test:
     then quits.
 (d) Don't save quits and writes nothing.
 (e) Child windows close with the dashboard, and the app quits — the dashboard
-    is the hub, and a surviving child window used to hold the process open with
+    is the hub, and a surviving child window would hold the process open with
     no way to get the dashboard back.
 
 Run with the smfs-catalog env, from the repo root:

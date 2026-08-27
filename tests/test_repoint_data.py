@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: repointing the catalog at data that has moved (#30).
+Regression test: repointing the catalog at data that has moved.
 
 Curves get moved to a bigger drive.  Every path in the catalog is then
 wrong at once, and without a repair the only way back is a new database and

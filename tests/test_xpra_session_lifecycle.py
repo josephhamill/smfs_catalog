@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: the dashboard reclaims the xpra session it started (#33).
+Regression test: the dashboard reclaims the xpra session it started.
 
 WHY THIS EXISTS.  `_ensure_display()` started `xpra start :100` for headless
 runs and never stopped it.  The server and its Xvfb then outlived the
@@ -131,8 +131,8 @@ def test_a_session_we_started_is_stopped_when_the_app_exits(fake_xpra):
     calls = _calls(log)
     assert any(c.startswith("start :100") for c in calls), calls
     assert any(c.startswith("stop :100") for c in calls), (
-        "the launcher started an xpra session and never stopped it — this is "
-        f"the leak in #33.  xpra was called with: {calls}")
+        "the launcher started an xpra session and never stopped it.  "
+        f"xpra was called with: {calls}")
     assert "display: :100" in out.stdout
 
 

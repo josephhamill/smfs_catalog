@@ -71,7 +71,7 @@ def resource_path(*parts: str) -> Path:
 
 def _stop_xpra_session() -> None:
     """
-    Stop the xpra session this process started, if it started one (#33).
+    Stop the xpra session this process started, if it started one.
 
     WHY ATEXIT AND NOT AN XPRA FLAG.  The two flags that look right are both
     wrong here.  `--exit-with-children` requires xpra to launch the dashboard,

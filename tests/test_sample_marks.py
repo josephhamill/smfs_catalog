@@ -8,19 +8,11 @@
 
 """
 Guard + behaviour: a data trace is drawn as the samples it is made of, or as a
-line, and every one of them can be switched (#55).
+line, and every one of them can be switched.
 
 WHY THE GUARD EXISTS.  A trace built with a hand-rolled pen is a trace the
 toggle cannot reach: it keeps its pen and quietly stays a line while every
 other trace switches, and nothing fails — it just looks wrong on one panel.
-
-That is not hypothetical.  Before #55, six windows built their data traces with
-style.data_pen() and display_roi.py built its four with pg.mkPen() directly,
-because data_pen had no alpha parameter and the detection panels needed one.
-Twenty of twenty-four traces went through the shared helper and four went
-around it, and two of those four had drifted off W_DATA to guide weight while
-they were out there.  Nothing said so; the split was found by reading every
-plot() call in the package.
 
 So: style.data_pen belongs to sample_marks.trace(), and this asserts it.
 """
@@ -79,7 +71,7 @@ def test_no_window_builds_its_own_data_pen(path: Path):
 
 
 def test_dots_is_the_default():
-    """#55: the held segments are the reason the app exists, and a line drawn
+    """The held segments are the reason the app exists, and a line drawn
     through one asserts motion that never happened."""
     assert sample_marks._DEFAULT_DOTS is True
 

@@ -152,9 +152,9 @@ check("gate availability and evaluation use the same active profile",
       hits3 == hits and non_hits3 == non_hits)
 
 # ── (f): the verdict is not persisted ───────────────────────────────────────────
-check("criteria_gate no longer exposes restamp()",
+check("restamping is not part of criteria_gate's surface",
       not hasattr(_gate, "restamp"))
-check("db no longer exposes set_hit_bulk()",
+check("bulk hit-stamping is not part of db's surface",
       not hasattr(_db, "set_hit_bulk"))
 
 # Column absence guarantees there is nowhere to persist the derived verdict.

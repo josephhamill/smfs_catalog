@@ -18,8 +18,8 @@ palette competing with style.py's, and a calendar highlight hand-copied from the
 dashboard's row tint with the comment "same green as 'event'" standing in for a
 shared constant.
 
-That is the same lesson as tests/test_palette.py and 's table: a
-claim about the code that nobody re-derives goes stale, so it has to be
+That is the same lesson as tests/test_palette.py: a claim about the code that
+nobody re-derives goes stale, so it has to be
 machine-checked rather than hand-maintained.  test_palette.py already validates
 the palette's *contents* (separation, contrast, CVD).  This one validates its
 *reach* — that no other module quietly starts naming colours again.
@@ -44,10 +44,10 @@ PKG = Path(__file__).resolve().parents[1] / "smfs_catalog"
 EXEMPT = {"style.py"}
 
 # SIX (or eight) hex digits only, deliberately -- NOT the three-digit CSS
-# shorthand.  '#555' is indistinguishable from this repo's issue references
-# ('#107', '#119', '#125') and from HTML numeric entities ('&#771;', the
-# combining tilde in the normalized 2DH's axis label), both of which appear
-# inside real strings rather than comments, so tokenising doesn't separate them.
+# shorthand.  '#555' is indistinguishable from an HTML numeric entity such as
+# '&#771;', the combining tilde in the normalized 2DH's axis label, which
+# appears inside a real string rather than a comment, so tokenising doesn't
+# separate them.
 # Every colour in style.py is written full-length, so requiring six digits costs
 # nothing and keeps this test from crying wolf -- and a shorthand smuggled into
 # a stylesheet is still caught by CSS_LITERAL below.
@@ -78,11 +78,10 @@ def _modules():
 def _string_tokens(path: Path):
     """Every STRING token in a module, with its line number.
 
-    Tokenising rather than grepping the raw text matters here: this codebase's
-    comments are dense with GitHub issue references (#110, #119, #125), and
-    '#110' is three hex digits.  A regex over raw source would flag every one of
-    them, and a test that cries wolf gets an allowlist bolted on until it means
-    nothing.
+    Tokenising rather than grepping the raw text matters here: an HTML numeric
+    entity is three or four digits behind a '#', so a regex over raw source
+    would flag every one, and a test that cries wolf gets an allowlist bolted on
+    until it means nothing.
     """
     src = path.read_text(encoding="utf-8")
     out = []
@@ -203,7 +202,7 @@ def test_no_module_invents_typography(path: Path):
 def test_row_tints_cover_the_event_vocabulary():
     """The queue tint follows the files.event verdict (the
     vocabulary), so a new verdict value cannot ship without a colour — which is
-    how 'unavailable' (#69) came to need one in the first place."""
+    how 'unavailable' came to need one in the first place."""
     from smfs_catalog import style
 
     from smfs_catalog import db

@@ -8,7 +8,7 @@
 
 """
 Regression test: distribution-fit confidence intervals are bootstrapped over the
-raw values, never read off curve_fit's covariance (#135).
+raw values, never read off curve_fit's covariance.
 
 THE DEFECT.  The fit is least squares on ~20 histogram HEIGHTS.  Nothing in that
 objective records how many curves are behind each bar, so the covariance cannot
@@ -107,7 +107,7 @@ SIGMA_IDX = (2, 5)      # the width parameter of each Gaussian component
 # ── (a) the headline, as a comparison ─────────────────────────────────────────
 
 def test_covariance_can_report_a_negative_width_and_the_bootstrap_cannot():
-    """Both methods on one dataset: the old one leaves the possible range.
+    """Both methods on one dataset: the covariance one leaves the possible range.
 
     Seeded so this is a fixed dataset, not a lucky draw. Two overlapping
     Gaussians and 130 values is an ordinary request, not a pathological one --
@@ -326,7 +326,7 @@ def test_manifest_names_the_method_that_actually_ran():
     assert fields["ci_seed"] == boot.seed and fields["ci_pct"] == boot.pct
     assert fields["param_covariance"] is not None, (
         "the covariance still ships: it is what regenerates the interval this "
-        "window reported before #135, for anyone re-checking earlier work"
+        "window reported on the older basis, for anyone re-checking earlier work"
     )
 
     # The default must still describe the covariance -- mean_curve_window's

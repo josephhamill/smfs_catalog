@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: scan progress reporting and cancellation (#124).
+Regression test: scan progress reporting and cancellation.
 
 A large registration runs for a long time.  With no progress bar, spinner,
 status text or busy cursor there is no way to tell "working" from "hung", and
@@ -22,7 +22,7 @@ The contract under test:
     scanned, and the call reports cancelled=True.
 (c) a cancelled scan KEEPS what it already scanned — those rows are real — but
     are kept, and the next scan finishes the job by skipping them.
-    (Undoing the import entirely is the removal dialog's job, #145.)
+    (Undoing the import entirely is the removal dialog's job.)
 (d) re-running a completed scan is idempotent — it adds nothing.
 (e) cancelling takes effect before the file is touched, so the file count in
     the DB matches the `done` value the callback last saw.

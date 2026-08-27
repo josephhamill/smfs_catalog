@@ -8,7 +8,7 @@
 
 """
 Regression test: windows report what they were GIVEN, not only what they kept
-(#117), and the queue says what it will actually cost (#96).
+, and the queue says what it will actually cost.
 
 The contract under test:
 (a) The reason vocabulary is closed.  Every reason any module records is one
@@ -19,15 +19,14 @@ The contract under test:
     reader a second puzzle instead of an explanation.
 (c) The journey survives a stage boundary.  A curve dropped upstream can
     still be explained by a downstream window, via absorb() — the "follow one
-    trace through the filtering" half of #117.
+    trace through the filtering" requirement.
 (d) Gate membership and plottability are separate questions.
     population_ledger() distinguishes "not a hit" from "no fit", because the
     remedies differ (retune the criteria vs. re-analyse the curve) and
-    population_paths() used to fold both into one silent answer.
+    population_paths() folds both into one silent answer.
 (e) A fit-free 2DH align mode does NOT require a WLC fit.  onset (the
     DEFAULT), snap-off and rupture all anchor on real data points; requiring
-    l_p/l_c for them discarded curves that plot perfectly well.  #117 flagged
-    this as unverified — it was real.
+    l_p/l_c for them discards curves that plot perfectly well.
 (f) Every exporting window's provenance carries the tally, so a manifest read
     months later without the app can account for its own row count.
 (g) queue_freshness answers the same question curve_analysis's fast path
@@ -233,7 +232,7 @@ check("a file with nothing stored reads new", fresh[IDS[2]] == "new")
 check("every queued file gets an answer", set(fresh) == set(IDS))
 
 # Changing the parameters alone must move a row to stale — this is the whole
-# point of #96: a fully populated row that says "pending" tells you nothing
+# point: a fully populated row that says "pending" tells you nothing
 # about whether it costs anything.
 fresh2 = _db.queue_freshness('{"a": 2}', CODE, DB)
 check("changing a parameter makes a fresh row stale", fresh2[IDS[0]] == "stale")
@@ -245,7 +244,7 @@ from smfs_catalog import dashboard_window as _dash
 check("every freshness class has a Status-column label",
       set(_db.QUEUE_FRESHNESS) == set(_dash._FRESHNESS_LABEL))
 check("no freshness class is labelled 'pending' — the word that meant two "
-      "things (#96)",
+      "things",
       "pending" not in {v.lower() for v in _dash._FRESHNESS_LABEL.values()})
 
 dash_src = (PKG / "dashboard_window.py").read_text()
@@ -261,7 +260,7 @@ check("one function decides the Status class for cell and drill-down alike",
 
 # The ETA must not be reachable from "total minus done" any more: that formula
 # subtracted every file finished this session, while the worker revisits them.
-check("the ETA no longer prices the queue as total-minus-done",
+check("the ETA does not price the queue as total-minus-done",
       "self._queue_total - len(self._done_ids)" not in dash_src)
 check("the ETA counts from the playhead in the direction of travel",
       "def _files_ahead" in dash_src and "_files_ahead()" in dash_src)
@@ -343,8 +342,8 @@ check("with nothing measured there is no ETA at all",
       stub._eta_text() is None)
 
 # ── (d) gate membership and plottability are separate questions ──────────────
-# On a real window, because this is exactly where the two used to be folded
-# into one silent answer.
+# On a real window, because this is exactly where the two get folded into one
+# silent answer.
 import numpy as np
 from PyQt6.QtWidgets import QApplication
 _app = QApplication.instance() or QApplication([])
@@ -380,7 +379,7 @@ check("the two populations ask the same question of the same cohort",
       nled.n_asked == pled.n_asked == len(PATHS))
 
 led_plot = ev._plottability_ledger()
-check("the plottability tally explains the title-vs-stats gap (#117's 307/306)",
+check("the plottability tally explains the title-vs-stats gap",
       led_plot.n_asked == len(PATHS) and led_plot.n_dropped == 2)
 check("the manifest carries the tally out of the app",
       ev.export_provenance()["population_drops"]["n_asked"] == len(PATHS))

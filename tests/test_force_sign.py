@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression guard: the force sign convention (#79).
+Regression guard: the force sign convention.
 
 For months `models.py:4` and `:22` stated the convention backwards — they claimed
 wlc() returns negative force under tension. It returns strictly positive. The wrong
@@ -51,7 +51,7 @@ def test_wlc_returns_positive_force_over_its_whole_domain() -> None:
             F = wlc(x, l_p=l_p, l_c=l_c)
             assert np.all(F >= 0.0), (
                 f"wlc() returned negative force for l_p={l_p}, l_c={l_c} "
-                f"(min={F.min()}). The convention is POSITIVE under tension — see #79 "
+                f"(min={F.min()}). The convention is POSITIVE under tension. "
                 f"If this genuinely changed, the argmax rupture-peak "
                 f"search and every downstream sign assumption change with it."
             )

@@ -96,12 +96,12 @@ def pipeline_params_from(
     roi_d1_thr = _ps.roi_threshold_nm_per_nm
     roi_post_mask = _ps.roi_post_snapoff_mask_nm
     roi_onset_thr = _ps.roi_onset_threshold_nm
-    # #80 key 1: these six are read by roi_pipeline.event_params_from (the
-    # multi-event finder _persist_multi_event_roi runs downstream) but were
-    # absent from params_roi, so changing one didn't invalidate the verdict
-    # fast-path cache — the fast path would return early and the finder would
-    # never even run against the new setting.  Defaults/keys match
-    # event projection exactly, including inner defaulting to outer.
+    # These six are read by roi_pipeline.event_params_from (the multi-event
+    # finder _persist_multi_event_roi runs downstream), so they belong in
+    # params_roi: changing one must invalidate the verdict fast-path cache, or
+    # the fast path returns early and the finder never runs against the new
+    # setting.  Defaults/keys match event projection exactly, including inner
+    # defaulting to outer.
     roi_inner_thr = _ps.roi_inner_threshold_nm_per_nm
     roi_detector_idx = _ps.roi_detector_mode_idx
     roi_prominence = _ps.roi_prominence
@@ -602,7 +602,7 @@ def current_signature(db_path: str) -> tuple[str, str | None]:
     settings, not an analysis.
 
     Exists so a caller can ask "which queued files would the fast path serve?"
-    WITHOUT running the pipeline (issue #96).  The dashboard needs that to
+    WITHOUT running the pipeline.  The dashboard needs that to
     tell up-to-date rows from stale ones and to give the ETA an honest
     denominator: an up-to-date file still gets VISITED — the worker steers by
     queue order and nothing overrules a scrub — just in milliseconds rather
@@ -626,21 +626,20 @@ def analyse_and_classify(
     """
     Thin persistence wrapper around analyse_curve.  Caches the verdict (and,
     via analyse_curve, all derived values) in analysis_results and returns the
-    verdict string plus whether the FAST PATH served it (issue #37 — makes the
-    fast-path observable end-to-end, up to the dashboard's session counter).
+    verdict string plus whether the FAST PATH served it.
 
     Returns (verdict, was_cached):
         verdict:
             'event'       — pipeline located a valid event (an ROI excursion)
             'non_event'   — no ROI / event could be identified
-            'unavailable' — the curve could not be READ at all (issue #69,
-                             e.g. a disconnected drive). Distinct from
+            'unavailable' — the curve could not be READ at all (e.g. a
+                             disconnected drive). Distinct from
                              'non_event' on purpose: a load failure is not a
                              classification, and must not be able to
                              masquerade as one. No verdict is cached for this
                              outcome, so the next pass retries.
-            'unusable'    — the curve read fine but does not qualify (issue
-                             #122, e.g. a channel full of NaN). Also not a
+            'unusable'    — the curve read fine but does not qualify (e.g. a
+                             channel full of NaN). Also not a
                              classification. Unlike 'unavailable' this will
                              never fix itself, so the file is dequeued and
                              labelled with its reason instead of retried.
@@ -674,11 +673,11 @@ def analyse_and_classify(
         # retract. That is a durable fact about the file, so:
         #   - record WHY, on the file, where the user can see it. The file is
         #     kept in the catalog rather than dropped — a curve that silently
-        #     vanishes is one the user goes looking for (#122).
+        #     vanishes is one the user goes looking for.
         #   - drop it from the queue so the worker never loads it again.
         #   - return 'unusable', NOT 'non_event'. It was never classified;
         #     calling it a non_event would be a verdict we did not reach, the
-        #     same disguise #69 removed for 'unavailable'.
+        #     same disguise avoided for 'unavailable'.
         # No verdict is cached, but nothing retries it either: unlike
         # 'unavailable' this will not fix itself, and re-qualifying it on every
         # pass is work with a known answer.
@@ -688,7 +687,7 @@ def analyse_and_classify(
         return "unusable", False
     except LoadError:
         # A generic LoadError is a READ failure and may be transient (e.g. a
-        # disconnected drive). Issue #69: this is NOT a classification, so it
+        # disconnected drive). This is NOT a classification, so it
         # must not return "non_event" — that string is indistinguishable, to
         # any caller, from a real "no rupture found" verdict.
         # "unavailable" is its own outcome; no verdict is cached,

@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Guard test: ONE profile, ONE seed, ONE inheritance rule (#141).
+Guard test: ONE profile, ONE seed, ONE inheritance rule.
 
 A profile holds two kinds of setting — the analysis parameters and the 2DH view
 settings — and until this change only the first kind was seeded into the
@@ -71,7 +71,7 @@ def test_fresh_db_seeds_every_default_into_the_default_row():
 
 def test_the_seed_covers_both_halves_of_a_profile():
     """The regression itself: view settings must be in the seed, not only the
-    analysis parameters.  Before #141 profile_defaults() was PARAM_DEFAULTS."""
+    analysis parameters."""
     seeded = _db.profile_defaults()
     assert set(_db.PARAM_DEFAULTS) <= set(seeded)
     assert set(_db.view_defaults()) <= set(seeded)
@@ -123,9 +123,9 @@ def test_declared_defaults_match_the_seeded_ones():
 
 
 def test_both_2dh_windows_agree_on_the_align_segment_default():
-    """They did not, until 2026-08-06: physical said "first", normalized said
-    "last".  One decision, two copies — open both on an untuned profile and they
-    built from different segments with nothing on screen saying so."""
+    """One decision, two copies: if physical says "first" and normalized says
+    "last", opening both on an untuned profile builds from different segments
+    with nothing on screen saying so."""
     from smfs_catalog import physical_2dh_window as phys
     from smfs_catalog import normalized_2dh_window as norm
 
@@ -136,7 +136,7 @@ def test_both_2dh_windows_agree_on_the_align_segment_default():
 
 
 def test_physical_2dh_defaults_to_a_fit_free_alignment():
-    """rupture, not onset (#141), and the property that makes it safe: it needs
+    """rupture, not onset, and the property that makes it safe: it needs
     no WLC fit, so a curve whose fit failed is still registered."""
     assert _ep.PHYS_ALIGN_DEFAULT == "rupture"
     assert _ep.PHYS_ALIGN_DEFAULT in _ep.PHYS_ALIGN_ANCHORS
@@ -262,7 +262,7 @@ def test_grid_params_fall_back_to_default_not_to_the_code_constant():
     probe._load_grid_params()
     assert probe._f_star == 137.0, (
         "a never-tuned experimentalist read the code constant instead of the "
-        "lab's Default value — the #141 regression")
+        "lab's Default value")
 
     # Their OWN value still wins over Default's.
     _db.merge_experimentalist_profile("Newcomer", {"phys_f_star": 42.0}, db_path)

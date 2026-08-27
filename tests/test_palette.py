@@ -186,7 +186,7 @@ def test_landmarks_do_not_collide_in_the_panel_they_share():
 
 
 def test_data_marks_are_never_a_hue():
-    """THE structural fix for #65 ("red fit line over red data").
+    """THE structural fix for "red fit line over red data".
 
     It is not "don't pick red for the fit" — that is a rule someone has to
     remember.  It is that every mark carrying DATA is neutral (chroma below the
@@ -286,8 +286,8 @@ def test_segment_shading_darkens_towards_the_terminal_segment():
 def test_palettes_never_invent_a_hue_when_they_wrap():
     """Past the last slot the accessors repeat the fixed order — the caller is
     told to switch to a dashed line instead (secondary encoding).  Generating
-    an extra hue is how the old tab10 rota ended up with an orange and a green
-    0.7 ΔE apart under protanopia."""
+    an extra hue is how a rota ends up with an orange and a green 0.7 ΔE apart
+    under protanopia."""
     n = len(style.SERIES_LABELED)
     assert style.series_labeled(n) == style.SERIES_LABELED[0]
     assert not style.series_dashed(n - 1, style.SERIES_LABELED)

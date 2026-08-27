@@ -12,8 +12,8 @@ prefixing are decided.
 
 WHY THIS EXISTS.  In the 2026-08-01 user test the raw-curve window's x-axis read
 "Piezo (knm)" — kilonanometres — because setLabel(units="nm") tells pyqtgraph
-that "nm" is a base unit and it prefixes what is already prefixed.  #95 had
-already fixed exactly this bug, per axis, with enableAutoSIPrefix(False).  That
+that "nm" is a base unit and it prefixes what is already prefixed.  A per-axis
+enableAutoSIPrefix(False) call fixes exactly this bug.  That
 fix was applied to six windows and not to the other seven, because nothing made
 the second line mandatory: fourteen axes carried it and twenty-six did not.
 
@@ -90,7 +90,7 @@ def test_no_module_sets_axis_units_itself():
 
 
 def test_no_module_toggles_si_prefixing_itself():
-    """The per-axis patch #95 introduced, and which this pass replaced.
+    """The per-axis patch this rule replaces.
 
     An enableAutoSIPrefix call anywhere else means an axis whose prefixing was
     decided away from its unit — the two drifting apart is the whole defect.
@@ -336,7 +336,7 @@ def test_a_pinned_squared_unit_stays_in_its_own_unit():
     Left free it would relabel itself pm² over the real 0.0016-0.037 nm² range
     (1 nm² = 1e6 pm²), while the two threshold spin boxes beside it — which set
     the very lines drawn on that axis — can carry no prefix at all.  That is the
-    same one-number-two-scales trap the Ångström display used to hide.
+    same one-number-two-scales trap an Ångström display hides.
     """
     assert q.si_for(q.NM2) is not None, "nm² is a prefixable SI unit"
     label, _ = _axis_text(q.NM2, 0.0, 0.04, si=False)
@@ -344,12 +344,11 @@ def test_a_pinned_squared_unit_stays_in_its_own_unit():
 
 
 def test_a_prefixed_unit_would_have_been_caught():
-    """The null test: the old code's own arrangement produces the bug.
+    """The null test: the unguarded arrangement produces the bug.
 
-    Without this, the test above only proves the new numbers are self-
-    consistent.  Feeding pyqtgraph the already-prefixed unit is what produced
-    "knm", and it still does — which is why the unit register, not a habit, is
-    what keeps it away.
+    Without this, the test above only proves the numbers are self-consistent.
+    Feeding pyqtgraph the already-prefixed unit is what produces "knm" — which
+    is why the unit register, not a habit, is what keeps it away.
     """
     import pyqtgraph.functions as fn
 

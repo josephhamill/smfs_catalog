@@ -11,7 +11,7 @@
 # A line segment asserts the tip moved between two samples.  Through a held
 # segment it did not: the piezo sits at one position for thousands of samples,
 # so the line draws motion that never happened.  Dots say only where the
-# samples are (#55).
+# samples are.
 #
 # Dots cost more to draw — one repaint of a ~100k-sample curve measures 13 ms
 # as a line against 48 ms as dots, and ~40 MB more peak RSS.  Stepping curve to
@@ -35,8 +35,7 @@
 # A trace built by hand is a trace the toggle cannot reach: it would keep its
 # pen and quietly stay a line while everything else switched.  So this module
 # builds them, and tests/test_sample_marks.py asserts no window calls
-# style.data_pen directly — which is exactly how display_roi.py's four traces
-# came to be hand-rolled and off W_DATA before this existed.
+# style.data_pen directly.
 
 from __future__ import annotations
 
@@ -54,7 +53,7 @@ APP_SETTING = _db.APP_SETTING_SAMPLE_MARKS
 _DOTS  = "dots"
 _LINES = "lines"
 
-# #55: dots by default.  The held segments are the reason the app exists; the
+# Dots by default.  The held segments are the reason the app exists; the
 # default should not draw motion through them.
 _DEFAULT_DOTS = True
 

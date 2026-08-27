@@ -86,7 +86,7 @@ def test_step_is_one_unit_of_the_last_digit_shown():
 def test_step_never_grows_with_repeated_presses():
     """No adaptive/accelerated stepping anywhere.
 
-    The user's call, 2026-08-03: the arrows are for precision, not travel —
+    The owner's call: the arrows are for precision, not travel —
     7, 8, 9, 10, 11, never 7, 8, 9, 10, 20, 30.  Qt offers
     AdaptiveDecimalStepType for the opposite behaviour; nothing may opt in.
     """
@@ -115,7 +115,7 @@ def test_no_module_sets_its_own_step_or_decimals(path: Path):
 
 @pytest.mark.parametrize("path", _modules(), ids=lambda p: p.name)
 def test_no_module_re_enables_keyboard_tracking(path: Path):
-    """#121's mechanism, kept shut off.
+    """Keyboard tracking, kept shut off.
 
     With tracking on (Qt's default) a spin box re-commits on every keystroke,
     so typing 0.19 into a box holding 0.1 commits 0.1 and leaves 0.190000 on
@@ -132,11 +132,11 @@ def test_no_module_re_enables_keyboard_tracking(path: Path):
 def test_no_quantity_splits_its_unit_silently():
     """Rule 2, in its current state: nothing converts, and nothing needs to.
 
-    The decomposition thresholds used to be stored in nm² and shown in Å²,
-    with the factor living only as `* 100` inside decomposition_window — which
-    is why the export manifest recorded 0.00792 for a threshold the user had
-    set to 0.79, under a key whose name carries no unit at all.  They are shown
-    in nm² now, so no split remains.
+    Storing the decomposition thresholds in nm² and showing them in Å², with
+    the factor living only as `* 100` inside decomposition_window, is what makes
+    an export manifest record 0.00792 for a threshold the user set to 0.79,
+    under a key whose name carries no unit at all.  They are stored and shown in
+    nm², so no split exists.
 
     The mechanism stays and is exercised below; this asserts that no quantity
     is quietly using it, so "stored unit == shown unit" holds everywhere and a
@@ -237,9 +237,9 @@ def test_missing_values_are_blank_never_zero_or_nan():
 
 
 def test_counts_display_as_counts():
-    """seg_n_segments is a count of 1-6.  It used to be offered with six
-    decimal places, which is how a stored gate bound ended up reading
-    `0.701937 <= x <= 3.704446` for a number of segments."""
+    """seg_n_segments is a count of 1-6.  Offering it with six decimal places
+    is how a stored gate bound ends up reading `0.701937 <= x <= 3.704446` for
+    a number of segments."""
     assert q.format_value("seg_n_segments", 2.0) == "2"
     assert q.get("seg_n_segments").integer
     assert q.get("seg_n_segments").step == 1.0
@@ -307,8 +307,8 @@ def test_decimals_widen_rather_than_round_a_stored_bound():
     """A stored bound finer than its quantity's natural precision must be
     shown in full, not rounded to fit.
 
-    The live DB holds `seg_n_segments <= 3.704446` (a p95 seed accepted through
-    the old six-decimal box).  Rounding that to <= 4 on display would change
+    The live DB holds `seg_n_segments <= 3.704446`, a p95 seed accepted through
+    a six-decimal box.  Rounding that to <= 4 on display would change
     which curves are hits — a four-segment curve fails one and passes the
     other.  Widening is not a cosmetic nicety here; it is what stops a display
     change from silently re-gating a cohort.
@@ -367,8 +367,8 @@ def test_every_drag_handler_quantises_before_it_stores():
     still wrote the raw float straight to the database while the spin box beside
     each of them displayed it rounded to its own decimals.  The two then
     disagreed, and the next arrow press wrote the DISPLAYED number back over a
-    real analysis parameter.  That is #121, reached through a drag instead of a
-    keystroke.
+    real analysis parameter — the same trap, reached through a drag instead of
+    a keystroke.
 
     It is also why every profile in the live database holds values like
     `roi_threshold_nm_per_nm = 1.8963198820547147` — nobody typed sixteen

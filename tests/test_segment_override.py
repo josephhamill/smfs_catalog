@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: manual Primary/Secondary segment override (#107).
+Regression test: manual Primary/Secondary segment override.
 
 The contract under test:
 (a) with no override set, segment_summary_bulk behaves exactly as before
@@ -76,7 +76,7 @@ def _payload(params_tag: str) -> dict:
             "l_p_nm": l_p, "l_c_nm": l_c, "l_p_err": 0.05, "l_c_err": 2.0,
             "n_pts": 50, "fit_lo_idx": i * 100, "fit_hi_idx": i * 100 + 90,
             "isoforce_x_nm": iso_x,
-            # v4 diagnostics (#134/#137). Distinct per segment so the checks
+            # v4 diagnostics. Distinct per segment so the checks
             # below can tell WHICH segment's diagnostics were selected — the
             # property that matters is that they follow the same selection rule
             # as l_p/l_c, so a tau can never describe a different fit than the
