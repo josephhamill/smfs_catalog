@@ -216,7 +216,7 @@ class ExportGroup:
 
         It pastes straight into
         Excel/Origin as a matrix. Its axis definition lives in the paired
-        1-D files and/or the manifest (#62's triplet convention), which is
+        1-D files and/or the manifest (the triplet convention), which is
         exactly why this file can stay bare."""
         out = self.path(suffix)
         np.savetxt(out, np.asarray(array), delimiter=",", fmt=fmt)

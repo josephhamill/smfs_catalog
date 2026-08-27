@@ -8,12 +8,12 @@
 
 """
 Regression test: ONE navigator, mirrored — the worker is the single source of
-truth for playback (#126).
+truth for playback.
 
 The contract under test:
 (a) The worker owns the rate limit.  A NavigatorBar READS it when built and
-    never writes a default into it — the trap #126 exists to close is a window
-    silently changing a value the user chose.
+    never writes a default into it — the trap is a window silently changing a
+    value the user chose.
 (b) Two bars over one worker mirror each other: a throttle set on one appears
     on the other, in both directions, with no direct link between them.
 (c) Closing a window does NOT reset the throttle.  Only a new worker (i.e. a
@@ -207,11 +207,11 @@ check("the dashboard's separate Play button is gone",
 _raw_src = inspect.getsource(_raw)
 check("the viewer has no navigation loop of its own",
       not any(t in _raw_src for t in ("_nav_timer", "_start_auto", "_toggle_auto")))
-check("the viewer no longer defines its own speed-slider maths",
+check("the viewer does not define its own speed-slider maths",
       "_slider_to_rate_hz" not in _raw_src)
 
 # The throttle is the worker's to set, from the navigator only.  Any other
-# module calling set_throttle_ms is a second writer of the value #126 is about.
+# module calling set_throttle_ms is a second writer of that value.
 import pathlib
 pkg = pathlib.Path(_dash.__file__).parent
 writers = sorted(
@@ -223,16 +223,16 @@ check(f"navigator_bar is the only window setting the throttle (found: {writers})
       not writers)
 
 # ── (h) playing forward honours where the playhead was PUT ───────────────────
-# The bug this closes: scrub to the last 100 curves, press play, and the
-# playhead snapped back to wherever the batch had stopped — the forward advance
-# used to pick whichever came first in queue order out of {in-order neighbour,
-# oldest still-pending file}, so a deliberate jump was overruled every time.
+# Scrub to the last 100 curves and press play: the playhead advances from where
+# it was PUT.  A forward advance that picks whichever comes first in queue order
+# out of {in-order neighbour, oldest still-pending file} overrules a deliberate
+# jump every time.
 _db.enqueue_files(IDS, DB)
 worker.invalidate_queue_cache()
 app.processEvents()
 
-# Position 2, with 0 and 1 left PENDING behind it — the exact shape the old
-# "fresh-work floor" hijacked.
+# Position 2, with 0 and 1 left PENDING behind it — the exact shape a
+# "fresh-work floor" would hijack.
 worker._playhead = IDS[2]
 check("forward from a scrubbed position goes FORWARD, never back to pending work",
       worker._neighbour_file_id(worker._playhead, +1) == IDS[3])
@@ -282,7 +282,7 @@ app.processEvents()
 check("removing the current file does not select another file implicitly",
       bar_a._pos_label.text() == "— / 2" and compact._label.text() == "— / 2")
 
-# ── (i) a curve that leaves the queue stops being displayed (#53) ─────────────
+# ── (i) a curve that leaves the queue stops being displayed ─────────────
 # The worker keeps its playhead on a removed file and emits no
 # playhead_changed, so the diagnostics following this bar hear nothing about
 # the removal unless the bar says so.  Saying "— / 2" in the label while the
@@ -304,7 +304,7 @@ worker.invalidate_queue_cache()
 app.processEvents()
 check("removing the displayed file tells the window to stop showing it",
       len(cleared) == 1)
-check("...and the bar no longer claims a curve",
+check("...and the bar claims no curve",
       compact.current_path() is None)
 
 # Re-showing a window hidden across the removal must not replay the removed

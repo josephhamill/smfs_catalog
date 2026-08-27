@@ -47,14 +47,14 @@ line carries the pid.
 Deliberately NOT here, so nobody re-derives the search:
   * faulthandler.register(SIGTERM) — would say who killed us, but the observed
     crash left no signal record at all, and the OOM killer uses SIGKILL, which
-    is uncatchable by anything.  Out of #119's agreed scope; not free either,
+    is uncatchable by anything.  Out of scope; not free either,
     since it needs chain=True or the process stops honouring `kill`.
   * Hunting the crash this was written for.  It is unreproducible with
     nothing to bisect from, so a hypothesis-driven rebuild of the 2DH path
     would be optimising against a guess.
 
 v2 replaces the "go and read a file" part of this with a message/log display in
-the consolidated shell (#90).  The file stays either way.
+the consolidated shell.  The file stays either way.
 """
 import datetime
 import faulthandler

@@ -21,7 +21,7 @@ The contract under test:
     files.event, while KEEPING the file rows, their sample metadata, their
     file_metadata (parsed from the wave note, not computed) and their queue
     entries, so the cohort can simply be re-analysed.
-(b) level 2 keeps the human's manual Primary/Secondary segment picks (#107):
+(b) level 2 keeps the human's manual Primary/Secondary segment picks:
     they are a person's curation, not the app's output, and they already
     self-invalidate via resolve_segment_override's params check.
 (c) level 1 (remove_files_from_catalog) deletes the file rows themselves plus
@@ -161,7 +161,7 @@ check("(a) erase KEEPS the file rows", file_exists_in_db(IN_SCOPE_A))
 check("(a) erase cleared files.event",
       rows("SELECT event FROM files WHERE path = ?",
            (_db.normalize_path(IN_SCOPE_A),))[0]["event"] is None)
-check("(a) files.hit no longer exists to go stale",
+check("(a) files.hit does not exist to go stale",
       "hit" not in {r["name"] for r in
                     _db.get_connection(DB).execute("PRAGMA table_info(files)")})
 

@@ -91,7 +91,7 @@ from .provenance import cache_version
 # one plot, so everything here is drawn slightly transparent to read through
 # what is over it.  For the three signal traces that is a declared exception to
 # rule 1's "opaque" — style.data_pen takes the alpha rather than each trace
-# building its own pen, which is how they drifted off W_DATA before #55.
+# building its own pen.
 _ALPHA_SIGNAL   = 220
 _ALPHA_FX       = 200
 _COLOR_ZERO     = style.rgba(style.GRID, 220)
@@ -934,7 +934,7 @@ class ROIWindow(QWidget):
         self._onset_threshold_nm        = _f("roi_onset_threshold_nm", self._onset_threshold_nm)
         # Decode via DETECTOR_BY_IDX (the on-disk scheme shared with the
         # worker), not by _DETECTOR_MODES list position — those are not the
-        # same numbering now that "single (legacy)" is gone from the list.
+        # same numbering; "single (legacy)" is not in that list.
         cur_stored = MODE_TO_STORED_IDX.get(self._detector_mode, 1)
         raw_idx = int(_f("roi_detector_mode_idx", cur_stored))
         self._detector_mode = DETECTOR_BY_IDX.get(raw_idx, "threshold")
@@ -1079,9 +1079,9 @@ class ROIWindow(QWidget):
             self._detector_mode = mode
             # Persist via the canonical index (roi_pipeline.MODE_TO_STORED_IDX),
             # NOT the combo's raw position — the on-disk numbering has to match
-            # what the worker's DETECTOR_BY_IDX decodes, and the two are no
-            # longer the same numbers now that "single (legacy)" is gone from
-            # this list. set_setting stores REALs, not strings.
+            # what the worker's DETECTOR_BY_IDX decodes, and the two differ:
+            # "single (legacy)" is not in this list. set_setting stores REALs,
+            # not strings.
             _db.update_analysis_param('roi_detector_mode_idx',
                             float(MODE_TO_STORED_IDX[mode]), self._db_path)
             self._save_user_profile()

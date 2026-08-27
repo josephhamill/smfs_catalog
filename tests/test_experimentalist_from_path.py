@@ -34,7 +34,7 @@ The contract under test:
     fallback happens when the active criteria profile is selected.
 (e) scan_tree writes only matched names, reports the unmatched ones in its
     summary, and leaves those files' experimentalist unset.
-(f) known=None preserves the old mint-anything behaviour for direct callers.
+(f) known=None mints from the raw folder name, for direct callers.
 """
 
 import os
@@ -89,7 +89,7 @@ check("(c) a genuinely new person is left for the human",
       _scanner.experimentalist_from_path(
           "/data/afm/Newperson/260319", ROOT, KNOWN) is None)
 
-# ── (f) known=None keeps the old behaviour for direct callers ────────────────
+# ── (f) known=None mints from the raw folder name ────────────────────────────
 check("(f) known=None still returns the raw folder name",
       _scanner.experimentalist_from_path(
           "/data/afm/Whoever/260319", ROOT) == "Whoever")

@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: the packaged app behaves like the app (#111).
+Regression test: the packaged app behaves like the app.
 
 WHY THIS EXISTS.  A PyInstaller bundle runs the same source under three
 conditions a checkout never has — no .git directory, no guarantee of a `git`
@@ -36,9 +36,8 @@ The contract under test:
     it puts a headless session's GUI on display :100; on a colleague's
     machine the same code shells out to a program they do not have, from a
     double-clicked icon that shows no terminal to explain itself.
-(g) nothing imports the old name.  code_version() was _git_hash() until this
-    change; a stale caller would still resolve if the old name lingered
-    anywhere, and would then be a second answer to "what made this result".
+(g) `_git_hash` is importable nowhere.  A caller resolving that name would be
+    a second answer to "what made this result".
 """
 from __future__ import annotations
 

@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-One idiom for the procedural guard tests (#84).
+One idiom for the procedural guard tests.
 
 WHAT WAS WRONG.  This suite grew two ways of writing a test.  Most files use
 ordinary pytest functions.  Ten grew up as standalone scripts instead — a

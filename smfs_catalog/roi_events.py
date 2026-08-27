@@ -808,7 +808,7 @@ def fit_segments(
             x_fit, F_fit = x_fit[mask], F_fit[mask]
 
             # Recorded BEFORE the fit is attempted, so a segment whose optimiser
-            # fails still reports how far the pull got (#137).  z_max needs l_c
+            # fails still reports how far the pull got.  z_max needs l_c
             # too and is therefore None for such a segment — but x_max is a
             # property of the data, not of the fit, and shouldn't vanish with it.
             seg.x_max_nm = float(np.max(x_fit))
@@ -1034,7 +1034,7 @@ def events_to_payload(events: CurveEvents) -> dict:
                      "n_pts": s.n_pts,
                      "fit_lo_idx": s.fit_lo_idx, "fit_hi_idx": s.fit_hi_idx,
                      "isoforce_x_nm": s.isoforce_x_nm,
-                     # v4 (#134/#137).  z_max is NOT here — it is a property
+                     # v4.  z_max is NOT here — it is a property
                      # derived from x_max_nm/l_c_nm on read, so there is one
                      # definition of it and it cannot go stale against them.
                      "tau": s.tau, "x_max_nm": s.x_max_nm,

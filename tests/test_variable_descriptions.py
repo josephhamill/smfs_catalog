@@ -204,8 +204,8 @@ def test_hit_column_states_the_empty_criteria_rule():
 
 
 def test_segment_selector_explains_single_segment_fallback():
-    """Penultimate deliberately preserves one-segment curves; stale hover text
-    used to claim they became blank, implying that the dropdown filtered."""
+    """Penultimate deliberately preserves one-segment curves; hover text that
+    claims they become blank implies the dropdown filters."""
     src = (_PKG / "dashboard_window.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     tips = []

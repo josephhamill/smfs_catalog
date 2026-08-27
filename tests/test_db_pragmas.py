@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: the per-connection PRAGMAs get_connection must set (#125).
+Regression test: the per-connection PRAGMAs get_connection must set.
 
 Two PRAGMAs are per-connection in SQLite — they are NOT stored in the database
 file header and reset to their defaults on every new connection, unlike

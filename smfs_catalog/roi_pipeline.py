@@ -250,8 +250,8 @@ def compute_curve_events_coords(
     if can_read_cache and param_set is not None:
         # THE canonical key-builder for these rows (curve_analysis.pipeline_params_from)
         # — reused rather than hand-rebuilt, so this can never drift from the keys
-        # analyse_curve actually wrote under (cf. #80: copy the asdict() pattern,
-        # don't hand-maintain key lists).
+        # analyse_curve actually wrote under (copy the asdict() pattern, don't
+        # hand-maintain key lists).
         from .curve_analysis import pipeline_params_from
         _p1 = pipeline_params_from(param_set)
 
@@ -577,7 +577,7 @@ def segment_summary_bulk(
     like the 2DH windows, this never silently drops a curve pending a
     recompute).
 
-    tau/z_max/edge_pinned (#134/#137) are the SELECTED segment's fit-
+    tau/z_max/edge_pinned are the SELECTED segment's fit-
     conditioning diagnostics, following the same selection rule as l_p/l_c so
     that a value and its explanation always describe the same fit:
       * tau     — integrated autocorrelation time of that fit's residual, in
@@ -622,7 +622,7 @@ def segment_summary_bulk(
     one-directional, force-matched "reload distance" — see roi_events.ROI.
     isoforce_dX_pairs for why that one is NOT made symmetric the same way.
 
-    Manual segment override (#107): a curve with a usable (non-stale, see
+    Manual segment override: a curve with a usable (non-stale, see
     resolve_segment_override) Primary pick uses THAT segment for
     l_p_nm/l_c_nm/l_p_err/l_c_err/force_pN instead of the `select`-driven
     Ultimate/Penultimate choice — an absolute per-curve override, not another
@@ -694,9 +694,8 @@ def segment_summary_bulk(
                 payload_by_fid[r["file_id"]] = r["payload_json"]
                 params_by_fid[r["file_id"]]  = r["params_json"]
 
-        # Manual segment overrides (#107) — bulk, same reasoning as the
-        # get_file_id-per-path fix this function's own docstring documents:
-        # one query, not one per file.
+        # Manual segment overrides — bulk, for the same reason this function's
+        # own docstring gives: one query, not one per file.
         override_by_fid = _db.get_segment_overrides_bulk(fids, db_path, conn=conn)
     finally:
         conn.close()
@@ -764,7 +763,7 @@ def segment_summary_bulk(
             # The three diagnostics describe the SELECTED segment's own fit, so
             # they follow the same Ultimate/Penultimate/override rule as the
             # values they explain — an error bar and the tau behind it must
-            # never come from different segments (#134/#137).
+            # never come from different segments.
             row["tau"]   = seg.tau
             row["z_max"] = seg.z_max
             # Numeric 0/1, not a bool: this reaches criteria_gate (which bounds

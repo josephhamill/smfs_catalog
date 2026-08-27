@@ -8,7 +8,7 @@
 
 """
 Guard test: the spectral-cutoff slider offers only cutoffs that can be USED, and
-never displays a number the database does not hold (#141).
+never displays a number the database does not hold.
 
 WHAT WAS WRONG.  The list read
 
@@ -25,7 +25,7 @@ THE DISTINCTION THIS TEST PINS, because it is the whole design:
 
   * Nyquist is a NECESSITY.  The filter is mathematically undefined above it,
     the same class as the WLC fit's l_c > x_max floor, so it is ENFORCED.
-  * "500 Hz over-smooths" is POLICY, and (#97/#94) says the app
+  * "500 Hz over-smooths" is POLICY, and says the app
     informs and the user decides.  So the low end stays selectable, and the cost
     of a choice is stated (tau ~ f_s/f_c) rather than the choice being removed.
 
@@ -51,7 +51,7 @@ from smfs_catalog import signal_processing as sp        # noqa: E402
 VALUES = dw._CUTOFF_VALUES
 
 # The sample rates actually present in the live catalog.
-# Nyquist for the commonest is 8,333 Hz, which is what the old list overran.
+# Nyquist for the commonest is 8,333 Hz — the ceiling the list must not overrun.
 LIVE_SAMPLE_RATES = (16666.67, 20000.0, 50000.0)
 
 

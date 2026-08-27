@@ -194,7 +194,7 @@ DOT_SIZE  = 5
 DOT_ALPHA = 110    # … with more transparency, so density reads as tone
 DOT_LABEL_SIZE_PX = 15
 
-# One SAMPLE, drawn as itself rather than as a vertex of a line (#55).  Smaller
+# One SAMPLE, drawn as itself rather than as a vertex of a line.  Smaller
 # than DOT_SIZE because a scatter plot draws one dot per observation and a force
 # curve draws ~100k per trace: at DOT_SIZE the held segments fill solid.
 SAMPLE_DOT_SIZE = 3.0
@@ -243,7 +243,7 @@ def data_marks(color=DATA, width: float = W_DATA, alpha: int = 255,
     a connected line, or as the samples it is actually made of.
 
     A line segment asserts the tip moved between two samples.  Through a held
-    segment it did not, so the line draws motion that never happened (#55).
+    segment it did not, so the line draws motion that never happened.
     Dots say only where the samples are.
 
     The dot carries no ring: MARKER_PEN's dark outline is for a landmark, which
@@ -625,7 +625,7 @@ def pm(value: str, err: str) -> str:
 # The typeset constants above are HTML, and the note at the top of this section
 # is right that pyqtgraph renders axis labels and titles as HTML. A pg.InfiniteLine
 # label reaches InfLineLabel.valueChanged -> TextItem.setText -> setPlainText,
-# so the normalized 2DH's singularity line rendered, on screen, as the literal
+# so the normalized 2DH's singularity line renders, on screen, as the literal
 # characters "<i>x&#771;</i> = 1 (<i>l</i><sub>c</sub>)".
 #
 # Calling setHtml() on the label afterwards does not hold: valueChanged() rewrites

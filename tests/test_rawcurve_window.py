@@ -217,7 +217,7 @@ def _trace(**kw):
 
 
 def test_a_curve_the_ramp_pipeline_refuses_is_still_drawn(monkeypatch):
-    """#47: not analysable and not viewable are different verdicts. A held
+    """Not analysable and not viewable are different verdicts. A held
     curve has no approach/retract to split, which is a reason to draw it as one
     series — never a reason to show the user an empty plot."""
     from smfs_catalog.curve_loader import UnusableCurveError, UNUSABLE_NOT_FE
@@ -302,9 +302,8 @@ def _drawn_window(monkeypatch, *, file_id=7):
 
 
 def test_emptying_the_queue_clears_the_displayed_curve(monkeypatch):
-    # #53: the worker leaves its playhead on a removed file and emits no
-    # playhead_changed, so without this the discarded curve stayed on screen
-    # until the user stepped the queue.
+    # The worker leaves its playhead on a removed file and emits no
+    # playhead_changed, so the discarded curve must be cleared here.
     win = _drawn_window(monkeypatch)
     try:
         assert _plotted(win._curve_appr) == [0.0, 1.0]

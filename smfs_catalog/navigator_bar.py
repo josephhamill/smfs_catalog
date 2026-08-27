@@ -22,7 +22,7 @@
 #   • Closing a window cannot reset anything.  The throttle a user chose lives on
 #     the worker, which the dashboard creates once at launch and stops at quit.
 #     A bar reads that value when it is built and NEVER writes a default into it
-#     (#126: "the leak is intended — surface it, do not reset it").
+#     The leak is intended — surface it, do not reset it.
 #
 #   • The scrubber's meaning changes as the queue changes — position 400 is a
 #     different curve after a repopulate.  Handled in one place, refresh_queue(),
@@ -212,7 +212,7 @@ class NavigatorBar(QWidget):
 
         row.addSpacing(10)
 
-        # Rate limit.  Shared with the batch worker BY DESIGN (#126): this is one
+        # Rate limit.  Shared with the batch worker BY DESIGN: this is one
         # playback engine, so a speed the user chose here holds until they change
         # it — closing a window never resets it.  It is shown wherever its effect
         # is felt so it can never throttle a batch invisibly again.

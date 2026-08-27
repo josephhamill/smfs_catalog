@@ -123,13 +123,13 @@ def test_d1_edge_bounds_find_the_right_peak_and_argmax_bounds_do_not() -> None:
         f"ramp 2's rupture force is 40, got {f[correct]}"
     )
 
-    # What the pre-fix code did: window bounded by d1 argmax indices.
+    # The rejected convention: window bounded by d1 argmax indices.
     old = R1_IDX + int(np.argmax(f[R1_IDX:R2_IDX + 1]))
     assert old == R1_IDX, (
-        "the old window's argmax should land in rupture 1's unfinished drop"
+        "a d1-bounded window's argmax lands in rupture 1's unfinished drop"
     )
     assert f[old] > f[correct], (
-        "the whole point: the old window reports a HIGHER force (from the previous "
+        "the whole point: a d1-bounded window reports a HIGHER force (from the previous "
         f"rupture's decay, {f[old]}) than ramp 2's real peak ({f[correct]})"
     )
     assert old != correct, "the two conventions must genuinely disagree here"

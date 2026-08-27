@@ -8,7 +8,7 @@
 
 # smfs_catalog/repoint_dialog.py
 #
-# "Repoint moved data..." — tell the catalog where the curves went (#30).
+# "Repoint moved data..." — tell the catalog where the curves went.
 #
 # A curve's path is true for this machine at this moment.  Its analysis is
 # not tied to either, because that keys on files.id — so a move is repaired

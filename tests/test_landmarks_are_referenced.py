@@ -27,8 +27,8 @@ The contract under test:
     per-curve trend and NO common-mode drift comes back with its trend intact.
 (e) the drift that referencing removes is the one it claims to remove: a pure
     common-mode wander, with the true distance held constant, comes back flat.
-(f) the queue table shows the same number the variable accessor does - the two
-    used to be independent copies of the routing.
+(f) the queue table shows the same number the variable accessor does - one
+    routing, never two copies of it.
 (g) VariableStatsWindow plots the referenced values, with no mode to set.
 """
 import os
@@ -196,9 +196,9 @@ def test_the_queue_prints_the_referenced_landmarks():
 
 
 def test_a_queue_cell_holds_what_the_accessor_returned():
-    """The queue used to route its own columns to their values, independently
-    of variables.py, and the fork that would have shown a raw
-    stage position in the table under the same heading every plot referenced."""
+    """The queue must not route its own columns to their values independently
+    of variables.py: that fork shows a raw stage position in the table, under
+    the same heading every plot references."""
     from smfs_catalog.dashboard_window import DashboardWindow
     assert DashboardWindow._queue_cell_value(
         "rupture_dx_nm", FILE_A, VALUES) == A["rupture_dx_nm"]
@@ -211,9 +211,8 @@ def test_the_variable_window_plots_referenced_values_with_no_mode():
     assert len(win._plot_vals) == 2          # FILE_C has no zero
     assert sorted(win._plot_vals.tolist()) == [5000.0, 5000.0]
     assert not hasattr(win, "_chk_relative")
-    # The threshold row used to be disabled whenever the old checkbox was on,
-    # because the bounds gate the raw stored value.  Axis and bounds now name
-    # the same quantity, so that whole state is gone.
+    # Axis and bounds name the same quantity, so there is no state in which
+    # the threshold row has to be disabled.
     assert win._apply_btn.isEnabled()
 
 

@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Guards for #93 — dist_fit_core's AIC/AICc/BIC must be on the SAME scale as
+Guard: dist_fit_core's AIC/AICc/BIC must be on the SAME scale as
 gmm_fit_core's, which means the same likelihood (per sample, not per bin) and
 the same parameter-counting convention as sklearn's.
 
@@ -49,8 +49,8 @@ def _ls_fit(values, names, n_bins=20):
 # ── (a) n is the sample count, not the bin count ─────────────────────────────
 
 def test_the_criteria_are_computed_over_values_not_bins():
-    """The whole of #93 in one assertion. Before the fix `n` in the AIC/BIC
-    formulae was the number of histogram bars."""
+    """The whole rule in one assertion: `n` in the AIC/BIC formulae is the
+    number of values, never the number of histogram bars."""
     values = _bimodal()
     for n_bins in (20, 60):
         gof, _, _ = _ls_fit(values, ["Gaussian", "Gaussian"], n_bins=n_bins)
@@ -60,7 +60,7 @@ def test_the_criteria_are_computed_over_values_not_bins():
 def test_binning_barely_moves_the_criteria():
     """A corollary worth pinning separately: tripling the bin count must not
     move a model-selection statistic much, because the statistic is about the
-    values. On the old basis it moved the criteria by their own magnitude."""
+    values.  A bin-count basis moves them by their own magnitude."""
     values = _bimodal()
     a, _, _ = _ls_fit(values, ["Gaussian", "Gaussian"], n_bins=20)
     b, _, _ = _ls_fit(values, ["Gaussian", "Gaussian"], n_bins=60)
@@ -85,7 +85,7 @@ def test_parameter_count_matches_sklearns_convention():
 def test_a_well_specified_fit_lands_on_sklearns_own_aic():
     """Where the model FITS, the least-squares estimate is close to the
     maximum-likelihood one, so our AIC must land on sklearn's. This is the
-    claim '#93 is fixed' actually makes; everything else is arithmetic."""
+    claim this guard actually makes; everything else is arithmetic."""
     sklearn_mixture = pytest.importorskip("sklearn.mixture")
     values = _bimodal()
     gof, _, _ = _ls_fit(values, ["Gaussian", "Gaussian"])
@@ -161,8 +161,8 @@ def test_values_the_model_gives_no_density_are_counted_not_dropped():
 
 def test_every_gof_is_stamped_with_its_basis():
     """A stored AICc must say which method made it: nothing in the number
-    itself does, and the comparison table ranks on it. Same reasoning as
-    #134's payload-version bump."""
+    itself does, and the comparison table ranks on it. Same reasoning as the
+    payload-version bump."""
     values = _bimodal()
     gof, _, _ = _ls_fit(values, ["Gaussian"])
     assert gof["ic_basis"] == D.IC_BASIS

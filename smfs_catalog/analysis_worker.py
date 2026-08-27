@@ -207,7 +207,7 @@ class AnalysisWorker(QThread):
         Queue order, as file_ids.  The navigator bars read positions from here
         rather than querying the DB themselves: a bar is open for the whole of
         every batch, and a per-file list_queue() on a 9k queue is exactly the
-        O(n²) cost the cache below was added to remove.
+        O(n²) cost the cache below avoids.
 
         Returns the live cached list — treat it as read-only.
         """
@@ -471,9 +471,8 @@ class AnalysisWorker(QThread):
 
     def _queue_ids(self) -> list[int]:
         # Served from a cache rebuilt only when queue membership changes (via
-        # invalidate_queue_cache()).  Previously this ran a full 9k-row JOIN on
-        # every reverse/edge step — the O(n²) reverse-navigation cost.  Read the
-        # attribute once so a concurrent invalidate (None) can't trip us mid-use.
+        # invalidate_queue_cache()).  Read the attribute once so a concurrent
+        # invalidate (None) can't trip us mid-use.
         while True:
             with QMutexLocker(self._mutex):
                 cache = self._queue_ids_cache

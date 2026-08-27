@@ -7,7 +7,7 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Qualification stage (#122).
+Qualification stage.
 
 "Can we use this file?" is asked once, by ONE function, before anything
 downstream assumes anything. These tests pin the three properties that make
@@ -21,9 +21,9 @@ that worth having:
   (c) an unusable file is labelled and kept, never retried, and never dressed
       up as a classification.
 
-The live example throughout is the file from #122: its requested-piezo channel
-is 100% NaN, on which `np.argmax` returns 0 — indistinguishable from a real
-index — which is how a healthy drive came to be blamed for a data problem.
+The live example throughout is a file whose requested-piezo channel is 100%
+NaN, on which `np.argmax` returns 0 — indistinguishable from a real index —
+which is how a healthy drive gets blamed for a data problem.
 """
 
 from __future__ import annotations
@@ -84,8 +84,8 @@ def test_a_healthy_wave_qualifies():
 
 
 def test_all_nan_channel_is_diagnosed_as_nonfinite_not_as_a_bad_turnaround():
-    """#122 exactly. argmax of an all-NaN array returns 0, which the old code
-    read as 'turnaround at index 0 — truncated or malformed'. The finiteness
+    """argmax of an all-NaN array returns 0, which reads as 'turnaround at
+    index 0 — truncated or malformed'. The finiteness
     check must get there first, or the message describes the wrong problem."""
     w = _good_wave()
     w[:, C_ZSNSR] = np.nan
@@ -101,7 +101,7 @@ def test_all_nan_channel_is_diagnosed_as_nonfinite_not_as_a_bad_turnaround():
 
 
 def test_partial_nan_is_caught_even_though_every_later_check_would_pass():
-    """The subtler half of #122: a partly-NaN channel produces a *plausible*
+    """The subtler half: a partly-NaN channel produces a *plausible*
     argmax (the first NaN's index), so nothing downstream would ever object —
     the curve would be split at the wrong sample and analysed as if fine."""
     w = _good_wave()
@@ -154,7 +154,7 @@ def test_truncated_still_detected_and_no_longer_fooled_by_nan():
 def test_a_damaged_read_back_channel_does_not_reject_the_curve():
     """col 0 feeds the FFT view alone. Rejecting a curve whose science is
     intact because one optional viewer lost its input would be over-reach —
-    and in #122's own file col 0 is damaged while the retract is perfect."""
+    and in the example file col 0 is damaged while the retract is perfect."""
     w = _good_wave()
     w[100:900, C_RAW] = np.nan
     assert _qualify(w).usable
@@ -194,7 +194,7 @@ def test_a_file_the_force_pipeline_cannot_use_is_never_retried_forever():
     """Whatever the reason, 'this is not a force-extension curve' is a durable
     fact. Raised as a plain LoadError the analysis layer could only read it as
     'couldn't load' -> 'unavailable' -> retried on every pass, for ever — the
-    fail-open shape #122 was filed for, reached by a second route."""
+    same fail-open shape, reached by a second route."""
     assert cl.UNUSABLE_NOT_FE in cl.UNUSABLE_REASON_TEXT
 
 
@@ -288,7 +288,7 @@ def test_an_unusable_file_is_labelled_and_kept_not_deleted(tmp_path):
 
 
 def test_unusable_is_a_verdict_of_its_own_never_non_event(tmp_path):
-    """#69's lesson, applied to a second cause: a file we could not judge must
+    """The same rule, applied to a second cause: a file we could not judge must
     not report the same string as a file we judged and found empty."""
     db, p = _fresh_db(tmp_path)
     assert "unusable" in db.EVENT_VERDICTS

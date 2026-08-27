@@ -7,8 +7,8 @@
 # repository root, or <https://www.gnu.org/licenses/>.
 
 """
-Regression test: WLC fit error bars are correlation-corrected (#134), and the
-two fit-conditioning diagnostics are surfaced (#137).
+Regression test: WLC fit error bars are correlation-corrected, and the
+two fit-conditioning diagnostics are surfaced.
 
 THE DEFECT.  `_fit_wlc_window` returned sqrt(diag(pcov)) from curve_fit, which
 is the correct standard error only for INDEPENDENT residuals.  The fit runs on
@@ -32,12 +32,12 @@ WHAT IS PINNED HERE:
      another run of the same code.
  (c) THE HEADLINE CLAIM, measured directly: across repeated realisations, the
      true scatter of the fitted l_p divided by the REPORTED error bar is ~sqrt(tau)
-     for the old error bars and ~1 for the corrected ones.  This is what "error
+     for uncorrected error bars and ~1 for the corrected ones.  This is what "error
      bars are too small" means, tested as a statement about coverage rather
      than as a statement about a multiplier.
  (d) The guards: tau never shrinks an error bar, never exceeds n/2, and reports
      1.0 (no correction claimed) where it cannot measure anything.
- (e) FILTER vs MODEL ERROR — the instrument for the open question in #134.  What
+ (e) FILTER vs MODEL ERROR — the instrument for the open question.  What
      is pinned is the RULE (filtering alone gives tau ~= f_s/f_c) and its
      direction (faster sampling behind a fixed cutoff makes it worse), NOT any
      particular cohort's split between filtering and model error.  That split
@@ -46,7 +46,7 @@ WHAT IS PINNED HERE:
      measurement into a permanent claim.
  (f) v4 payload round-trip, and that a v3 document reads as a miss (the bump is
      what stops old 1.5% error bars and new 12% ones coexisting unlabelled).
- (g) The #137 wiring: the three diagnostics are real summary keys with declared
+ (g) The diagnostics wiring: three diagnostics are real summary keys with declared
      units, so they reach the queue, the gate and the exports.
 
 Run with the smfs-catalog env, from the repo root:
@@ -180,7 +180,7 @@ def test_estimator_recovers_a_known_autocorrelation_time() -> None:
 
 def test_reported_error_bar_matches_true_scatter_only_after_correction() -> None:
     """
-    The claim in #134 is not "error bars should be bigger", it is "error bars do
+    The claim is not "error bars should be bigger", it is "error bars do
     not describe the actual scatter of the answer".  So this measures the actual
     scatter.
 
@@ -205,7 +205,7 @@ def test_reported_error_bar_matches_true_scatter_only_after_correction() -> None
         l_p, _, l_p_err, _, tau = fit
         l_p_hats.append(l_p)
         corr_errs.append(l_p_err)
-        raw_errs.append(l_p_err / np.sqrt(tau))   # undo it to recover the old value
+        raw_errs.append(l_p_err / np.sqrt(tau))   # undo it to recover the uncorrected value
         taus.append(tau)
 
     assert len(l_p_hats) >= 70, "too many fits failed to judge coverage"
@@ -271,11 +271,11 @@ def test_tau_is_capped_at_half_the_series() -> None:
     assert tau <= n / 2.0 + 1e-9, f"tau {tau} exceeded the n/2 cap"
 
 
-# ── (e) FILTER vs MODEL ERROR — the instrument for #134's open question ──────
+# ── (e) FILTER vs MODEL ERROR — the instrument for the open question ────────
 
 def test_low_pass_filtering_alone_produces_only_a_modest_tau() -> None:
     """
-    #134 attributes tau to the low-pass filter.  This measures how much of it
+    tau is attributed to the low-pass filter.  This measures how much of it
     the filter can actually account for.
 
     White noise pushed through the app's OWN decomposition at its own default
@@ -306,7 +306,7 @@ def test_low_pass_filtering_alone_produces_only_a_modest_tau() -> None:
     assert 0.5 * predicted <= med <= 2.0 * predicted, (
         f"filter-only tau {med:.1f} against a predicted ~{predicted:.1f} "
         "(f_s/f_c). If the app's cutoff or sample rate changed, the "
-        "'a quarter of tau is the filter' arithmetic in #134, and "
+        "'a quarter of tau is the filter' arithmetic, and "
         "the roi_events docstring all need redoing with the new numbers."
     )
     # Deliberately NO assertion here comparing this against a stored "typical
@@ -415,12 +415,12 @@ def test_z_max_is_derived_and_never_stored() -> None:
     assert _segment(x_max_nm=82.8, l_c_nm=0.0).z_max is None
 
 
-# ── (g) The #137 wiring ──────────────────────────────────────────────────────
+# ── (g) The diagnostics wiring ───────────────────────────────────────────────
 
 def test_the_three_diagnostics_are_real_summary_keys() -> None:
     """Being in SEG_SUMMARY_KEYS is what makes them queue columns, gate criteria
     and variable-window drill-downs — criteria_gate branches generically on this
-    tuple, so this is the whole of the wiring (#137)."""
+    tuple, so this is the whole of the wiring."""
     for key in ("seg_tau", "seg_z_max", "seg_edge_pinned"):
         assert key in SEG_SUMMARY_KEYS, f"{key} is not a summary key"
         assert key in SEG_SUMMARY_FIELD, f"{key} has no field mapping"

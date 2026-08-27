@@ -1858,7 +1858,7 @@ class DashboardWindow(QMainWindow):
 
 
     def _on_repoint_data(self) -> None:
-        """Rewrite the stored paths of curves that have moved to another drive, keeping the analysis attached to them (#30)."""
+        """Rewrite the stored paths of curves that have moved to another drive, keeping the analysis attached to them."""
         from .repoint_dialog import RepointDataDialog
         dlg = RepointDataDialog(self._db_path, self)
         dlg.exec()

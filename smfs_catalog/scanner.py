@@ -26,7 +26,7 @@ from igor2.binarywave import load as load_ibw
 from . import db
 from .curve_loader import _hold_z_sensor, _spring_constant, qualify_wave
 
-# Files per scan transaction (#125).  Commit is what makes a batch durable, so
+# Files per scan transaction.  Commit is what makes a batch durable, so
 # this is also the most work an interrupted scan can lose — and that work is
 # re-derived by re-reading the same files on the next scan.  200 keeps the
 # fsync cost negligible without holding a write transaction open for long.
@@ -389,8 +389,8 @@ def experimentalist_from_path(
     unknown owner to DEFAULT_EXPERIMENTALIST — so leaving it unset gets that
     behaviour without the ambiguity.
 
-    `known=None` keeps the old mint-anything behaviour, for callers that
-    genuinely want the raw folder name (and for the existing tests).
+    `known=None` mints from the raw folder name, for callers that genuinely
+    want it (and for the existing tests).
     """
     root_n = db.normalize_path(root)
     path_n = db.normalize_path(path)
@@ -534,7 +534,7 @@ def scan_directory(
         If False, skip files whose modified_at timestamp hasn't changed.
     progress_cb : callable or None
         `progress_cb(done, total, label) -> bool`, called once per file with
-        the number completed so far; return True to cancel (#124).  This is a
+        the number completed so far; return True to cancel.  This is a
         PLAIN CALLABLE on purpose — the scanner must not import Qt, so the GUI
         adapts it to a progress dialog on its side (see add_data_dialog.
         _ScanProgress) and this module stays usable headless and from tests.
@@ -550,7 +550,7 @@ def scan_directory(
     real, and re-deriving them costs another walk.  The next scan finishes the
     job: it skips what is already recorded with an unchanged mtime.  Undoing a
     mistaken import is the removal dialog's job, not something a half-finished
-    scan should do silently (#145).
+    scan should do silently.
     """
     if not os.path.isdir(directory_path):
         # A disconnected drive is not a fact about the files — report nothing
@@ -659,7 +659,7 @@ def requalify_catalog(
     """
     Re-read catalogued files to fill in what the scanner did not know when they
     were first imported: their content hash, and any qualification check added
-    since (#122).
+    since.
 
     Needed because scan_directory deliberately does NOT re-open a file whose
     mtime is unchanged — the right call for an ordinary scan, but it means a

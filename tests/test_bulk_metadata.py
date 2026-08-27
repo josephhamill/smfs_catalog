@@ -26,8 +26,8 @@ The contract under test:
 (d) the return value equals the count of files actually matched, including
     across the 800-row chunk boundary.
 (e) experimentalist is file-level now: two files under the SAME directory
-    can legitimately carry different experimentalist values (structurally
-    impossible before this change), and the bulk owner accessors preserve
+    can legitimately carry different experimentalist values, and the bulk owner
+    accessors preserve
     those distinct values rather than collapsing them per directory.
 
 Run with the smfs-catalog env, from the repo root:
