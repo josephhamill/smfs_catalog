@@ -23,6 +23,7 @@ from .analysis_params import (
     ANALYSIS_PARAM_KEYS,
     AnalysisParams,
 )
+from .path_pattern import path_matches
 
 APP_NAME = "smfs_catalog"
 DB_FILENAME = "smfs_catalog.db"
@@ -89,6 +90,7 @@ def get_connection(db_path: str = DEFAULT_DB_PATH, timeout: float = 30.0) -> sql
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
+    conn.create_function("path_matches", 2, path_matches, deterministic=True)
     return conn
 
 
@@ -871,8 +873,8 @@ def _file_filter_clauses(
         clauses.append("f.quality = ?")
         params.append(quality)
     if search:
-        clauses.append("f.path LIKE ?")
-        params.append(f"%{search}%")
+        clauses.append("path_matches(f.path, ?)")
+        params.append(search)
     for facet, column, values in (
         ("users", "f.experimentalist", users),
         ("analytes", "f.analyte", analytes),
@@ -1092,8 +1094,8 @@ def get_distinct_dates(
             clauses.append(f"{col} IN ({ph})")
             params.extend(vals)
     if search:
-        clauses.append("f.path LIKE ?")
-        params.append(f"%{search}%")
+        clauses.append("path_matches(f.path, ?)")
+        params.append(search)
     where = " AND ".join(clauses)
 
     conn = get_connection(db_path)
