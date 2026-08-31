@@ -53,27 +53,29 @@ def _catalog(tmp_path):
     path = str(tmp_path / "scope.sqlite")
     db.initialise(path)
     rows = [
-        # path, user, analyte, solvent, instrument, type, date, parse, reason, sha
-        ("/data/a.ibw", "Alice", "titin", "PBS", "AFM-1",
-         "force_extension", "2026-01-01", 1, None, "same"),
-        ("/copy/a.ibw", "Alice", "titin", "PBS", "AFM-1",
-         "force_extension", "2026-01-01", 1, None, "same"),
-        ("/data/b.ibw", "Dana", "DNA", "water", "AFM-2",
-         "indentation", "2026-02-01", 1, None, "other"),
-        ("/data/unusable.ibw", "Bob", "collagen", "PBS", "AFM-1",
-         "indentation", "2026-02-01", 1, "nonfinite", "bad"),
-        ("/data/unparsed.ibw", "Carol", "actin", "water", "AFM-2",
-         "force_extension", "2026-03-01", 0, None, "unparsed"),
+        # path, user, analyte, solvent, technique, substrate, prep,
+        # instrument, type, date, parse, reason, sha
+        ("/data/a.ibw", "Alice", "titin", "PBS", "SMFS", "mica", "drop-cast",
+         "AFM-1", "force_extension", "2026-01-01", 1, None, "same"),
+        ("/copy/a.ibw", "Alice", "titin", "PBS", "SMFS", "mica", "drop-cast",
+         "AFM-1", "force_extension", "2026-01-01", 1, None, "same"),
+        ("/data/b.ibw", "Dana", "DNA", "water", "UV", "gold", "etching",
+         "AFM-2", "indentation", "2026-02-01", 1, None, "other"),
+        ("/data/unusable.ibw", "Bob", "collagen", "PBS", "SMFS", "glass", "blocking",
+         "AFM-1", "indentation", "2026-02-01", 1, "nonfinite", "bad"),
+        ("/data/unparsed.ibw", "Carol", "actin", "water", "UV", "mica", "etching",
+         "AFM-2", "force_extension", "2026-03-01", 0, None, "unparsed"),
     ]
     conn = db.get_connection(path)
     with conn:
         conn.executemany(
             """
             INSERT INTO files (
-                path, filename, experimentalist, analyte, solvent, afm_unit,
+                path, filename, experimentalist, analyte, solvent, technique,
+                substrate, sample_prep, afm_unit,
                 curve_type, measured_date, parse_ok, unusable_reason,
                 content_sha256, first_seen, last_seen
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01', '2026-01-01')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01', '2026-01-01')
             """,
             [(row[0], row[0].rsplit("/", 1)[-1], *row[1:]) for row in rows],
         )
@@ -101,6 +103,32 @@ def test_facets_count_the_same_eligible_cohort_as_list_files(tmp_path):
     assert [row["path"] for row in rows] == ["/data/a.ibw", "/data/b.ibw"]
     assert facets["users"] == [("Alice", 1), ("Dana", 1)]
     assert facets["analytes"] == [("DNA", 1), ("titin", 1)]
+
+
+def test_technique_substrate_and_prep_narrow_the_cohort(tmp_path):
+    path = _catalog(tmp_path)
+
+    for key, value, expected in (
+        ("techniques",   "UV",        ["/data/b.ibw"]),
+        ("substrates",   "mica",      ["/data/a.ibw"]),
+        ("sample_preps", "drop-cast", ["/data/a.ibw"]),
+    ):
+        scope = {**new_scope(), key: [value]}
+        rows = db.list_files(db_path=path, **scope_to_query(scope))
+        assert [row["path"] for row in rows] == expected, key
+
+
+def test_the_new_dimensions_are_offered_as_cascading_facets(tmp_path):
+    path = _catalog(tmp_path)
+
+    facets = db.get_facet_options(path)
+    assert facets["techniques"] == [("SMFS", 1), ("UV", 1)]
+    assert facets["substrates"] == [("gold", 1), ("mica", 1)]
+    assert facets["sample_preps"] == [("drop-cast", 1), ("etching", 1)]
+
+    # Narrowed by another dimension, the way every other facet is.
+    narrowed = db.get_facet_options(path, techniques=["UV"])
+    assert narrowed["substrates"] == [("gold", 1)]
 
 
 def test_a_glob_in_the_search_reaches_the_database(tmp_path):

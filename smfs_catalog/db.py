@@ -131,6 +131,19 @@ _THRESHOLDS_SQL = """
 """
 
 
+def _add_missing_columns(conn, table: str, columns: dict) -> None:
+    """Give an existing table the declared columns it does not have yet.
+
+    ``CREATE TABLE IF NOT EXISTS`` leaves a catalog that already exists
+    untouched, so a column added to a declaration reaches new catalogs only.
+    Every descriptive column added from here on needs an entry here too.
+    """
+    known = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, declaration in columns.items():
+        if name not in known:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+
+
 def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
     """Create all tables if they do not already exist."""
     import json
@@ -184,6 +197,8 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
                 analyte             TEXT,
                 technique           TEXT,
                 solvent             TEXT,
+                substrate           TEXT,
+                sample_prep         TEXT,
                 afm_unit            TEXT,
                 cantilever          TEXT,
                 experimentalist     TEXT,
@@ -203,6 +218,11 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
                 tags                TEXT    DEFAULT '{}'
             )
         """)
+
+        _add_missing_columns(conn, "files", {
+            "substrate":   "TEXT",
+            "sample_prep": "TEXT",
+        })
 
         # The column references the table, so it must go first.
         if "directory_id" in {r["name"] for r in
@@ -399,6 +419,7 @@ def upsert_file(
         "curve_type", "unusable_reason", "unusable_detail", "content_sha256",
         "parse_ok", "parse_error",
         "n_traces", "quality", "analyte", "technique", "notes",
+        "substrate", "sample_prep",
         "analysis_at", "tags",
     }
     rec = {k: v for k, v in record.items() if k in allowed}
@@ -433,7 +454,8 @@ def set_file_descriptors_bulk(
     db_path: str = DEFAULT_DB_PATH,
 ) -> int:
     """Apply validated descriptive metadata fields to every supplied path."""
-    allowed = {"analyte", "technique", "solvent", "afm_unit", "cantilever", "experimentalist"}
+    allowed = {"analyte", "technique", "solvent", "substrate", "sample_prep",
+               "afm_unit", "cantilever", "experimentalist"}
     rec = {k: v for k, v in fields.items() if k in allowed}
     if not rec or not paths:
         return 0
@@ -772,7 +794,7 @@ def get_distinct_values(
     _allowed = {
         "files": {
             "curve_type", "experimentalist", "technique", "analyte",
-            "solvent", "afm_unit", "cantilever",
+            "solvent", "substrate", "sample_prep", "afm_unit", "cantilever",
         },
     }
     if table not in _allowed or column not in _allowed[table]:
@@ -813,11 +835,14 @@ def get_distinct_values(
 
 
 _FACET_COLUMNS = {
-    "users":       "f.experimentalist",
-    "analytes":    "f.analyte",
-    "solvents":    "f.solvent",
-    "afm_units":   "f.afm_unit",
-    "curve_types": "f.curve_type",
+    "users":        "f.experimentalist",
+    "analytes":     "f.analyte",
+    "solvents":     "f.solvent",
+    "techniques":   "f.technique",
+    "substrates":   "f.substrate",
+    "sample_preps": "f.sample_prep",
+    "afm_units":    "f.afm_unit",
+    "curve_types":  "f.curve_type",
 }
 
 
@@ -833,6 +858,7 @@ def _file_filter_clauses(
     directory=None, directories=None,
     curve_type=None, curve_types=None, parse_ok=None, quality=None,
     search=None, users=None, analytes=None, solvents=None, afm_units=None,
+    techniques=None, substrates=None, sample_preps=None,
     date_from=None, date_to=None, k_min=None, k_max=None,
     usable=None, unique=None, exclude_facet=None,
 ) -> tuple[list[str], list]:
@@ -879,6 +905,9 @@ def _file_filter_clauses(
         ("users", "f.experimentalist", users),
         ("analytes", "f.analyte", analytes),
         ("solvents", "f.solvent", solvents),
+        ("techniques", "f.technique", techniques),
+        ("substrates", "f.substrate", substrates),
+        ("sample_preps", "f.sample_prep", sample_preps),
         ("afm_units", "f.afm_unit", afm_units),
     ):
         if exclude_facet != facet:
@@ -901,14 +930,17 @@ def _file_filter_clauses(
 def get_facet_options(
     db_path: str = DEFAULT_DB_PATH,
     *,
-    users:       Optional[list] = None,
-    analytes:    Optional[list] = None,
-    solvents:    Optional[list] = None,
-    afm_units:   Optional[list] = None,
-    curve_types: Optional[list] = None,
-    date_from:   Optional[str]  = None,
-    date_to:     Optional[str]  = None,
-    search:      Optional[str]  = None,
+    users:        Optional[list] = None,
+    analytes:     Optional[list] = None,
+    solvents:     Optional[list] = None,
+    techniques:   Optional[list] = None,
+    substrates:   Optional[list] = None,
+    sample_preps: Optional[list] = None,
+    afm_units:    Optional[list] = None,
+    curve_types:  Optional[list] = None,
+    date_from:    Optional[str]  = None,
+    date_to:      Optional[str]  = None,
+    search:       Optional[str]  = None,
 ) -> dict[str, list[tuple[str, int]]]:
     """Faceted-search options: for each filter dimension, the distinct values that still have data given the OTHER selected dimensions, each..."""
     out: dict[str, list[tuple[str, int]]] = {}
@@ -917,6 +949,8 @@ def get_facet_options(
         for dim, col in _FACET_COLUMNS.items():
             clauses, params = _file_filter_clauses(
                 users=users, analytes=analytes, solvents=solvents,
+                techniques=techniques, substrates=substrates,
+                sample_preps=sample_preps,
                 afm_units=afm_units, curve_types=curve_types,
                 date_from=date_from, date_to=date_to, search=search,
                 parse_ok=True, usable=True, unique=True,
@@ -949,6 +983,9 @@ def list_files(
     users: Optional[list] = None,
     analytes: Optional[list] = None,
     solvents: Optional[list] = None,
+    techniques: Optional[list] = None,
+    substrates: Optional[list] = None,
+    sample_preps: Optional[list] = None,
     afm_units: Optional[list] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
@@ -962,7 +999,8 @@ def list_files(
         directory=directory, directories=directories,
         curve_type=curve_type, curve_types=curve_types, parse_ok=parse_ok,
         quality=quality, search=search, users=users, analytes=analytes,
-        solvents=solvents, afm_units=afm_units,
+        solvents=solvents, techniques=techniques, substrates=substrates,
+        sample_preps=sample_preps, afm_units=afm_units,
         date_from=date_from, date_to=date_to, k_min=k_min, k_max=k_max,
         usable=usable, unique=unique,
     )
@@ -1018,7 +1056,8 @@ def duplicate_groups(db_path: str = DEFAULT_DB_PATH) -> list[dict]:
 
 _FILE_REPORT_COLUMNS = (
     "path", "filename", "curve_type", "unusable_reason",
-    "experimentalist", "analyte", "solvent", "afm_unit", "cantilever",
+    "experimentalist", "analyte", "solvent", "substrate", "sample_prep",
+    "afm_unit", "cantilever",
     "technique", "measured_date", "measured_at", "microscope_model",
     "spring_constant_pn_nm", "velocity_nm_s", "inv_ols_nm_v",
     "trigger_point_nn", "force_dist_nm", "sample_rate_hz",
@@ -1073,29 +1112,24 @@ def classification_report_rows(
 def get_distinct_dates(
     db_path: str = DEFAULT_DB_PATH,
     *,
-    users:       Optional[list] = None,
-    analytes:    Optional[list] = None,
-    solvents:    Optional[list] = None,
-    afm_units:   Optional[list] = None,
-    curve_types: Optional[list] = None,
-    search:      Optional[str]  = None,
+    users:        Optional[list] = None,
+    analytes:     Optional[list] = None,
+    solvents:     Optional[list] = None,
+    techniques:   Optional[list] = None,
+    substrates:   Optional[list] = None,
+    sample_preps: Optional[list] = None,
+    afm_units:    Optional[list] = None,
+    curve_types:  Optional[list] = None,
+    search:       Optional[str]  = None,
 ) -> list[tuple[str, int]]:
     """Return [(measured_date, n_files), ...] for dates that have at least one parseable file."""
-    clauses = [
-        "f.measured_date IS NOT NULL", "f.measured_date != ''", "f.parse_ok = 1",
-    ]
-    params: list = []
-    for col, vals in (
-        ("f.experimentalist", users), ("f.analyte", analytes), ("f.solvent", solvents),
-        ("f.afm_unit", afm_units), ("f.curve_type", curve_types),
-    ):
-        if vals:
-            ph = ",".join("?" * len(vals))
-            clauses.append(f"{col} IN ({ph})")
-            params.extend(vals)
-    if search:
-        clauses.append("path_matches(f.path, ?)")
-        params.append(search)
+    clauses, params = _file_filter_clauses(
+        users=users, analytes=analytes, solvents=solvents,
+        techniques=techniques, substrates=substrates, sample_preps=sample_preps,
+        afm_units=afm_units, curve_types=curve_types, search=search,
+        parse_ok=True,
+    )
+    clauses += ["f.measured_date IS NOT NULL", "f.measured_date != ''"]
     where = " AND ".join(clauses)
 
     conn = get_connection(db_path)
