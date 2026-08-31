@@ -33,6 +33,9 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -62,7 +65,8 @@ from .export_utils import slug as _slug
 from .dist_fit_core import (
     MODELS, MODEL_NAMES, ci_manifest_fields, bootstrap_fit_ci, CI_N_DRAWS,
     centre_permutation, composite_bounds, composite_guess, fit_stats,
-    make_composite, sort_components_by_centre,
+    make_composite, sort_components_by_centre, at_bound_flags,
+    flatten_constraints,
 )
 from . import dist_fit_core as _dfc
 from .qt_utils import CancelableProgress, set_plot_title, set_si_label, fit_on_screen
@@ -71,6 +75,89 @@ from .qt_utils import CancelableProgress, set_plot_title, set_si_label, fit_on_s
 PEAK_COLORS = list(style.SERIES_LABELED)
 HIST_BRUSH = style.rgba(style.DATA, 150)
 TOTAL_PEN = pg.mkPen(style.INK, width=style.W_MODEL)
+
+
+class ConstraintDialog(QDialog):
+    """Per-parameter minimum and maximum for one component.
+
+    A dialog rather than more spinboxes on the row: a component has three
+    parameters and each takes two limits, which would crowd the row past
+    usefulness and still not have space to say which parameter is which. Here
+    every limit sits beside the parameter's own name.
+
+    Limits are ranges, never pins — see the note in dist_fit_core. The fit
+    stays free anywhere inside the range the user leaves it.
+    """
+
+    AUTO = -1e12
+
+    def __init__(self, model_name, param_names, current, label, units, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Constrain {model_name}")
+        self._param_names = list(param_names)
+        lay = QVBoxLayout(self)
+
+        intro = QLabel(
+            "A limit is information you are supplying, not something the data\n"
+            "said. Where a limit stops the fit, the results table reports the\n"
+            "parameter as sitting on it and the confidence interval is\n"
+            "labelled as conditional on these limits."
+        )
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        grid = QGridLayout()
+        grid.addWidget(QLabel("parameter"), 0, 0)
+        grid.addWidget(QLabel("min"), 0, 1)
+        grid.addWidget(QLabel("max"), 0, 2)
+        self._spins = []
+        for r, name in enumerate(self._param_names, start=1):
+            grid.addWidget(QLabel(name), r, 0)
+            pair = []
+            for c in (1, 2):
+                spin = QDoubleSpinBox()
+                spin.setRange(self.AUTO, 1e12)
+                spin.setValue(self.AUTO)
+                spin.setSpecialValueText("auto")
+                _quant.configure_spinbox(
+                    spin, decimals=_quant.decimals_for(label, 1.0), suffix=False)
+                grid.addWidget(spin, r, c)
+                pair.append(spin)
+            self._spins.append(pair)
+        lay.addLayout(grid)
+
+        for j, want in enumerate(current or []):
+            if j >= len(self._spins) or want is None:
+                continue
+            for k, v in enumerate(want):
+                if v is not None:
+                    self._spins[j][k].setValue(float(v))
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Reset
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.button(QDialogButtonBox.StandardButton.Reset).clicked.connect(
+            self._clear)
+        lay.addWidget(buttons)
+
+    def _clear(self):
+        for pair in self._spins:
+            for spin in pair:
+                spin.setValue(self.AUTO)
+
+    def constraints(self) -> list:
+        """Per parameter: (lo, hi) with either element None, or None if neither
+        limit was set. The shape composite_bounds expects."""
+        out = []
+        for pair in self._spins:
+            lo, hi = (None if s.value() == self.AUTO else float(s.value())
+                      for s in pair)
+            out.append(None if lo is None and hi is None else (lo, hi))
+        return out
 
 
 class PeakRow(QFrame):
@@ -84,12 +171,14 @@ class PeakRow(QFrame):
     remove_clicked = pyqtSignal(object)
     pick_requested = pyqtSignal(object)
     start_changed = pyqtSignal(object)
+    constrain_requested = pyqtSignal(object)
     AUTO = -1e12
 
     def __init__(self, index: int, model_name: str, color: str, parent=None):
         super().__init__(parent)
         self.model_name = model_name
         self.color = color
+        self._constraints: list = []
         self.setFrameStyle(QFrame.Shape.StyledPanel)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 2, 4, 2)
@@ -118,6 +207,12 @@ class PeakRow(QFrame):
         )
         self._pick.clicked.connect(lambda: self.pick_requested.emit(self))
         lay.addWidget(self._pick)
+        self._bounds_btn = QPushButton()
+        self._bounds_btn.setFixedWidth(72)
+        self._bounds_btn.clicked.connect(
+            lambda: self.constrain_requested.emit(self))
+        lay.addWidget(self._bounds_btn)
+        self._refresh_bounds_btn()
         remove_btn = QPushButton("✕")
         remove_btn.setFixedWidth(28)
         remove_btn.clicked.connect(lambda: self.remove_clicked.emit(self))
@@ -137,6 +232,27 @@ class PeakRow(QFrame):
         self._start.blockSignals(True)
         self._start.setValue(self.AUTO if value is None else float(value))
         self._start.blockSignals(False)
+
+    def _refresh_bounds_btn(self) -> None:
+        """The button says whether this component is bounded, because a limit
+        that is invisible on the row is a limit somebody forgets they set."""
+        n = sum(1 for c in self._constraints if c is not None)
+        self._bounds_btn.setText("free" if n == 0 else f"bounded ({n})")
+        self._bounds_btn.setToolTip(
+            "Set a minimum and/or maximum for this component's parameters.\n"
+            "A limit is yours, not the data's: where the fit stops against one,\n"
+            "the results table says so and the interval is reported as\n"
+            "conditional on it."
+        )
+
+    @property
+    def constraints(self) -> list:
+        """Per-parameter (lo, hi) limits, None where the user set none."""
+        return list(self._constraints)
+
+    def set_constraints(self, values: list) -> None:
+        self._constraints = list(values or [])
+        self._refresh_bounds_btn()
 
     @property
     def picking(self) -> bool:
@@ -691,8 +807,17 @@ class _ModelPane(QWidget):
         row   = PeakRow(len(self._rows), name, color)
         row.remove_clicked.connect(self._remove_peak)
         row.pick_requested.connect(self._arm_pick)
+        row.constrain_requested.connect(self._edit_constraints)
         self._peaks_lay.insertWidget(self._peaks_lay.count() - 1, row)
         self._rows.append(row)
+
+    def _edit_constraints(self, row: PeakRow):
+        dlg = ConstraintDialog(
+            row.model_name, MODELS[row.model_name].param_names,
+            row.constraints, self._variable, self._units, self,
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            row.set_constraints(dlg.constraints())
 
     def _arm_pick(self, row: PeakRow):
         """Point the next histogram click at THIS component's start.
@@ -794,12 +919,30 @@ class _ModelPane(QWidget):
             f"{v}× {k}" if v > 1 else k for k, v in sorted(counts.items())
         )
 
-        fn     = make_composite(components)
-        bounds = composite_bounds(components, data)
+        # The user's limits belong in the label. A constrained fit and a free
+        # one of the same components are different models, and the comparison
+        # table has to be able to tell two of its own rows apart.
+        constraints = [r.constraints for r in self._rows]
+        n_bounded   = sum(1 for c in constraints
+                          for lim in (c or []) if lim is not None)
+        if n_bounded:
+            model_label += f" [{n_bounded} bounded]"
+
+        fn = make_composite(components)
+        try:
+            bounds = composite_bounds(components, data, constraints)
+        except ValueError as e:
+            QMessageBox.warning(self, "Impossible limits", str(e))
+            return
         # Whatever the user typed or picked replaces the finder's
         # position for that component, and nothing else about the fit changes.
         starts = [r.start for r in self._rows]
         p0     = composite_guess(components, data, bin_centers, density, starts)
+        # A guess is built from the histogram and knows nothing of the user's
+        # limits, so it can land outside them. curve_fit rejects an infeasible
+        # start outright, and a start was never more than a hint — moving it
+        # into the box costs nothing the fit was entitled to.
+        p0 = list(np.clip(p0, bounds[0], bounds[1]))
 
         try:
             popt, pcov = optimize.curve_fit(
@@ -822,9 +965,12 @@ class _ModelPane(QWidget):
         ci_lo = popt - 1.96 * perr
         ci_hi = popt + 1.96 * perr
 
-        # Same permutation the sort applies, so a start stays attached to the
-        # component it was set for rather than to a slot number.
-        starts = [starts[i] for i in centre_permutation(components, popt)]
+        # Same permutation the sort applies, so a start and a limit stay
+        # attached to the component they were set for rather than to a slot
+        # number. A constraint on the wrong peak is worse than no constraint.
+        perm        = centre_permutation(components, popt)
+        starts      = [starts[i]      for i in perm]
+        constraints = [constraints[i] for i in perm]
         components, popt, perr, ci_lo, ci_hi, colors, labels = \
             sort_components_by_centre(components, popt, perr, ci_lo, ci_hi, colors, labels)
 
@@ -832,7 +978,23 @@ class _ModelPane(QWidget):
         # were built before the sort. With mixed component types, their
         # parameter blocks no longer align with sorted popt unless rebuilt.
         fn     = make_composite(components)
-        bounds = composite_bounds(components, data)
+        bounds = composite_bounds(components, data, constraints)
+
+        # Which parameters the user limited, and which of them the fit ran into.
+        # Computed against the SORTED order so both line up with popt and with
+        # every interval reported beside it.
+        user_bounds = flatten_constraints(components, constraints)
+        railed      = at_bound_flags(popt, bounds[0], bounds[1])
+        # Only a limit the USER set makes a result conditional. An automatic
+        # bound is part of the model, not an imposition, and flagging it here
+        # would spend the reader's attention on something they did not do.
+        at_user_bound = [
+            side if (side is not None and lim is not None
+                     and (lim[0] is not None if side == "lo" else lim[1] is not None))
+            else None
+            for side, lim in zip(railed, user_bounds)
+        ]
+        constrained = any(lim is not None for lim in user_bounds)
 
         x0     = bin_centers[0]  - bw
         x1     = bin_centers[-1] + bw
@@ -876,7 +1038,7 @@ class _ModelPane(QWidget):
             colors, labels, y_fit_bins, ci_band,
         )
         self._update_table(components, popt, perr, ci_lo, ci_hi, colors, boot,
-                           starts)
+                           starts, user_bounds, at_user_bound, constrained)
         self._update_stats(gof)
         self._record_fit(model_label, len(data), gof, saved=False)
         self._save_status.setText("")
@@ -902,6 +1064,12 @@ class _ModelPane(QWidget):
             # Where each component was told to start, in the same order as
             # popt. A user-set start is therefore recorded explicitly.
             "starts":             list(starts),
+            # The user's limits, flat and in popt order, and which of them the
+            # fit ran into. Both travel with the result: a parameter sitting on
+            # a limit is that limit, and so is the near edge of its interval.
+            "user_bounds":        list(user_bounds),
+            "at_user_bound":      list(at_user_bound),
+            "constrained":        bool(constrained),
             "n_excluded_by_range": int(bins_geom.n_out_of_range) if bins_geom else 0,
             "param_labels":       param_labels,
             "popt":               popt,
@@ -952,8 +1120,31 @@ class _ModelPane(QWidget):
             note += " — barely moved; the fit had little to say here"
         return note
 
+    def _bound_note(self, side, lim) -> str:
+        """'(at your minimum, 0)' for a parameter the user's limit stopped.
+
+        Said in the user's own terms — it is their number, and the fit reports
+        it back rather than presenting it as something measured. The near edge
+        of the interval is the same number, because every bootstrap refit was
+        handed the same limit.
+        """
+        if side is None or lim is None:
+            return ""
+        value = lim[0] if side == "lo" else lim[1]
+        if value is None:
+            return ""
+        word = "minimum" if side == "lo" else "maximum"
+        return f"   (at your {word}, {float(value):.4g} — not measured)"
+
     def _update_table(self, components, popt, perr, ci_lo, ci_hi, colors,
-                      boot=None, starts=None):
+                      boot=None, starts=None, user_bounds=None,
+                      at_user_bound=None, constrained=False):
+        # An interval computed inside the user's limits is conditional on them,
+        # and the column has to say which of the two it is reporting.
+        self._params_tbl.setHorizontalHeaderLabels(
+            ["Parameter", "Value", "± Std Err",
+             "95% CI (given your limits)" if constrained else "95% CI"]
+        )
         # Locate each component's amplitude (always param index 0) and sum them
         # so we can express each as a fraction of the total.
         amp_idx = []
@@ -977,6 +1168,10 @@ class _ModelPane(QWidget):
                 lo  = ci_lo[idx + j]
                 hi  = ci_hi[idx + j]
                 label = f"Peak {i+1} ({comp.name})  "
+                bnote = self._bound_note(
+                    at_user_bound[idx + j] if at_user_bound else None,
+                    user_bounds[idx + j] if user_bounds else None,
+                )
 
                 if j == 0:   # amplitude → fraction
                     frac = val / total_amp
@@ -996,7 +1191,7 @@ class _ModelPane(QWidget):
                         f_lo = f_hi = f_err = float("nan")
                     rows.append((
                         label + "fraction",
-                        f"{frac:.3f}  ({frac * 100:.1f} %)",
+                        f"{frac:.3f}  ({frac * 100:.1f} %)" + bnote,
                         "—" if not np.isfinite(f_err) else f"{f_err:.3g}",
                         _ci_text(f_lo, f_hi),
                         color,
@@ -1013,7 +1208,8 @@ class _ModelPane(QWidget):
                         f"{val:.4g}  →  median = {med:.4g}"
                         + self._start_note(started, np.exp(val), np.exp(lo)
                                            if np.isfinite(lo) else np.nan,
-                                           np.exp(hi) if np.isfinite(hi) else np.nan),
+                                           np.exp(hi) if np.isfinite(hi) else np.nan)
+                        + bnote,
                         "—" if not np.isfinite(err) else f"{err:.3g}  (±{med_err:.3g})",
                         _ci_text(lo, hi) if not np.isfinite(lo + hi) else
                         f"[{lo:.4g}, {hi:.4g}]  →  [{np.exp(lo):.4g}, {np.exp(hi):.4g}]",
@@ -1026,7 +1222,7 @@ class _ModelPane(QWidget):
                     gsd = np.exp(val)
                     rows.append((
                         label + "σ_log  (ln-space)",
-                        f"{val:.4g}  →  GSD = {gsd:.3g}×",
+                        f"{val:.4g}  →  GSD = {gsd:.3g}×" + bnote,
                         "—" if not np.isfinite(err) else f"{err:.3g}",
                         _ci_text(lo, hi),
                         color,
@@ -1038,7 +1234,7 @@ class _ModelPane(QWidget):
                     started = (starts[i] if starts and j == 1 else None)
                     rows.append((
                         label + pname,
-                        f"{val:.5g}" + self._start_note(started, val, lo, hi),
+                        f"{val:.5g}" + self._start_note(started, val, lo, hi) + bnote,
                         "—" if not np.isfinite(err) else f"{err:.3g}",
                         _ci_text(lo, hi),
                         color,
@@ -1214,6 +1410,13 @@ class _ModelPane(QWidget):
             "n_excluded_by_range": f.get("n_excluded_by_range"),
             "user_peak_starts":    [None if v is None else float(v)
                                     for v in (f.get("starts") or [])],
+            # Flat, in the same order as the parameter rows of _params.csv, so
+            # a reader can line a limit up with the value it produced.
+            "user_param_bounds":   [None if lim is None else list(lim)
+                                    for lim in (f.get("user_bounds") or [])],
+            "constrained":         bool(f.get("constrained", False)),
+            "n_params_at_user_bound": sum(
+                1 for s in (f.get("at_user_bound") or []) if s is not None),
             "caption":     self._caption,
         }
 
@@ -1248,14 +1451,28 @@ class _ModelPane(QWidget):
             g.note_dict(boot.manifest_fields(f.get("pcov")) if boot is not None
                         else ci_manifest_fields(f.get("pcov"), False,
                                                 method="none — no interval computed"))
+            # Every refit was handed the same limits, so a limit that binds
+            # truncates the interval too. That is correct GIVEN the limits, and
+            # the manifest has to say the interval is conditional on them.
+            g.note(ci_conditional_on_user_bounds=bool(f.get("constrained", False)))
 
+            # The limits ride in the parameter table itself, not only in the
+            # manifest: this file is the one that gets opened, and a value that
+            # is really a user-set limit has to say so wherever it is read.
+            n_par       = len(f["param_labels"])
+            user_bounds = (f.get("user_bounds") or [None] * n_par)
+            railed      = (f.get("at_user_bound") or [None] * n_par)
             g.table(
                 "_params.csv",
-                ["parameter", "value", "stderr", "ci_lo", "ci_hi"],
-                [(name, float(v), float(e), float(lo), float(hi))
-                 for name, v, e, lo, hi in zip(
+                ["parameter", "value", "stderr", "ci_lo", "ci_hi",
+                 "user_min", "user_max", "at_user_bound"],
+                [(name, float(v), float(e), float(lo), float(hi),
+                  "" if lim is None or lim[0] is None else float(lim[0]),
+                  "" if lim is None or lim[1] is None else float(lim[1]),
+                  side or "")
+                 for name, v, e, lo, hi, lim, side in zip(
                      f["param_labels"], f["popt"], f["perr"],
-                     f["ci_lo"], f["ci_hi"])],
+                     f["ci_lo"], f["ci_hi"], user_bounds, railed)],
             )
 
             # The binned data as plotted, the total fit at those bins, and
@@ -1307,6 +1524,10 @@ class _ModelPane(QWidget):
             "range_is_auto": f["range_is_auto"],
             "n_excluded_by_range": f["n_excluded_by_range"],
             "user_peak_starts": f["starts"],
+            "user_param_bounds": [None if lim is None else list(lim)
+                                  for lim in (f.get("user_bounds") or [])],
+            "constrained": bool(f.get("constrained", False)),
+            "at_user_bound": list(f.get("at_user_bound") or []),
         })
 
         try:

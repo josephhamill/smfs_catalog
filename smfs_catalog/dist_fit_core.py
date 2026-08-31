@@ -143,13 +143,100 @@ def make_composite(components: list[ModelSpec]):
     return composite
 
 
-def composite_bounds(components: list[ModelSpec], data: np.ndarray):
+# ── Parameter constraints ─────────────────────────────────────────────────────
+#
+# A constraint is PRIOR INFORMATION THE USER SUPPLIED, not something the data
+# said, and every number downstream of one has to keep saying so.  The bound
+# itself is nothing new — every model has always had a `bounds_fn` — so this is
+# an override of an existing box, not a new mechanism.
+#
+# The override REPLACES the automatic limit rather than intersecting with it: a
+# user who knows a scale from an independent calibration may legitimately want a
+# range the automatic heuristic would not have allowed, and silently keeping the
+# tighter of the two would apply a bound they did not ask for.
+#
+# Ranges only.  `least_squares` requires lb < ub strictly, so a pin would have
+# to be either a degenerately narrow interval or the removal of the parameter
+# from the fit — and a removed parameter has to leave `k` in fit_stats as well,
+# or the information criteria are counting a freedom that no longer exists.
+
+# A fitted value this close to its limit is sitting ON it: trf converges to
+# within solver tolerance of an active bound rather than exactly onto it.
+AT_BOUND_RTOL = 1e-6
+AT_BOUND_ATOL = 1e-12
+
+
+def composite_bounds(components: list[ModelSpec], data: np.ndarray,
+                     constraints: Optional[list] = None):
+    """Flat (lows, highs) for the composite, with the user's limits applied.
+
+    `constraints[i]`, when given, is a per-parameter list of (lo, hi) for
+    component i, either element None to leave that limit automatic.  Anything
+    the user did not set keeps exactly the value `bounds_fn` produced, so the
+    unconstrained answer is unchanged until somebody sets a limit.
+
+    Raises ValueError when a supplied limit leaves an empty interval, naming
+    the parameter.  Quietly widening it back would fit a model the user did not
+    ask for and report it under their constraint.
+    """
     lows, highs = [], []
-    for comp in components:
+    for i, comp in enumerate(components):
         lo, hi = comp.bounds_fn(data)
+        lo, hi = list(lo), list(hi)
+        want = (constraints[i] if constraints and i < len(constraints) else None)
+        for j in range(comp.n_params):
+            if not want or j >= len(want) or want[j] is None:
+                continue
+            w_lo, w_hi = want[j]
+            if w_lo is not None:
+                lo[j] = float(w_lo)
+            if w_hi is not None:
+                hi[j] = float(w_hi)
+            if not lo[j] < hi[j]:
+                raise ValueError(
+                    f"Peak {i + 1} {comp.param_names[j]}: "
+                    f"minimum {lo[j]:.6g} must be below maximum {hi[j]:.6g}."
+                )
         lows.extend(lo)
         highs.extend(hi)
     return lows, highs
+
+
+def flatten_constraints(components: list[ModelSpec],
+                        constraints: Optional[list]) -> list:
+    """Per-parameter (lo, hi) of what the USER set, None where they set nothing.
+
+    Flat and in popt order, so it lines up with every other per-parameter array
+    and survives the same permutation.  Distinguishing a user's limit from the
+    automatic one is the whole point: only the former makes an interval
+    conditional, and only the former is reported as an imposition.
+    """
+    flat = []
+    for i, comp in enumerate(components):
+        want = (constraints[i] if constraints and i < len(constraints) else None)
+        for j in range(comp.n_params):
+            flat.append(want[j] if want and j < len(want) else None)
+    return flat
+
+
+def at_bound_flags(popt, lows, highs) -> list:
+    """Per parameter: 'lo', 'hi', or None — which limit the fit is sitting on.
+
+    A parameter at its limit was not measured.  Its value is the limit, and so
+    is the near edge of any interval around it, because every bootstrap refit
+    was handed the same box.
+    """
+    out = []
+    for p, lo, hi in zip(np.asarray(popt, dtype=float), lows, highs):
+        tol_lo = AT_BOUND_ATOL + AT_BOUND_RTOL * abs(float(lo))
+        tol_hi = AT_BOUND_ATOL + AT_BOUND_RTOL * abs(float(hi))
+        if np.isfinite(lo) and abs(p - float(lo)) <= tol_lo:
+            out.append("lo")
+        elif np.isfinite(hi) and abs(p - float(hi)) <= tol_hi:
+            out.append("hi")
+        else:
+            out.append(None)
+    return out
 
 
 def composite_guess(
