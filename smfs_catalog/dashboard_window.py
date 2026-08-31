@@ -640,24 +640,28 @@ class DashboardWindow(QMainWindow):
         hint.setWordWrap(True)
         body_l.addWidget(hint)
 
-        grid = QHBoxLayout()
         self._lists: dict[str, QListWidget] = {}
-        for key, label in [
-            ("users",       "Experimentalist"),
-            ("analytes",    "Analyte"),
-            ("solvents",    "Solvent"),
-            ("afm_units",   "Instrument"),
-            ("curve_types", "Experiment type"),
+        for row in [
+            [("users",        "Experimentalist"),
+             ("analytes",     "Analyte"),
+             ("solvents",     "Solvent"),
+             ("techniques",   "Technique")],
+            [("substrates",   "Substrate"),
+             ("sample_preps", "Sample prep"),
+             ("afm_units",    "Instrument"),
+             ("curve_types",  "Experiment type")],
         ]:
-            box = QGroupBox(label); lay = QVBoxLayout(box)
-            lst = QListWidget()
-            lst.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-            lst.setMaximumHeight(120)
-            lst.itemChanged.connect(self._on_scope_edit)
-            lay.addWidget(lst)
-            self._lists[key] = lst
-            grid.addWidget(box)
-        body_l.addLayout(grid)
+            grid = QHBoxLayout()
+            for key, label in row:
+                box = QGroupBox(label); lay = QVBoxLayout(box)
+                lst = QListWidget()
+                lst.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+                lst.setMaximumHeight(120)
+                lst.itemChanged.connect(self._on_scope_edit)
+                lay.addWidget(lst)
+                self._lists[key] = lst
+                grid.addWidget(box)
+            body_l.addLayout(grid)
 
         bot = QHBoxLayout()
         date_box = QGroupBox("Date range")
@@ -1164,6 +1168,9 @@ class DashboardWindow(QMainWindow):
                 users=scope.get("users") or None,
                 analytes=scope.get("analytes") or None,
                 solvents=scope.get("solvents") or None,
+                techniques=scope.get("techniques") or None,
+                substrates=scope.get("substrates") or None,
+                sample_preps=scope.get("sample_preps") or None,
                 afm_units=scope.get("afm_units") or None,
                 curve_types=scope.get("curve_types") or None,
                 date_from=scope.get("date_from"),

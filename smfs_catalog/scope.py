@@ -17,6 +17,9 @@ def new_scope() -> dict:
         "users": [],
         "analytes": [],
         "solvents": [],
+        "techniques": [],
+        "substrates": [],
+        "sample_preps": [],
         "afm_units": [],
         "curve_types": [],
         "date_from": None,
@@ -32,7 +35,8 @@ def new_scope() -> dict:
 def scope_to_query(scope: dict) -> dict:
     """Translate dashboard scope state into ``db.list_files`` arguments."""
     query = {}
-    for key in ("users", "analytes", "solvents", "afm_units", "curve_types"):
+    for key in ("users", "analytes", "solvents", "techniques", "substrates",
+                "sample_preps", "afm_units", "curve_types"):
         if scope.get(key):
             query[key] = list(scope[key])
     for key in ("date_from", "date_to", "search"):

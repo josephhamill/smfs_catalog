@@ -11,8 +11,9 @@
 # "Define metadata for these files..." — bulk-write sample metadata onto
 # every file in a pre-resolved path list.
 #
-# Descriptive sample metadata (experimentalist, analyte, solvent, instrument,
-# cantilever, technique) is file-level, same grain as the per-file instrument
+# Descriptive sample metadata (experimentalist, analyte, solvent, substrate,
+# sample prep, instrument, cantilever, technique) is file-level, same grain as
+# the per-file instrument
 # columns the scanner already parses. It is populated AFTER import: filter to
 # a cohort with the dashboard's existing scope filters, then open this dialog
 # to write typed values onto every file the current scope expresses.  This
@@ -36,6 +37,8 @@ _FIELDS: list[tuple[str, str]] = [
     ("experimentalist", "Experimentalist"),
     ("analyte",         "Analyte"),
     ("solvent",         "Solvent"),
+    ("substrate",       "Substrate"),
+    ("sample_prep",     "Sample prep"),
     ("afm_unit",        "Instrument"),
     ("cantilever",      "Cantilever"),
     ("technique",       "Technique"),
@@ -107,9 +110,10 @@ class BulkMetadataDialog(QDialog):
         """
         An EDITABLE combo seeded with the values already in the catalog.
 
-        These six fields are open classes — a new experimentalist arrives about
-        once a year, a new analyte more often — so the list can never be closed
-        and typing a genuinely new value must stay possible.  What the dropdown
+        These fields are open classes — a new experimentalist arrives about
+        once a year, a new analyte more often, and a sample prep is whatever
+        the bench did that week — so the list can never be closed and typing a
+        genuinely new value must stay possible.  What the dropdown
         removes is the *accidental* new value: "Anastasia" for "Anastasiia",
         a stray trailing space, a lowercase folder name.  Those do not read as
         errors anywhere — they read as a new person with no profile, no
