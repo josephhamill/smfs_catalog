@@ -680,11 +680,28 @@ class DashboardWindow(QMainWindow):
         df.addWidget(pick_btn)
         bot.addWidget(date_box)
 
-        name_box = QGroupBox("Filename contains")
+        name_box = QGroupBox("Filename or folder")
         nl = QVBoxLayout(name_box)
         self._search = QLineEdit()
-        self._search.setPlaceholderText("substring of filename or path…")
-        self._search.textChanged.connect(self._on_scope_edit)
+        self._search.setPlaceholderText("substring or glob, e.g. 26010[6-8] — press Enter")
+        self._search.setToolTip(
+            "Standard glob patterns, the same as any shell uses.\n"
+            "Matched anywhere in the file's full path, folders included, so\n"
+            "plain text works as a substring.\n"
+            "\n"
+            "  *       any characters\n"
+            "  ?       one character\n"
+            "  [6-8]   one character in that range — 26010[6-8]\n"
+            "  [!x]    one character, anything but\n"
+            "\n"
+            "Several patterns may be separated by commas; a file is in scope\n"
+            "if any of them matches.\n"
+            "\n"
+            "Press Enter to apply."
+        )
+        # Applied when the pattern is finished, not per keystroke: the
+        # intermediate states of a pattern mean something else entirely.
+        self._search.editingFinished.connect(self._on_scope_edit)
         nl.addWidget(self._search)
         bot.addWidget(name_box, 1)
 

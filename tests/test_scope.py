@@ -103,6 +103,23 @@ def test_facets_count_the_same_eligible_cohort_as_list_files(tmp_path):
     assert facets["analytes"] == [("DNA", 1), ("titin", 1)]
 
 
+def test_a_glob_in_the_search_reaches_the_database(tmp_path):
+    path = _catalog(tmp_path)
+    scope = {**new_scope(), "search": "[ab].ibw"}
+
+    rows = db.list_files(db_path=path, **scope_to_query(scope))
+    assert [row["path"] for row in rows] == ["/data/a.ibw", "/data/b.ibw"]
+
+    # A pattern narrows the cohort and cannot widen it past eligibility:
+    # /copy/a.ibw is the redundant copy of /data/a.ibw.
+    scope["search"] = "/copy/*"
+    assert db.list_files(db_path=path, **scope_to_query(scope)) == []
+
+    scope["search"] = "b.ibw,nothing_at_all"
+    rows = db.list_files(db_path=path, **scope_to_query(scope))
+    assert [row["path"] for row in rows] == ["/data/b.ibw"]
+
+
 def test_each_facet_is_cascaded_by_the_other_dimensions_not_itself(tmp_path):
     path = _catalog(tmp_path)
 
