@@ -40,10 +40,11 @@ Run with the smfs-catalog env, from the repo root:
 import json
 import os
 import sys
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tmpdirs                                              # noqa: E402
 
 from smfs_catalog import db as _db
 from smfs_catalog.provenance import cache_version
@@ -53,7 +54,7 @@ from smfs_catalog import roi_pipeline as _rp
 # rather than on the thing it tests (which is exactly what happened at v3->v4).
 from smfs_catalog.roi_events import _PAYLOAD_VERSION
 
-tmp = tempfile.mkdtemp(prefix="segment_override_")
+tmp = tmpdirs.mkdtemp(prefix="segment_override_")
 DB = os.path.join(tmp, "test.sqlite")
 _db.initialise(DB)
 

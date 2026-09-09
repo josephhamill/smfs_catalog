@@ -50,10 +50,11 @@ import os
 import re
 import sys
 import pathlib
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tmpdirs                                              # noqa: E402
 
 import checkstyle
 
@@ -162,7 +163,7 @@ app = QApplication.instance() or QApplication(sys.argv)
 
 from smfs_catalog import db as _db                # noqa: E402
 
-_tmp = tempfile.mkdtemp(prefix="smfs_sizing_")
+_tmp = tmpdirs.mkdtemp(prefix="smfs_sizing_")
 _DB = os.path.join(_tmp, "sizing.db")
 _db.initialise(_DB)
 

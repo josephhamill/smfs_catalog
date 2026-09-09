@@ -37,7 +37,6 @@ Run with the smfs-catalog env, from the repo root:
 import os
 import subprocess
 import sys
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,11 +47,12 @@ from smfs_catalog import crashlog
 # One shared idiom for these procedural guards — see checkstyle.py for why
 # `sys.exit(1)` at the bottom of a file was aborting the whole pytest run.
 import checkstyle                                          # noqa: E402
+import tmpdirs                                              # noqa: E402
 
 check = checkstyle.CheckRunner()
 
 
-_tmp = tempfile.mkdtemp(prefix="smfs_crashlog_test_")
+_tmp = tmpdirs.mkdtemp(prefix="smfs_crashlog_test_")
 
 
 def _db_path(name):

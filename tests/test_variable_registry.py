@@ -19,7 +19,6 @@ changed the gate.
 from __future__ import annotations
 
 import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -28,7 +27,9 @@ from smfs_catalog import db as _db
 from smfs_catalog import variables as _vars
 from smfs_catalog import criteria_gate as _gate
 
-DB = os.path.join(tempfile.mkdtemp(), "vars.db")
+import tmpdirs
+
+DB = os.path.join(tmpdirs.mkdtemp(), "vars.db")
 _db.initialise(DB)
 
 FULL = _db.normalize_path("/tank/testdata/vars/full.ibw")      # every source populated

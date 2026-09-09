@@ -33,12 +33,13 @@ The contract under test:
 """
 import os
 import sys
-import tempfile
 
 import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tmpdirs                                              # noqa: E402
 
 from PyQt6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication(sys.argv)
@@ -48,7 +49,7 @@ from smfs_catalog.provenance import cache_version
 from smfs_catalog import variables as _vars
 from smfs_catalog.variable_window import VariableStatsWindow
 
-tmp = tempfile.mkdtemp(prefix="landmark_ref_")
+tmp = tmpdirs.mkdtemp(prefix="landmark_ref_")
 DB = os.path.join(tmp, "test.sqlite")
 _db.initialise(DB)
 

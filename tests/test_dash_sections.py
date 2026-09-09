@@ -15,10 +15,11 @@ Run with the smfs-catalog env, from the repo root:
 """
 import os
 import sys
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tmpdirs                                              # noqa: E402
 
 from PyQt6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication(sys.argv)
@@ -30,7 +31,7 @@ import checkstyle                                          # noqa: E402
 
 check = checkstyle.CheckRunner()
 
-tmp = tempfile.mkdtemp(prefix="dashsec_")
+tmp = tmpdirs.mkdtemp(prefix="dashsec_")
 DB = os.path.join(tmp, "test.sqlite")
 _db.initialise(DB)
 

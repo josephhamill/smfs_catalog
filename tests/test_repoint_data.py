@@ -41,10 +41,11 @@ Run with the smfs-catalog env, from the repo root:
 """
 import os
 import sys
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tmpdirs                                              # noqa: E402
 
 from smfs_catalog import db as _db
 
@@ -52,7 +53,7 @@ import checkstyle                                          # noqa: E402
 
 check = checkstyle.CheckRunner()
 
-tmp = tempfile.mkdtemp(prefix="repoint_")
+tmp = tmpdirs.mkdtemp(prefix="repoint_")
 DB = os.path.join(tmp, "test.sqlite")
 _db.initialise(DB)
 

@@ -26,15 +26,16 @@ Run with the smfs-catalog env:
 """
 import os
 import sys
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import tmpdirs                                              # noqa: E402
+
 from smfs_catalog import db as _db
 from smfs_catalog import criteria_gate as _gate
 
-tmp = tempfile.mkdtemp(prefix="criteria_iso_")
+tmp = tmpdirs.mkdtemp(prefix="criteria_iso_")
 DB = os.path.join(tmp, "test.sqlite")
 _db.initialise(DB)
 

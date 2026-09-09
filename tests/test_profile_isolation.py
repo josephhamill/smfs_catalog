@@ -43,10 +43,11 @@ Run with the smfs-catalog env:
 import json
 import os
 import sys
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tmpdirs                                              # noqa: E402
 
 from PyQt6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication(sys.argv)
@@ -55,7 +56,7 @@ from smfs_catalog import db as _db
 from smfs_catalog.display_roi import ROIWindow
 from smfs_catalog.decomposition_window import DecompositionWindow
 
-tmp = tempfile.mkdtemp(prefix="profile_iso_")
+tmp = tmpdirs.mkdtemp(prefix="profile_iso_")
 DB = os.path.join(tmp, "test.sqlite")
 _db.initialise(DB)
 

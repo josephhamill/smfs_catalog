@@ -41,10 +41,11 @@ Run from the repo root:
 import inspect
 import os
 import sys
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tmpdirs                                              # noqa: E402
 
 from PyQt6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication(sys.argv)
@@ -54,7 +55,7 @@ from smfs_catalog.analysis_worker import AnalysisWorker, THROTTLE_MS
 from smfs_catalog import navigator_bar as nb
 from smfs_catalog.navigator_bar import NavigatorBar, WorkerNavBar
 
-tmp = tempfile.mkdtemp(prefix="navbar_")
+tmp = tmpdirs.mkdtemp(prefix="navbar_")
 DB = os.path.join(tmp, "test.sqlite")
 _db.initialise(DB)
 

@@ -51,7 +51,6 @@ import ast
 import json
 import re
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +63,7 @@ from smfs_catalog import export_utils as _export       # noqa: E402
 # One shared idiom for these procedural guards — see checkstyle.py for why
 # `sys.exit(1)` at the bottom of a file was aborting the whole pytest run.
 import checkstyle                                          # noqa: E402
+import tmpdirs                                              # noqa: E402
 
 check = checkstyle.CheckRunner()
 
@@ -124,7 +124,7 @@ check(
 )
 
 # ── (c)/(d) ExportGroup behaviour, against a real temp DB ────────────────────
-tmp = tempfile.mkdtemp()
+tmp = tmpdirs.mkdtemp()
 DB = str(Path(tmp) / "t.db")
 _db.initialise(DB)
 _export.set_export_dir_override(tmp, DB)
@@ -312,9 +312,9 @@ check("(g) the export folder is not stored on a per-experimentalist profile",
 # The behaviour those signatures exist to guarantee: the folder a person set
 # must survive the catalog gaining files owned by someone else. Per-owner
 # storage changes the answer on this exact sequence, silently.
-DB2 = str(Path(tempfile.mkdtemp()) / "t2.db")
+DB2 = str(Path(tmpdirs.mkdtemp()) / "t2.db")
 _db.initialise(DB2)
-chosen = tempfile.mkdtemp()
+chosen = tmpdirs.mkdtemp()
 _export.set_export_dir_override(chosen, DB2)
 conn = _db.get_connection(DB2)
 with conn:

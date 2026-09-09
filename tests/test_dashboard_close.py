@@ -29,10 +29,11 @@ Run with the smfs-catalog env, from the repo root:
 import csv
 import os
 import sys
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tmpdirs                                              # noqa: E402
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
@@ -42,7 +43,7 @@ from smfs_catalog import db as _db
 from smfs_catalog import dashboard_window as _dash
 from smfs_catalog.dashboard_window import DashboardWindow
 
-tmp = tempfile.mkdtemp(prefix="dashclose_")
+tmp = tmpdirs.mkdtemp(prefix="dashclose_")
 DB = os.path.join(tmp, "test.sqlite")
 _db.initialise(DB)
 

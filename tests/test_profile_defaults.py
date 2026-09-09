@@ -31,19 +31,20 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import tmpdirs                                              # noqa: E402
+
 from smfs_catalog import db as _db                      # noqa: E402
 from smfs_catalog import event_processor as _ep         # noqa: E402
 
 
 def _fresh_db() -> str:
-    path = os.path.join(tempfile.mkdtemp(prefix="smfs_defaults_"), "t.db")
+    path = os.path.join(tmpdirs.mkdtemp(prefix="smfs_defaults_"), "t.db")
     _db.initialise(path)
     return path
 
