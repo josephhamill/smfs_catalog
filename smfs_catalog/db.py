@@ -9,6 +9,7 @@
 
 import sqlite3
 import os
+import zlib
 import sys
 import platform
 from functools import lru_cache
@@ -111,6 +112,34 @@ _EVENT_HISTOGRAMS_SQL = """
         histogram   BLOB    NOT NULL,
         x_bins      INTEGER NOT NULL,
         f_bins      INTEGER NOT NULL,
+        params_json TEXT    NOT NULL DEFAULT '{}',
+        computed_at TEXT    NOT NULL,
+        PRIMARY KEY (file_id)
+    )
+"""
+
+# Per-file histogram of raw retract deflection.  Its own table rather than a row
+# in event_histograms: that one is keyed by file alone, so a curve cannot hold
+# both.  It is also a different kind of fact — no fit, no parameters, no verdict,
+# so it is written once at import for every qualifying curve and never
+# recomputed, where an event histogram is rebuilt whenever its grid changes.
+#
+# counts is zlib-compressed uint32.  These vectors are sparse — most of the grid
+# is empty for any one curve — so they compress by roughly an order of
+# magnitude, to a few hundred bytes each.  How much depends on how wide a
+# dataset's deflection range is: the widest measured runs ~800 B, which puts a
+# fully-binned catalog of this size around 110 MB against its own ~9 GB.
+#
+# n_below/n_above record samples outside the grid, which the binning drops.
+# Without them a curve that escaped the range would look like a curve pressed
+# against its edge.
+_DEFLECTION_HISTOGRAMS_SQL = """
+    CREATE TABLE IF NOT EXISTS deflection_histograms (
+        file_id     INTEGER NOT NULL REFERENCES files(id),
+        counts      BLOB    NOT NULL,
+        n_bins      INTEGER NOT NULL,
+        n_below     INTEGER NOT NULL,
+        n_above     INTEGER NOT NULL,
         params_json TEXT    NOT NULL DEFAULT '{}',
         computed_at TEXT    NOT NULL,
         PRIMARY KEY (file_id)
@@ -308,6 +337,8 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
 
         conn.execute(_EVENT_HISTOGRAMS_SQL)
 
+        conn.execute(_DEFLECTION_HISTOGRAMS_SQL)
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS event_map (
                 file_id      INTEGER NOT NULL REFERENCES files(id),
@@ -487,7 +518,13 @@ def set_file_descriptors_bulk(
 _ANALYSIS_TABLES: tuple[str, ...] = (
     "analysis_results", "event_histograms", "event_map",
 )
-_FILE_CHILD_TABLES: tuple[str, ...] = ("file_metadata", "analysis_queue")
+# Rows that die with the file rather than with its analysis.  deflection_
+# histograms is here and not above deliberately: it is measured at import from
+# the samples themselves, so clearing a file's analysis to re-run it must not
+# throw it away — nothing about a new verdict changes what the deflection was.
+_FILE_CHILD_TABLES: tuple[str, ...] = (
+    "file_metadata", "analysis_queue", "deflection_histograms",
+)
 
 
 def _sql_chunks(seq: list, size: int = 800):
@@ -1789,6 +1826,128 @@ def get_event_histogram(
     return np.frombuffer(row["histogram"], dtype=np.uint32).reshape(
         row["x_bins"], row["f_bins"]
     ).copy()
+
+
+def write_deflection_histogram(
+    file_id:     int,
+    counts:      np.ndarray,
+    n_below:     int,
+    n_above:     int,
+    params_json: str,
+    db_path:     str = DEFAULT_DB_PATH,
+    conn:        Optional[sqlite3.Connection] = None,
+) -> None:
+    """Store one curve's retract-deflection bin counts."""
+    write_deflection_histograms_bulk(
+        [(file_id, counts, n_below, n_above, params_json)], db_path, conn=conn)
+
+
+def write_deflection_histograms_bulk(
+    items:   list,
+    db_path: str = DEFAULT_DB_PATH,
+    conn:    Optional[sqlite3.Connection] = None,
+) -> None:
+    """Write per-curve deflection histograms in a single transaction.
+
+    Items are (file_id, counts, n_below, n_above, params_json).  Import writes
+    thousands of these in one pass, so it hands in its own connection.
+    """
+    now = _now()
+    rows = [
+        (file_id, zlib.compress(np.asarray(counts, dtype=np.uint32).tobytes(), 6),
+         int(np.asarray(counts).size), int(n_below), int(n_above), params_json, now)
+        for file_id, counts, n_below, n_above, params_json in items
+    ]
+    if not rows:
+        return
+    c = conn or get_connection(db_path)
+    try:
+        with c:
+            c.executemany("""
+                INSERT OR REPLACE INTO deflection_histograms
+                    (file_id, counts, n_bins, n_below, n_above,
+                     params_json, computed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, rows)
+    finally:
+        if conn is None:
+            c.close()
+
+
+def get_deflection_histogram(
+    file_id:     int,
+    params_json: str,
+    db_path:     str = DEFAULT_DB_PATH,
+    conn:        Optional[sqlite3.Connection] = None,
+) -> Optional[tuple[np.ndarray, int, int]]:
+    """(counts, n_below, n_above) for one curve, or None if not on this grid."""
+    c = conn or get_connection(db_path)
+    try:
+        row = c.execute(
+            "SELECT counts, n_bins, n_below, n_above FROM deflection_histograms "
+            "WHERE file_id = ? AND params_json = ?",
+            (file_id, params_json),
+        ).fetchone()
+    finally:
+        if conn is None:
+            c.close()
+    if row is None:
+        return None
+    counts = np.frombuffer(zlib.decompress(row["counts"]), dtype=np.uint32)
+    return counts.reshape(row["n_bins"]).copy(), row["n_below"], row["n_above"]
+
+
+def sum_deflection_histograms(
+    paths:       list,
+    params_json: str,
+    n_bins:      int,
+    db_path:     str = DEFAULT_DB_PATH,
+    conn:        Optional[sqlite3.Connection] = None,
+) -> tuple[np.ndarray, int, int, int]:
+    """Population histogram over `paths`: (counts, n_below, n_above, n_curves).
+
+    Rows are accumulated as they come off the cursor rather than collected into
+    an (N, n_bins) array, so a population of any size costs one row of memory.
+
+    uint64 because per-curve counts are safely uint32 — a bin holds at most the
+    curve's own samples — but a sum over a large population would wrap it.
+
+    A row whose stored vector is not `n_bins` long is skipped rather than added.
+    numpy would broadcast a length-1 array across every bin and return a
+    population histogram nobody measured; the count of what was actually summed
+    comes back with the total, so a skipped row shows up as a shortfall instead
+    of as a plausible answer.
+    """
+    total   = np.zeros(n_bins, dtype=np.uint64)
+    below = above = n_curves = 0
+    if not paths:
+        return total, below, above, n_curves
+    keys = [normalize_path(p) for p in paths]
+    c = conn or get_connection(db_path)
+    try:
+        for chunk in _sql_chunks(keys):
+            marks = ",".join("?" * len(chunk))
+            cur = c.execute(
+                f"SELECT d.counts, d.n_bins, d.n_below, d.n_above "
+                f"FROM deflection_histograms d JOIN files f ON f.id = d.file_id "
+                f"WHERE d.params_json = ? AND f.path IN ({marks})",
+                (params_json, *chunk),
+            )
+            for row in cur:
+                if row["n_bins"] != n_bins:
+                    continue
+                counts = np.frombuffer(
+                    zlib.decompress(row["counts"]), dtype=np.uint32)
+                if counts.size != n_bins:
+                    continue
+                total   += counts
+                below   += row["n_below"]
+                above   += row["n_above"]
+                n_curves += 1
+    finally:
+        if conn is None:
+            c.close()
+    return total, below, above, n_curves
 
 
 def write_event_map(

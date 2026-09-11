@@ -23,6 +23,7 @@ import json
 
 import numpy as np
 
+from .histogram_binning import counts_in_range
 from .models import normalize_wlc
 
 # ── WLC-normalised 2DH grid ───────────────────────────────────────────────────
@@ -36,6 +37,73 @@ PHYS_X_BINS  = 128
 PHYS_F_BINS  = 128
 PHYS_X_RANGE = (-200.0, 400.0)   # nm, relative to the selected anchor
 PHYS_F_RANGE = (  -200.0, 600.0)  # pN
+
+
+# ── Retract-deflection 1DH grid ──────────────────────────────────────────────
+# A histogram of raw retract deflection, on ONE grid for every curve in the
+# catalog.  Unlike the 2DH grids above it takes no user parameters and depends
+# on no fit — it is a property of the file — so it is computed once at import
+# and never recomputed.
+#
+# Fixed edges are what make the counts summable: a population histogram is the
+# element-wise sum of its members' rows, and rows binned on different edges
+# cannot be added.  Changing either constant changes the grid key, which makes
+# every stored row a cache miss that re-bins lazily.
+#
+# Range covers the whole catalog: sampling 400 non-events across all eight
+# experimentalists put the extremes at -96 nm and +218 nm.  Out-of-range samples
+# are counted rather than dropped, so a curve that escapes it says so.
+#
+# Bin width is set by what the histogram has to resolve, not by how many bars
+# fit on screen.  Median baseline RMS over the non-event population is ~0.19 nm,
+# so a flat curve's deflection distribution is about 1 nm wide; a wider bin
+# collapses it to a single bar and makes "flat" indistinguishable from
+# "structured", which is the only thing this histogram is for.
+DEFL_HIST_RANGE = (-100.0, 250.0)   # nm
+DEFL_HIST_BINS  = 1400              # 0.25 nm
+
+
+def defl_grid_params(
+    bins:  int   = DEFL_HIST_BINS,
+    range_: tuple = DEFL_HIST_RANGE,
+) -> str:
+    """Cache key for the deflection 1DH grid."""
+    return json.dumps(
+        {"type": "defl", "bins": bins,
+         "min": range_[0], "max": range_[1], "v": 1},
+        separators=(",", ":"),
+    )
+
+
+def defl_bin_edges(
+    bins:  int   = DEFL_HIST_BINS,
+    range_: tuple = DEFL_HIST_RANGE,
+) -> np.ndarray:
+    """The grid's bin edges — one definition, shared by the binning and the
+    panel that positions bars along it."""
+    return np.linspace(range_[0], range_[1], bins + 1)
+
+
+def compute_deflection_histogram(
+    defl: np.ndarray,
+    bins:  int   = DEFL_HIST_BINS,
+    range_: tuple = DEFL_HIST_RANGE,
+) -> tuple[np.ndarray, int, int]:
+    """(counts, n_below, n_above) for one curve's retract deflection in nm.
+
+    Counts are uint32: a bin holds at most the curve's sample count, far inside
+    the type.  Population sums are accumulated in uint64 by the caller.
+
+    Non-finite samples are in none of the bins and are not evidence of the range
+    being wrong, so they are excluded from all three numbers.  The out-of-range
+    tallies are kept because counts_in_range drops those samples silently, and a
+    curve escaping the grid has to be able to say so.
+    """
+    v = np.asarray(defl, dtype=float)
+    v = v[np.isfinite(v)]
+    lo, hi = range_
+    counts = counts_in_range(v, defl_bin_edges(bins, range_))
+    return counts.astype(np.uint32), int((v < lo).sum()), int((v > hi).sum())
 
 
 # ── The 2DH view defaults, in ONE place ───────────────────────────────────────

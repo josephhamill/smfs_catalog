@@ -11,11 +11,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
+import tmpdirs
+
 from smfs_catalog import class_lineplot_window as _window
+from smfs_catalog import db as _real_db
 from smfs_catalog.curve_loader import LoadError
 
 
 _app = QApplication.instance() or QApplication([])
+
+# A real catalog, because the window reads the deflection-histogram store even
+# when its queue listing is stubbed. Empty, so both populations sum to nothing.
+_DB = os.path.join(tmpdirs.mkdtemp(prefix="smfs_nonevents_"), "catalog.db")
+_real_db.initialise(_DB)
 
 
 def _row(path: str, event: str) -> dict:
@@ -43,7 +51,7 @@ def test_browser_filters_to_non_events_and_loads_only_the_selected_curve(monkeyp
         )
 
     monkeypatch.setattr(_window, "load_force_curve", load)
-    win = _window.ClassLinePlotWindow("non_event", "unused.sqlite")
+    win = _window.ClassLinePlotWindow("non_event", _DB)
     try:
         assert win.windowTitle() == "SMFS — Non-events"
         assert [row["path"] for row in win._rows] == ["/data/negative.ibw"]
@@ -56,7 +64,7 @@ def test_browser_filters_to_non_events_and_loads_only_the_selected_curve(monkeyp
 def test_empty_state_disables_actions_and_refresh_reports_load_failure(monkeypatch):
     rows = []
     monkeypatch.setattr(_window._db, "list_queue", lambda _db: rows)
-    win = _window.ClassLinePlotWindow("non_event", "unused.sqlite")
+    win = _window.ClassLinePlotWindow("non_event", _DB)
     try:
         assert not win._btn_auto_fwd.isEnabled()
         assert not win._export_btn.isEnabled()
@@ -79,7 +87,7 @@ def test_empty_state_disables_actions_and_refresh_reports_load_failure(monkeypat
 
 def test_browser_rejects_verdicts_it_does_not_mean_to_display():
     try:
-        _window.ClassLinePlotWindow("event", "unused.sqlite")
+        _window.ClassLinePlotWindow("event", _DB)
     except ValueError as exc:
         assert "non_event" in str(exc)
     else:

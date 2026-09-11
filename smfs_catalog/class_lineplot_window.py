@@ -9,12 +9,14 @@
 # smfs_catalog/class_lineplot_window.py
 #
 # ClassLinePlotWindow — inspection window for the stage-1 non-event cohort.
-# Non-events have no well-defined rupture-force × contour-length summary.
-# This window makes the negative cohort inspectable without inventing an
-# aggregate quantity: one retract deflection-vs-piezo trace is shown at a time.
+# Non-events have no well-defined rupture-force × contour-length summary, so
+# one retract deflection-vs-piezo trace is shown at a time, beside the one
+# aggregate a non-event does support: the distribution of its deflection.
 #
 # Scoped to queue ∩ non-event, pre-filled from the DB.  Curves are
-# loaded lazily on selection — one at a time, never the whole cohort.
+# loaded lazily on selection — one at a time, never the whole cohort.  The
+# population histograms cost no curve reads at all: they are summed from the
+# per-file rows measured at import.
 #
 # Single-click a row -> plot inline.  Double-click -> open in the full raw
 # curve viewer via view_file_requested.
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -48,6 +51,7 @@ from .export_utils import slug as _slug
 from .curve_loader import LoadError, load_force_curve
 from .qt_utils import _make_session_header, set_si_label, fit_on_screen
 from . import quantities as _quant
+from . import event_processor as _ep
 # This window drives its OWN QTimer over its own curve list — it is not the
 # analysis worker's playhead, so it shares navigator_bar's slider maths but
 # deliberately not its NavigatorBar.
@@ -89,6 +93,9 @@ class ClassLinePlotWindow(QMainWindow):
         self._rows: list[dict] = []
         self._index          = -1
         self._auto_dir       = 1
+        self._cohort_paths: list[str] = []
+        self._event_paths:  list[str] = []
+        self._cohort_sig = None
 
         self._nav_timer = QTimer(self)
         self._nav_timer.timeout.connect(self._auto_step)
@@ -115,9 +122,12 @@ class ClassLinePlotWindow(QMainWindow):
 
         purpose = QLabel(
             "Classifier-negative audit: inspect every curve that was analysed "
-            "but had no validated rupture event. No aggregate distribution is "
-            "shown because no scientifically justified non-event summary has "
-            "been defined."
+            "but had no validated rupture event. Beside each trace is the "
+            "distribution of its retract deflection, against the same "
+            "distribution for the whole negative cohort and for the events — "
+            "a negative population shaped like the positive one is evidence "
+            "the criteria are not separating on deflection. No rupture-force "
+            "or contour-length summary is shown: a non-event has neither."
         )
         purpose.setWordWrap(True)
         purpose.setStyleSheet(style.qss_inset())
@@ -134,8 +144,6 @@ class ClassLinePlotWindow(QMainWindow):
         plot_root.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(plot_panel)
 
-        # This is the complete scientific surface. Aggregate panels belong
-        # here only after their interpretation has been established.
         self._plot = pg.PlotWidget()
         set_si_label(self._plot, "bottom", "Piezo",      _quant.NM)
         set_si_label(self._plot, "left",   "Deflection", _quant.NM)
@@ -147,6 +155,8 @@ class ClassLinePlotWindow(QMainWindow):
         self._status_lbl.setFont(font)
         plot_root.addWidget(self._status_lbl)
 
+        outer.addWidget(self._build_hist_panel(font))
+
         self._list = QListWidget()
         self._list.setMinimumWidth(140)
         self._list.setMaximumWidth(240)
@@ -156,9 +166,151 @@ class ClassLinePlotWindow(QMainWindow):
         outer.addWidget(self._list)
         outer.setStretchFactor(0, 1)
         outer.setStretchFactor(1, 0)
-        outer.setSizes([860, 240])
+        outer.setStretchFactor(2, 0)
+        outer.setSizes([620, 240, 240])
 
         self._populate()
+
+    # ── Deflection histogram panel ────────────────────────────────────────────
+
+    def _build_hist_panel(self, font) -> QWidget:
+        """Deflection distribution beside the trace, on the trace's own Y axis.
+
+        Answers the question the single trace cannot: is this curve flat, and
+        is the negative population as a whole flat? The event cohort is drawn
+        alongside because that comparison is the actual diagnostic — two
+        populations with the same deflection distribution mean the criteria
+        separating them are not separating on deflection at all.
+
+        Everything is plotted as a FRACTION of each series' own samples. One
+        curve against thousands cannot share a count axis, and the fraction is
+        the comparable quantity anyway.
+
+        The fraction axis is LOGARITHMIC. A non-event is mostly flat baseline,
+        so on a linear axis one bin holds nearly every sample and the whole
+        distribution renders as a single spike — the tails, which are the only
+        place structure could show, are drawn one pixel wide. The question this
+        panel answers lives four or five decades below the peak.
+
+        Steps rather than filled bars: three overlapping series are unreadable
+        filled, and at 0.25 nm bins a step outline IS the histogram.
+
+        The Y axis is linked to the trace, so a bin lines up with the deflection
+        it describes and both panels zoom together.
+        """
+        panel = QWidget()
+        col = QVBoxLayout(panel)
+        col.setContentsMargins(0, 0, 0, 0)
+
+        self._hist_plot = pg.PlotWidget()
+        self._hist_plot.showGrid(x=True, y=True, alpha=0.2)
+        self._hist_plot.setLabel("bottom", "Fraction of samples")
+        self._hist_plot.getPlotItem().hideAxis("left")
+        self._hist_plot.setLogMode(x=True, y=False)
+        # A log axis carries its own decades; an SI prefix on top of them would
+        # relabel 10^-3 as "1" and hide the factor in the axis title.
+        self._hist_plot.getPlotItem().getAxis("bottom").enableAutoSIPrefix(False)
+        self._hist_plot.setYLink(self._plot)
+
+        # Staircase corners: every bin edge twice, so a count spans its bin
+        # rather than being drawn at a point in the middle of it.
+        edges = _ep.defl_bin_edges()
+        self._hist_steps = np.repeat(edges, 2)[1:-1]
+
+        # Added back to front: the populations are context, the current curve is
+        # the subject and must stay legible on top of them.
+        self._hist_events = self._hist_plot.plot(
+            [], [], pen=pg.mkPen(style.SIG_APPROACH, width=1))
+        self._hist_cohort = self._hist_plot.plot(
+            [], [], pen=pg.mkPen(150, 150, 150, width=2))
+        self._hist_curve = self._hist_plot.plot(
+            [], [], pen=pg.mkPen(style.SIG_RETRACT, width=1))
+
+        col.addWidget(self._hist_plot, stretch=1)
+        self._hist_lbl = QLabel("")
+        self._hist_lbl.setWordWrap(True)
+        self._hist_lbl.setFont(font)
+        col.addWidget(self._hist_lbl)
+        return panel
+
+    def _draw_hist(self, item, counts) -> None:
+        """Draw one series as a staircase of per-bin fractions.
+
+        Empty bins become NaN rather than zero: on a log axis zero has no
+        position, and a gap is the honest picture of a bin nothing landed in.
+        """
+        total = float(np.asarray(counts).sum())
+        if total <= 0:
+            item.setData([], [])
+            return
+        frac = np.asarray(counts, dtype=float) / total
+        frac[frac <= 0] = np.nan
+        item.setData(np.repeat(frac, 2), self._hist_steps)
+
+    def _set_curve_histogram(self, defl) -> None:
+        """Bin the curve already in hand — no second read of the file."""
+        counts, _below, _above = _ep.compute_deflection_histogram(defl)
+        self._draw_hist(self._hist_curve, counts)
+
+    def _clear_curve_histogram(self) -> None:
+        self._hist_curve.setData([], [])
+
+    def _refresh_population_histograms(self) -> None:
+        """Sum the stored per-curve rows for both cohorts.
+
+        Skipped when neither cohort has changed since the last sum: refresh()
+        fires on every batch the worker classifies, and summing a full queue
+        measures ~200 ms on the GUI thread — the one cost this panel could
+        plausibly impose.
+
+        Cohort membership is not the only thing that can change the answer,
+        though: a backfill adds rows for curves already in the cohort. Showing
+        the window clears the cache for exactly that reason.
+        """
+        sig = (tuple(self._cohort_paths), tuple(self._event_paths))
+        if sig == self._cohort_sig:
+            return
+        self._cohort_sig = sig
+
+        key   = _ep.defl_grid_params()
+        bins  = _ep.DEFL_HIST_BINS
+        conn  = _db.get_connection(self._db_path)
+        try:
+            cohort, below, above, n_binned = _db.sum_deflection_histograms(
+                self._cohort_paths, key, bins, self._db_path, conn=conn)
+            events, _eb, _ea, n_events = _db.sum_deflection_histograms(
+                self._event_paths, key, bins, self._db_path, conn=conn)
+        finally:
+            conn.close()
+
+        self._draw_hist(self._hist_cohort, cohort)
+        self._draw_hist(self._hist_events, events)
+        self._hist_lbl.setText(
+            self._hist_caption(n_binned, below, above, n_events))
+
+    def _hist_caption(
+        self, n_binned: int, below: int, above: int, n_events: int
+    ) -> str:
+        """What the bars are, and what is missing from them.
+
+        A population drawn from only part of its cohort is not the population,
+        so the shortfall is stated rather than left to look complete.
+        """
+        n_cohort = len(self._cohort_paths)
+        if n_cohort == 0:
+            return ""
+        parts = [f"Non-events: {n_binned:,} of {n_cohort:,} binned"]
+        if n_binned < n_cohort:
+            parts.append(
+                f"{n_cohort - n_binned:,} not yet measured — "
+                f"re-check catalogued files to fill them in")
+        if n_events:
+            parts.append(f"events: {n_events:,}")
+        if below or above:
+            lo, hi = _ep.DEFL_HIST_RANGE
+            parts.append(
+                f"{below + above:,} samples outside {lo:g}–{hi:g} nm")
+        return " · ".join(parts)
 
     # ── Navigation row (copied from WlcViewWindow) ────────────────────────────
 
@@ -227,10 +379,14 @@ class ClassLinePlotWindow(QMainWindow):
     def export_provenance(self) -> dict:
         """This window's settings, for an export manifest — same protocol
         method as the other exporting windows."""
+        lo, hi = _ep.DEFL_HIST_RANGE
         return {
-            "window":         "class_lineplot",
-            "classification": self._classification,
-            "cohort":         "queue ∩ classification",
+            "window":            "class_lineplot",
+            "classification":    self._classification,
+            "cohort":            "queue ∩ classification",
+            "defl_hist_bins":    _ep.DEFL_HIST_BINS,
+            "defl_hist_min_nm":  lo,
+            "defl_hist_max_nm":  hi,
         }
 
     def _on_export(self) -> None:
@@ -256,8 +412,6 @@ class ClassLinePlotWindow(QMainWindow):
                      for r in self._rows])
         QMessageBox.information(self, "Export", g.message())
 
-    # ── Placeholder panel ─────────────────────────────────────────────────────
-
     # ── Population ─────────────────────────────────────────────────────────────
 
     def refresh(self) -> None:
@@ -270,8 +424,12 @@ class ClassLinePlotWindow(QMainWindow):
         # left off instead of snapping back to the top.
         prev_path = self._current_path()
 
-        self._rows = [r for r in _db.list_queue(self._db_path)
-                      if r["event"] == self._classification]
+        # One queue read serves both cohorts: this window lists the negatives,
+        # and the histogram panel draws the positives beside them for contrast.
+        queue = _db.list_queue(self._db_path)
+        self._rows = [r for r in queue if r["event"] == self._classification]
+        self._cohort_paths = [r["path"] for r in self._rows]
+        self._event_paths  = [r["path"] for r in queue if r["event"] == "event"]
         self._list.blockSignals(True)
         self._list.clear()
         for row in self._rows:
@@ -283,6 +441,8 @@ class ClassLinePlotWindow(QMainWindow):
         self._count_lbl.setText(
             f"{n_rows} non-event curve{'s' if n_rows != 1 else ''} in queue"
         )
+
+        self._refresh_population_histograms()
 
         if not self._rows:
             self._stop_auto()
@@ -411,11 +571,24 @@ class ClassLinePlotWindow(QMainWindow):
             self._status_lbl.setText(f"Could not load this curve: {exc}")
             return
         self._curve.setData(curve.piezo_retr, curve.defl_retr)
+        self._set_curve_histogram(curve.defl_retr)
         self._plot.setTitle(name)
 
     def _clear_plot(self) -> None:
         self._curve.setData([], [])
         self._plot.setTitle("")
+        self._clear_curve_histogram()
+
+    def showEvent(self, event) -> None:
+        """Re-sum the populations on every show.
+
+        Curves already in the cohort can acquire histograms after the fact,
+        when a re-check measures files imported before the store existed. That
+        does not change cohort membership, so nothing else would notice.
+        """
+        super().showEvent(event)
+        self._cohort_sig = None
+        self._refresh_population_histograms()
 
     def _on_double_click(self, item: QListWidgetItem) -> None:
         path = item.data(Qt.ItemDataRole.UserRole)
