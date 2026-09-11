@@ -47,6 +47,7 @@ from .models import wlc
 from . import sample_marks
 from . import style
 from .widgets import SampleMarksToggle
+from .navigation import build_go_to_row
 from .qt_utils import _make_session_header, set_si_label, fit_on_screen
 from . import quantities as _quant
 # This window drives its OWN QTimer over its own curve list — it is not the
@@ -169,26 +170,10 @@ class WlcViewWindow(QMainWindow):
         nav.addSpacing(16)
         nav.addWidget(self._fname_label)
         nav.addStretch()
-        # Cross-window jumps for this curve: Raw (the scan window), ROI (the
-        # detection window), Dashboard.  Raw/ROI need a linked scan window; the
-        # dashboard is a singleton found among the top-level windows.
-        nav.addWidget(QLabel("Go to:"))
-        # Raw/ROI route through the dashboard, which opens or reuses the
-        # singleton viewer. The directly linked raw window remains a fallback.
-        self._go_raw_btn = QPushButton("Raw")
-        self._go_raw_btn.setToolTip("Pause analysis and open this curve in the scan (raw) window")
-        self._go_raw_btn.clicked.connect(self._on_go_to_scan)
-        nav.addWidget(self._go_raw_btn)
-
-        self._go_roi_btn = QPushButton("ROI")
-        self._go_roi_btn.setToolTip("Open the ROI detection window on this curve")
-        self._go_roi_btn.clicked.connect(self._on_go_to_roi)
-        nav.addWidget(self._go_roi_btn)
-
-        self._go_dash_btn = QPushButton("Dashboard")
-        self._go_dash_btn.setToolTip("Bring the dashboard window to the front")
-        self._go_dash_btn.clicked.connect(self._on_go_to_dashboard)
-        nav.addWidget(self._go_dash_btn)
+        go_row, self._go_btns = build_go_to_row(
+            self, self._current_path, raw_win_fn=lambda: self._raw_win,
+            decomp=True)
+        nav.addLayout(go_row)
 
         nav.addStretch()
         self._export_btn = QPushButton("Export fits…")
@@ -397,55 +382,11 @@ class WlcViewWindow(QMainWindow):
 
     # ── Scan window link ──────────────────────────────────────────────────────
 
-    def _find_dashboard(self):
-        """Locate the singleton dashboard among the app's top-level windows.
-        (The fit window is always reached from the dashboard, so it is alive.)"""
-        from PyQt6.QtWidgets import QApplication
-        for w in QApplication.topLevelWidgets():
-            if type(w).__name__ == "DashboardWindow":
-                return w
+    def _current_path(self) -> str | None:
+        """The path of the curve on screen, for the Go to: row."""
+        if 0 <= self._index < len(self._event_paths):
+            return self._event_paths[self._index]
         return None
-
-    def _on_go_to_scan(self) -> None:
-        if not self._event_paths:
-            return
-        path = self._event_paths[self._index]
-        # Prefer the dashboard (opens/reuses the singleton viewer on demand); fall
-        # back to a directly-linked raw window if one was wired in.
-        dash = self._find_dashboard()
-        if dash is not None and hasattr(dash, "reveal_raw_at"):
-            dash.reveal_raw_at(path)
-            return
-        if self._raw_win is not None and self._raw_win.go_to_path(path):
-            return
-        self._warn_no_target("scan (raw)")
-
-    def _on_go_to_roi(self) -> None:
-        if not self._event_paths:
-            return
-        path = self._event_paths[self._index]
-        dash = self._find_dashboard()
-        if dash is not None and hasattr(dash, "reveal_roi_at"):
-            dash.reveal_roi_at(path)
-            return
-        if self._raw_win is not None:
-            opener = getattr(self._raw_win, "open_roi_window", None)
-            if callable(opener):
-                opener()
-            self._raw_win.go_to_path(path)
-            return
-        self._warn_no_target("ROI")
-
-    def _on_go_to_dashboard(self) -> None:
-        dash = self._find_dashboard()
-        if dash is not None:
-            dash.show()
-            dash.raise_()
-            dash.activateWindow()
-
-    def _warn_no_target(self, what: str) -> None:
-        QMessageBox.information(
-            self, f"Go to {what}", f"No {what} window is available.")
 
     # ── Navigation ────────────────────────────────────────────────────────────
 

@@ -427,6 +427,21 @@ class RawCurveWindow(QWidget):
         self._show_roi_window()
         return True
 
+    def open_decomp_window(self) -> bool:
+        """Public entry point (used by the inspection windows' 'Decomp' button)
+        to reveal the decomposition window on the current curve.  Mirrors
+        open_roi_window, except that this window is built on demand rather than
+        wired in, so the answer is False only when it is unavailable entirely.
+
+        The Decomp button is checkable and reflects the window's state, so it is
+        checked here rather than left disagreeing with what is on screen."""
+        self._toggle_decomp(True)
+        if self._decomp_win is None:
+            return False
+        self._btn_decomp.setChecked(True)
+        self._decomp_win.activateWindow()
+        return True
+
     def _show_roi_window(self) -> None:
         if self._roi_win is not None:
             self._roi_win.show()
