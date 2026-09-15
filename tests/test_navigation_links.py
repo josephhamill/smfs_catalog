@@ -11,11 +11,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
+import tmpdirs
+
 from smfs_catalog import class_lineplot_window as _window
+from smfs_catalog import db as _real_db
 from smfs_catalog import navigation
 
 
 _app = QApplication.instance() or QApplication([])
+
+_DB = os.path.join(tmpdirs.mkdtemp(prefix="smfs_navlinks_"), "catalog.db")
+_real_db.initialise(_DB)
 
 
 class _FakeDashboard:
@@ -52,7 +58,7 @@ def test_each_button_reveals_the_current_curve_in_its_own_window(monkeypatch):
     dash = _FakeDashboard()
     monkeypatch.setattr(navigation, "find_dashboard", lambda: dash)
 
-    win = _window.ClassLinePlotWindow("non_event", "unused.sqlite")
+    win = _window.ClassLinePlotWindow("non_event", _DB)
     try:
         raw_btn, roi_btn, decomp_btn = win._go_btns
         raw_btn.click()
@@ -76,7 +82,7 @@ def test_each_button_reveals_the_current_curve_in_its_own_window(monkeypatch):
 
 def test_an_empty_cohort_cannot_send_a_curve_anywhere(monkeypatch):
     monkeypatch.setattr(_window._db, "list_queue", lambda _db: [])
-    win = _window.ClassLinePlotWindow("non_event", "unused.sqlite")
+    win = _window.ClassLinePlotWindow("non_event", _DB)
     try:
         assert win._current_path() is None
         assert not any(btn.isEnabled() for btn in win._go_btns)

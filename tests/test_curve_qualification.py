@@ -221,6 +221,10 @@ def test_scanner_and_loader_share_one_qualifier():
     from smfs_catalog import scanner
 
     assert scanner.qualify_wave is cl.qualify_wave
+    # Same argument for what the retract deflection IS: the scanner bins it at
+    # import and the loader hands it to every plot, and a histogram of one
+    # quantity filed against a trace of another is worse than no histogram.
+    assert scanner.retract_deflection_nm is cl.retract_deflection_nm
 
     # Nobody re-derives the modality or the turnaround with their own reduction.
     for mod in (scanner, cl):

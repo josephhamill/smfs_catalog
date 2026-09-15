@@ -717,6 +717,13 @@ def _lane_force_extension(
     if _db.load_analysis_params(db_path).revision != param_set.revision:
         return _lane_force_extension(file_id, path, db_path, conn=conn)
 
+    # The curve is already in memory on this path, so its deflection histogram
+    # is one more small calculation. It takes no parameters, so it is stored
+    # once and only computed here when no row exists yet. The fast path above
+    # never loads the curve and does not do this.
+    _db.get_or_store_deflection_histogram(
+        file_id, curve.defl_retr, db_path, conn=conn)
+
     # Cache the verdict so the next up-to-date pass short-circuits before load.
     _db.write_analysis_result(
         file_id, "event",

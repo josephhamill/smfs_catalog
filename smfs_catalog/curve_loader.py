@@ -144,6 +144,31 @@ def piezo_column(channels: dict[str, int]) -> int | None:
     return None
 
 
+def retract_deflection_nm(wdata, labels, idx_turn: int) -> np.ndarray:
+    """Retract-half cantilever deflection in nm, baseline-subtracted.
+
+    The ONE definition of what `defl_retr` is. load_force_curve builds its own
+    retract half from this, and the scanner bins the same array at import, so
+    the histogram stored against a file and the trace drawn from it cannot be
+    two different quantities.
+
+    Baseline is the first sample, following pysmfs. That is a reference, not a
+    fitted baseline — the fitted one lives in analysis_results.offset_retr and
+    is applied by callers that need it.
+
+    Requires a wave qualify_wave has already accepted: `idx_turn` is its
+    turnaround, and the deflection channel is assumed present.
+
+    Histograms of this array are stored per file and not recomputed on their
+    own. Changing what it returns — the baseline, the scale, where the split
+    falls — means bumping "v" in event_processor.defl_grid_params, or the
+    stored histograms keep describing the old quantity.
+    """
+    channels   = channel_map(labels, wdata.shape[1])
+    deflection = wdata[:, channels[CH_DEFL]]
+    return (deflection[idx_turn + 1:] - deflection[0]) * 1e9
+
+
 @dataclass(frozen=True)
 class Qualification:
     """
@@ -665,7 +690,7 @@ def load_force_curve(path: str) -> ForceCurve:
     piezo_appr = piezo[:idx_turn]            * -1e9
     defl_appr  = (deflection[:idx_turn]      - baseline) * 1e9
     piezo_retr = piezo[idx_turn + 1:]        * -1e9
-    defl_retr  = (deflection[idx_turn + 1:]  - baseline) * 1e9
+    defl_retr  = retract_deflection_nm(wdata, wave["wave"]["labels"], idx_turn)
 
     # ── Raw unsplit arrays for FFT inspection ─────────────────────────────────
     raw_defl_full       = (deflection - baseline) * 1e9        # nm, full trace

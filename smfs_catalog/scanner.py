@@ -24,7 +24,10 @@ from datetime import datetime
 from igor2.binarywave import load as load_ibw
 
 from . import db
-from .curve_loader import _hold_z_sensor, _spring_constant, qualify_wave
+from .curve_loader import (
+    _hold_z_sensor, _spring_constant, qualify_wave, retract_deflection_nm,
+)
+from .event_processor import compute_deflection_histogram, defl_grid_params
 
 # Files per scan transaction.  Commit is what makes a batch durable, so
 # this is also the most work an interrupted scan can lose — and that work is
@@ -306,6 +309,23 @@ def _parse_ibw(path: str) -> dict:
         result["_file_metadata"] = meta
 
         result["parse_ok"] = 1
+
+        # ── Deflection histogram ─────────────────────────────────────────────
+        # Same argument as the qualification above: wData is already in memory,
+        # so binning it costs ~1 ms on a parse that has already paid 47 ms to
+        # read the file.  It takes no parameters and depends on no fit, so
+        # import is the only place it ever needs to happen.
+        #
+        # Only for waves that actually have a retract half to bin; an image or
+        # a force-clamp trace simply gets no row.
+        #
+        # Last, and after parse_ok: everything above is what the catalog is
+        # for, and a curve whose metadata read perfectly must not be filed as
+        # unparseable because its histogram did not.
+        if q.curve_type == "continuous_stretch" and q.usable:
+            result["_defl_histogram"] = compute_deflection_histogram(
+                retract_deflection_nm(wdata, wave["wave"]["labels"], q.idx_turn)
+            )
 
     except Exception as exc:
         result["parse_error"] = str(exc)[:500]
@@ -613,18 +633,25 @@ def scan_directory(
 
             record = _parse_ibw(fpath)
             file_meta = record.pop("_file_metadata", {})
+            defl_hist = record.pop("_defl_histogram", None)
             record.update(fmeta)
             record["last_seen"]    = now
             record["first_seen"]   = (existing[fpath]["first_seen"] if fpath in existing else now) or now
 
             db.upsert_file(record, db_path=db_path, conn=conn)
 
-            if file_meta and record["parse_ok"]:
+            if (file_meta or defl_hist is not None) and record["parse_ok"]:
                 # Visible on this connection even though the batch is not
                 # committed yet — a connection always sees its own writes.
                 file_id = db.get_file_id(fpath, db_path, conn=conn)
                 if file_id is not None:
-                    db.write_file_metadata(file_id, file_meta, db_path, conn=conn)
+                    if file_meta:
+                        db.write_file_metadata(file_id, file_meta, db_path, conn=conn)
+                    if defl_hist is not None:
+                        counts, n_below, n_above = defl_hist
+                        db.write_deflection_histogram(
+                            file_id, counts, n_below, n_above,
+                            defl_grid_params(), db_path, conn=conn)
 
             pending   += 1
             n_updated += 1
@@ -737,6 +764,19 @@ def requalify_catalog(
                 "UPDATE files SET content_sha256=?, curve_type=?, "
                 "unusable_reason=?, unusable_detail=? WHERE id=?",
                 (sha, q.curve_type, q.reason, q.detail, row["id"]))
+
+            # The samples are already in memory for the qualification above,
+            # so the deflection histogram is one more calculation — measured
+            # afresh and written, as import does, because putting stored values
+            # right is what a re-check is for.
+            if q.curve_type == "continuous_stretch" and q.usable:
+                counts, n_below, n_above = compute_deflection_histogram(
+                    retract_deflection_nm(
+                        wave["wave"]["wData"], wave["wave"]["labels"],
+                        q.idx_turn))
+                db.write_deflection_histogram(
+                    row["id"], counts, n_below, n_above, defl_grid_params(),
+                    db_path, conn=conn)
             hashed += 1
             requalified += int(changed)
             pending += 1

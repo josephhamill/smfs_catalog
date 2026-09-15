@@ -27,7 +27,10 @@ def test_one_parameter_snapshot_reaches_multi_event_persistence(monkeypatch):
     monkeypatch.setattr(_ca._db, "get_analysis_result", lambda *a, **k: None)
     monkeypatch.setattr(_ca._db, "get_curve_type", lambda *a, **k: "continuous_stretch")
     monkeypatch.setattr(_ca._db, "write_analysis_result", lambda *a, **k: None)
-    monkeypatch.setattr(_ca, "load_force_curve", lambda _path: object())
+    monkeypatch.setattr(_ca._db, "get_or_store_deflection_histogram",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(_ca, "load_force_curve",
+                        lambda _path: SimpleNamespace(defl_retr=None))
     monkeypatch.setattr(_ca, "cache_version", lambda: "test-build")
     monkeypatch.setattr(_ca, "analyse_curve", lambda *a, **k: (result, _ca.Stage1Search()))
     monkeypatch.setattr(
@@ -68,7 +71,10 @@ def test_edit_during_curve_reruns_before_current_result_is_published(monkeypatch
     monkeypatch.setattr(_ca._db, "get_analysis_result", lambda *a, **k: None)
     monkeypatch.setattr(_ca._db, "get_curve_type", lambda *a, **k: "continuous_stretch")
     monkeypatch.setattr(_ca._db, "write_analysis_result", lambda *a, **k: None)
-    monkeypatch.setattr(_ca, "load_force_curve", lambda _path: object())
+    monkeypatch.setattr(_ca._db, "get_or_store_deflection_histogram",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(_ca, "load_force_curve",
+                        lambda _path: SimpleNamespace(defl_retr=None))
     monkeypatch.setattr(_ca, "cache_version", lambda: "test-build")
     monkeypatch.setattr(
         _ca, "analyse_curve",
@@ -87,3 +93,42 @@ def test_edit_during_curve_reruns_before_current_result_is_published(monkeypatch
     assert (verdict, cached) == ("event", False)
     assert analysed == [old.spectral_cutoff_hz, new.spectral_cutoff_hz]
     assert persisted == [new]
+
+
+def test_the_slow_path_stores_the_loaded_curves_histogram_and_the_fast_path_does_not(
+        monkeypatch):
+    """One more calculation where the curve is already in memory, and none
+    where it is not: a cached verdict never opens the file, so it never bins."""
+    snapshot = AnalysisParams()
+    stored = []
+    curve = SimpleNamespace(defl_retr="retract-deflection")
+    result = _ca.CurveResult(
+        event=False, offset=0.0, flatness=0.0, contact_z=1.0,
+        snapoff_z=2.0, rupture_z=float("nan"), onset_z=float("nan"),
+        invols_slope=1.0,
+    )
+    cached_verdict = [None]
+
+    monkeypatch.setattr(_ca._db, "load_analysis_params", lambda _p: snapshot)
+    monkeypatch.setattr(_ca._db, "get_analysis_result",
+                        lambda *a, **k: cached_verdict[0])
+    monkeypatch.setattr(_ca._db, "get_curve_type", lambda *a, **k: "continuous_stretch")
+    monkeypatch.setattr(_ca._db, "write_analysis_result", lambda *a, **k: None)
+    monkeypatch.setattr(_ca._db, "delete_event_map", lambda *a, **k: None)
+    monkeypatch.setattr(
+        _ca._db, "get_or_store_deflection_histogram",
+        lambda file_id, defl, db_path, conn=None: stored.append((file_id, defl)))
+    monkeypatch.setattr(_ca, "load_force_curve", lambda _path: curve)
+    monkeypatch.setattr(_ca, "cache_version", lambda: "test-build")
+    monkeypatch.setattr(_ca, "analyse_curve",
+                        lambda *a, **k: (result, _ca.Stage1Search()))
+
+    assert _ca.analyse_file(7, "curve.ibw", "catalog.db") == ("non_event", False)
+    assert stored == [(7, "retract-deflection")]
+
+    stored.clear()
+    cached_verdict[0] = 0.0
+    monkeypatch.setattr(_ca, "load_force_curve", lambda _path: pytest.fail(
+        "the fast path loaded the curve"))
+    assert _ca.analyse_file(7, "curve.ibw", "catalog.db") == ("non_event", True)
+    assert stored == []
