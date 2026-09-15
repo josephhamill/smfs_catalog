@@ -55,6 +55,7 @@ from .navigator_bar import (
     slider_to_interval_ms, rate_to_slider, rate_label,
     SLIDER_MIN, SLIDER_MAX, DEFAULT_RATE_HZ,
 )
+from .navigation import build_go_to_row
 
 _LIST_QSS = style.LIST_QSS
 
@@ -206,6 +207,11 @@ class ClassLinePlotWindow(QMainWindow):
         nav.addSpacing(16)
         nav.addWidget(self._fname_label)
         nav.addStretch()
+        nav.addSpacing(16)
+        go_row, self._go_btns = build_go_to_row(
+            self, self._current_path, decomp=True)
+        nav.addLayout(go_row)
+        nav.addSpacing(16)
         nav.addWidget(SampleMarksToggle())
         self._export_btn = QPushButton("Export list…")
         self._export_btn.setToolTip(
@@ -262,8 +268,7 @@ class ClassLinePlotWindow(QMainWindow):
         # Preserve the current curve across refreshes (e.g. a refresh triggered
         # by enqueuing a file from a double-click) so the user stays where they
         # left off instead of snapping back to the top.
-        prev_path = (self._rows[self._index]["path"]
-                     if 0 <= self._index < len(self._rows) else None)
+        prev_path = self._current_path()
 
         self._rows = [r for r in _db.list_queue(self._db_path)
                       if r["event"] == self._classification]
@@ -361,10 +366,18 @@ class ClassLinePlotWindow(QMainWindow):
         if self._nav_timer.isActive():
             self._nav_timer.setInterval(slider_to_interval_ms(value))
 
+    def _current_path(self) -> str | None:
+        """The path of the curve on screen, or None when the cohort is empty."""
+        if 0 <= self._index < len(self._rows):
+            return self._rows[self._index]["path"]
+        return None
+
     def _set_navigation_enabled(self, enabled: bool) -> None:
         """Keep an empty cohort from presenting controls that cannot act."""
         self._btn_auto_rev.setEnabled(enabled)
         self._btn_auto_fwd.setEnabled(enabled)
+        for btn in self._go_btns:
+            btn.setEnabled(enabled)
         self._prev_btn.setEnabled(enabled and self._index > 0)
         self._next_btn.setEnabled(enabled and self._index < len(self._rows) - 1)
         self._speed_slider.setEnabled(enabled)

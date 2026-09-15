@@ -1720,6 +1720,15 @@ class DashboardWindow(QMainWindow):
             if callable(opener):
                 opener()
 
+    def reveal_decomp_at(self, path: str) -> None:
+        """Like reveal_roi_at, for the decomposition window."""
+        self._open_raw_viewer(path)
+        viewer = getattr(self, "_viewer", None)
+        if viewer is not None:
+            opener = getattr(viewer, "open_decomp_window", None)
+            if callable(opener):
+                opener()
+
 
     def _on_file_started(self, file_id: int) -> None:
         self._started_buffer.append(file_id)
