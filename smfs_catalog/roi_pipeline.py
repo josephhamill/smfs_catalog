@@ -611,6 +611,11 @@ def segment_summary_bulk(
                   early.  0.0 otherwise, None if no peak was found.
     All three inform; none of them gates anything by itself.
 
+    fit_status/fit_detail are that same segment's stored fit outcome (see
+    roi_events.Segment), so a missing l_c or force can be explained by the
+    pipeline's own reason. Strings, so they stay out of SEG_SUMMARY_KEYS and
+    are never offered as criteria.
+
     l_p_nm/l_c_nm/l_p_err/l_c_err/force_pN come from the SELECTED segment (and
     its terminating rupture) of the right-most outer ROI with ruptures:
     "ultimate" = its last segment (the tether/final rupture, or the whole pull
@@ -682,6 +687,7 @@ def segment_summary_bulk(
             "dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None,
             "n_segments": None,
             "tau": None, "z_max": None, "x_max_nm": None, "edge_pinned": None,
+            "fit_status": None, "fit_detail": None,
         }
         for p in paths
     }
@@ -803,6 +809,8 @@ def segment_summary_bulk(
             row["edge_pinned"] = (
                 None if seg.edge_pinned is None else float(bool(seg.edge_pinned))
             )
+            row["fit_status"] = seg.fit_status
+            row["fit_detail"] = seg.fit_detail
         if rup is not None:
             row["force_pN"] = rup.force_pN
             # The x of the SAME point force_pN is the y of — fit_segments sets

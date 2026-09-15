@@ -42,6 +42,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -100,6 +101,27 @@ def _vsep() -> QFrame:
     return line
 
 
+def fit_outcome_text(outcome: dict) -> str:
+    """A stored segment fit outcome as a short phrase: "fit",
+    "review: peak at segment boundary", "optimizer failed", "not attempted"."""
+    status, detail = outcome.get("fit_status"), outcome.get("fit_detail")
+    if status == "fit_available":
+        return "fit"
+    if status == "review":
+        return f"review: {detail}" if detail else "review"
+    if status == "not_attempted":
+        return "not attempted"
+    return detail or "no fit"
+
+
+def drop_breakdown_lines(led) -> list[str]:
+    """One `38 × <reason> (<detail>)` line per distinct drop label, largest
+    first — finer than Ledger.breakdown_lines, so drops sharing a reason are
+    split by the stored fit outcome in their detail."""
+    counts = Counter(d.label for d in led.drops())
+    return [f"{n:,} × {label}" for label, n in counts.most_common()]
+
+
 class EventSummaryWindow(QMainWindow):
     """
     Displays all confirmed rupture events together as a scatter of
@@ -148,6 +170,9 @@ class EventSummaryWindow(QMainWindow):
         # Per-curve event arrays — NaN = no value for the selected segment
         self._force_arr  = np.full(n, np.nan)   # selected segment's rupture force (pN)
         self._length_arr = np.full(n, np.nan)   # selected segment's WLC contour length (nm)
+        # Selected segment's stored fit outcome, None until loaded — see
+        # _prepopulate and _record_unplottable.
+        self._seg_outcome: list[dict | None] = [None] * n
         # Real criteria_gate.evaluate() split, recomputed every _rebuild() —
         # True = hit. Kept over the FULL self._results (not just plotted
         # points): a curve can have a real hit/non-hit verdict without a
@@ -499,6 +524,13 @@ class EventSummaryWindow(QMainWindow):
                 if force is not None and length is not None:
                     self._force_arr[i]  = force
                     self._length_arr[i] = length
+                self._seg_outcome[i] = {
+                    "n_segments": sd.get("n_segments"),
+                    "fit_status": sd.get("fit_status"),
+                    "fit_detail": sd.get("fit_detail"),
+                    "has_force":  force is not None,
+                    "has_length": length is not None,
+                }
             self._load_error = None
         except Exception as exc:
             # A summary window is an inspector, so a DB/read failure must not
@@ -681,8 +713,8 @@ class EventSummaryWindow(QMainWindow):
                                       self._len_curves, transposed=False)
 
         self._cluster_bar.refresh([p for p in paths if p])
+        self._update_title()   # before _update_stats, which shows its summary
         self._update_stats()
-        self._update_title()
         self._rebuild_list()
         self._update_sel_marker()
 
@@ -744,19 +776,44 @@ class EventSummaryWindow(QMainWindow):
         """
         paths = [r.get("path") or "" for r in self._results]
         led = _ledger.Ledger("Explore Events plottability", paths)
-        seg = self._segment_select or "?"
         for i, p in enumerate(paths):
-            if not p:
-                continue
-            f_missing = bool(np.isnan(self._force_arr[i]))
-            l_missing = bool(np.isnan(self._length_arr[i]))
-            if f_missing and l_missing:
-                led.drop(p, "no_fit", f"segment: {seg}")
-            elif f_missing:
-                led.drop(p, "no_force", f"segment: {seg}")
-            elif l_missing:
-                led.drop(p, "no_length", f"segment: {seg}")
+            if p:
+                self._record_unplottable(led, i, p)
         return led
+
+    def _record_unplottable(self, led: _ledger.Ledger, i: int, p: str) -> None:
+        """Drop curve i from `led` if it has no point to plot, with the reason.
+
+        The reason comes from the selected segment's stored outcome when it
+        has been loaded: no stored analysis, no such segment, or the fit
+        outcome the pipeline recorded. Without it, only which value is missing
+        can be said.
+        """
+        f_missing = bool(np.isnan(self._force_arr[i]))
+        l_missing = bool(np.isnan(self._length_arr[i]))
+        if not (f_missing or l_missing):
+            return
+        detail = f"segment: {self._segment_select or '?'}"
+        o = self._seg_outcome[i] if i < len(self._seg_outcome) else None
+        if o is not None:
+            if o["n_segments"] is None:
+                led.drop(p, "no_stored_segments")
+                return
+            if o["fit_status"] is None:
+                led.drop(p, "no_segment_chosen", detail)
+                return
+            if o["fit_status"] in ("no_fit", "not_attempted"):
+                reason = ("fit_failed" if o["fit_detail"] == "optimizer failed"
+                          else "fit_not_attempted")
+                led.drop(p, reason,
+                         f"{o['fit_detail'] or 'fitter did not run'}; {detail}")
+                return
+        if f_missing and l_missing:
+            led.drop(p, "no_fit", detail)
+        elif f_missing:
+            led.drop(p, "no_force", detail)
+        else:
+            led.drop(p, "no_length", detail)
 
     def _on_show_drops(self) -> None:
         """The tally and the journey, for the curves this window couldn't plot."""
@@ -769,7 +826,7 @@ class EventSummaryWindow(QMainWindow):
                 f"selected segment.")
             return
         lines = [led.summary("plotted"), ""]
-        lines += led.breakdown_lines()
+        lines += drop_breakdown_lines(led)
         lines.append("")
         lines.append("Curves (first 40):")
         for d in led.drops()[:40]:
@@ -873,6 +930,7 @@ class EventSummaryWindow(QMainWindow):
             self._selected_index = None
             self._sel_marker.hide()
             self._sel_label.setText("")
+            self._fit_status.setText("")
 
     def _on_list_row_changed(self, row: int) -> None:
         item = self._event_list.item(row) if row >= 0 else None
@@ -917,6 +975,9 @@ class EventSummaryWindow(QMainWindow):
 
     def _update_sel_readout(self) -> None:
         i = self._selected_index
+        o = self._seg_outcome[i] if i is not None and 0 <= i < len(self._seg_outcome) else None
+        self._fit_status.setText(
+            f"Fit: {fit_outcome_text(o)}" if o and o["fit_status"] else "")
         if i is None or not (0 <= i < len(self._results)):
             self._sel_label.setText("")
             return
@@ -1006,6 +1067,7 @@ class EventSummaryWindow(QMainWindow):
         n                = len(self._results)
         self._force_arr  = np.full(n, np.nan)
         self._length_arr = np.full(n, np.nan)
+        self._seg_outcome = [None] * n
         if self._current_index >= n:
             self._current_index = 0
 
@@ -1401,17 +1463,7 @@ class EventSummaryWindow(QMainWindow):
             if not mask[i]:
                 led.drop(p, "not_in_population", other)
                 continue
-            # Force and length are reported separately: "no fit at all" and
-            # "a fit that produced only one of the two" are different
-            # findings, and collapsing them hid which one was happening.
-            f_missing = bool(np.isnan(self._force_arr[i]))
-            l_missing = bool(np.isnan(self._length_arr[i]))
-            if f_missing and l_missing:
-                led.drop(p, "no_fit", f"segment: {self._segment_select or '?'}")
-            elif f_missing:
-                led.drop(p, "no_force", f"segment: {self._segment_select or '?'}")
-            elif l_missing:
-                led.drop(p, "no_length", f"segment: {self._segment_select or '?'}")
+            self._record_unplottable(led, i, p)
         return led
 
     def population_paths(self, which: str) -> list[str]:
@@ -1568,8 +1620,7 @@ class EventSummaryWindow(QMainWindow):
     # roi_events.fit_segments
     # during the worker's own pass; this window has no business re-running it,
     # on a raw-signal fitter, as a side effect of being viewed. `_fit_status`
-    # stays in the layout, unpopulated, until the presentation-side work
-    # (reading event_map's per-segment fits here) is designed.
+    # shows the selected segment's stored outcome, read in _prepopulate.
 
 
     def closeEvent(self, event):

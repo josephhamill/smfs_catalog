@@ -54,6 +54,8 @@ DROP_REASONS: dict[str, str] = {
     "no_stored_segments": "no stored segmentation under the current parameter set",
     "no_segment_chosen":  "the chosen segment doesn't exist on this curve",
     "no_fit":             "the chosen segment's WLC fit produced no l_p/l_c",
+    "fit_not_attempted":  "fit not attempted",
+    "fit_failed":         "fit failed",
     "no_force":           "no rupture force for the chosen segment",
     "no_length":          "no contour length for the chosen segment",
     "not_in_catalog":     "file is not in the catalog",

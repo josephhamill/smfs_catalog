@@ -355,6 +355,9 @@ ev._segment_select = "ultimate"
 # file 0 fully plottable; file 1 has force but no length; file 2 has neither.
 ev._force_arr[:]  = [10.0, 20.0, np.nan]
 ev._length_arr[:] = [50.0, np.nan, np.nan]
+# Values set by hand, so no stored outcome describes them; stored-outcome
+# reasons are covered in test_explore_events_drop_reasons.
+ev._seg_outcome[:] = [None, None, None]
 ev._rebuild()
 
 pled = ev.population_ledger("hit")
