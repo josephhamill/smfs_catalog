@@ -728,9 +728,11 @@ def fit_segments(
       • The fit starts at the segment's left edge (the ROI onset) and ENDS at the
         force peak (argmax) — that peak IS the rupture force of the segment.
 
-    Segments too short to fit (or whose optimiser fails) are left with None fits
-    and their rupture keeps force_pN=None — never a fabricated value.  Mutates
-    `events`; returns None.
+    Segments refused before their force peak is located are left with None fits
+    and their rupture keeps force_pN=None — never a fabricated value.  Once the
+    peak is located the rupture force and extension are set, so a segment whose
+    fit is then refused or whose optimiser fails keeps them with None fits.
+    Mutates `events`; returns None.
     """
     if not invols_slope or not np.isfinite(invols_slope):
         for roi in events.rois:
