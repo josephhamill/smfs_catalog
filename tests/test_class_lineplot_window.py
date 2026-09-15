@@ -92,3 +92,79 @@ def test_browser_rejects_verdicts_it_does_not_mean_to_display():
         assert "non_event" in str(exc)
     else:
         raise AssertionError("unsupported verdict was accepted")
+
+
+def _fresh_catalog(paths):
+    """A real catalog holding `paths` as files, with no histograms stored."""
+    db_path = os.path.join(tmpdirs.mkdtemp(prefix="smfs_nonevents_"), "c.db")
+    _real_db.initialise(db_path)
+    now = "2026-01-01 00:00:00"
+    for p in paths:
+        _real_db.upsert_file(
+            {"path": p, "filename": p.rsplit("/", 1)[-1], "parse_ok": 1,
+             "first_seen": now, "last_seen": now}, db_path=db_path)
+    return db_path
+
+
+def test_a_shown_curve_with_no_stored_histogram_is_stored_and_joins_the_total(
+        monkeypatch):
+    from smfs_catalog import event_processor as ep
+
+    paths = ["/data/a.ibw", "/data/b.ibw"]
+    db_path = _fresh_catalog(paths)
+    rows = [_row(p, "non_event") for p in paths]
+    monkeypatch.setattr(_window._db, "list_queue", lambda _db: rows)
+    monkeypatch.setattr(_window, "load_force_curve", lambda _p: SimpleNamespace(
+        piezo_retr=np.array([1.0, 2.0, 3.0]),
+        defl_retr=np.array([0.0, 1.0, 2.0])))
+
+    win = _window.ClassLinePlotWindow("non_event", db_path)
+    try:
+        key = ep.defl_grid_params()
+        fid_a = _real_db.get_file_id("/data/a.ibw", db_path)
+        assert _real_db.get_deflection_histogram(fid_a, key, db_path) is not None
+        assert win._n_binned == 1
+        assert int(win._cohort_counts.sum()) == 3
+
+        win._go_next()
+        assert win._n_binned == 2
+        assert int(win._cohort_counts.sum()) == 6
+        assert "2 of 2 binned" in win._hist_lbl.text()
+
+        # Paging back to a curve that is now stored adds nothing twice.
+        win._go_prev()
+        assert win._n_binned == 2
+        assert int(win._cohort_counts.sum()) == 6
+    finally:
+        win.close()
+
+
+def test_a_shown_curve_with_a_stored_histogram_uses_it_and_does_not_rebin(
+        monkeypatch):
+    from smfs_catalog import event_processor as ep
+
+    path = "/data/stored.ibw"
+    db_path = _fresh_catalog([path])
+    fid = _real_db.get_file_id(path, db_path)
+    stored = np.zeros(ep.DEFL_HIST_BINS, dtype=np.uint32)
+    stored[500] = 42
+    _real_db.write_deflection_histogram(
+        fid, stored, 0, 0, ep.defl_grid_params(), db_path)
+
+    monkeypatch.setattr(_window._db, "list_queue",
+                        lambda _db: [_row(path, "non_event")])
+    monkeypatch.setattr(_window, "load_force_curve", lambda _p: SimpleNamespace(
+        piezo_retr=np.array([1.0, 2.0]), defl_retr=np.array([3.0, 4.0])))
+
+    def must_not_bin(*_a, **_k):
+        raise AssertionError("a stored histogram was binned again")
+
+    monkeypatch.setattr(_window._ep, "compute_deflection_histogram",
+                        must_not_bin)
+
+    win = _window.ClassLinePlotWindow("non_event", db_path)
+    try:
+        assert win._n_binned == 1
+        assert int(win._cohort_counts.sum()) == 42
+    finally:
+        win.close()

@@ -16,7 +16,8 @@
 # Scoped to queue ∩ non-event, pre-filled from the DB.  Curves are
 # loaded lazily on selection — one at a time, never the whole cohort.  The
 # population histograms cost no curve reads at all: they are summed from the
-# per-file rows measured at import.
+# stored per-file rows, which import writes and which this window also writes
+# for any curve it shows that does not have one yet.
 #
 # Single-click a row -> plot inline.  Double-click -> open in the full raw
 # curve viewer via view_file_requested.
@@ -96,6 +97,13 @@ class ClassLinePlotWindow(QMainWindow):
         self._cohort_paths: list[str] = []
         self._event_paths:  list[str] = []
         self._cohort_sig = None
+        # The non-event total as last summed, kept so a row this window stores
+        # can be added to it without re-summing the cohort.
+        self._cohort_counts = np.zeros(_ep.DEFL_HIST_BINS, dtype=np.uint64)
+        self._cohort_below  = 0
+        self._cohort_above  = 0
+        self._n_binned      = 0
+        self._n_events      = 0
 
         self._nav_timer = QTimer(self)
         self._nav_timer.timeout.connect(self._auto_step)
@@ -135,27 +143,29 @@ class ClassLinePlotWindow(QMainWindow):
 
         root.addLayout(self._build_nav_row(font))
 
-        # ── Outer split: current retract trace | file list ─────────────────────────
+        # ── Outer split: trace + deflection histogram | file list ─────────────────
         outer = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(outer, stretch=1)
 
-        plot_panel = QWidget()
-        plot_root = QVBoxLayout(plot_panel)
-        plot_root.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(plot_panel)
+        # One GraphicsLayoutWidget holding both plots, the way linked plots are
+        # built elsewhere: plots in one layout share its row geometry, so a
+        # deflection sits at the same height in the trace and the histogram.
+        # The filename is a label spanning both columns rather than the trace's
+        # title, which would shorten the trace's view alone.
+        self._glw = pg.GraphicsLayoutWidget()
+        self._glw.setBackground(style.SURFACE)
+        self._title_lbl = self._glw.addLabel(" ", row=0, col=0, colspan=2)
 
-        self._plot = pg.PlotWidget()
+        self._plot = self._glw.addPlot(row=1, col=0)
         set_si_label(self._plot, "bottom", "Piezo",      _quant.NM)
         set_si_label(self._plot, "left",   "Deflection", _quant.NM)
         self._plot.showGrid(x=True, y=True, alpha=0.2)
         self._curve = sample_marks.trace(self._plot, color=style.SIG_RETRACT)
-        plot_root.addWidget(self._plot, stretch=1)
-        self._status_lbl = QLabel("")
-        self._status_lbl.setWordWrap(True)
-        self._status_lbl.setFont(font)
-        plot_root.addWidget(self._status_lbl)
 
-        outer.addWidget(self._build_hist_panel(font))
+        self._build_hist_plot()
+        self._glw.ci.layout.setColumnStretchFactor(0, 5)
+        self._glw.ci.layout.setColumnStretchFactor(1, 2)
+        outer.addWidget(self._glw)
 
         self._list = QListWidget()
         self._list.setMinimumWidth(140)
@@ -166,14 +176,24 @@ class ClassLinePlotWindow(QMainWindow):
         outer.addWidget(self._list)
         outer.setStretchFactor(0, 1)
         outer.setStretchFactor(1, 0)
-        outer.setStretchFactor(2, 0)
-        outer.setSizes([620, 240, 240])
+        outer.setSizes([860, 240])
+
+        # Under both plots, full width: under either column alone a label would
+        # shorten that plot and break the alignment the shared layout gives.
+        self._status_lbl = QLabel("")
+        self._status_lbl.setWordWrap(True)
+        self._status_lbl.setFont(font)
+        root.addWidget(self._status_lbl)
+        self._hist_lbl = QLabel("")
+        self._hist_lbl.setWordWrap(True)
+        self._hist_lbl.setFont(font)
+        root.addWidget(self._hist_lbl)
 
         self._populate()
 
     # ── Deflection histogram panel ────────────────────────────────────────────
 
-    def _build_hist_panel(self, font) -> QWidget:
+    def _build_hist_plot(self) -> None:
         """Deflection distribution beside the trace, on the trace's own Y axis.
 
         Answers the question the single trace cannot: is this curve flat, and
@@ -198,18 +218,14 @@ class ClassLinePlotWindow(QMainWindow):
         The Y axis is linked to the trace, so a bin lines up with the deflection
         it describes and both panels zoom together.
         """
-        panel = QWidget()
-        col = QVBoxLayout(panel)
-        col.setContentsMargins(0, 0, 0, 0)
-
-        self._hist_plot = pg.PlotWidget()
+        self._hist_plot = self._glw.addPlot(row=1, col=1)
         self._hist_plot.showGrid(x=True, y=True, alpha=0.2)
         self._hist_plot.setLabel("bottom", "Fraction of samples")
-        self._hist_plot.getPlotItem().hideAxis("left")
+        self._hist_plot.hideAxis("left")
         self._hist_plot.setLogMode(x=True, y=False)
         # A log axis carries its own decades; an SI prefix on top of them would
         # relabel 10^-3 as "1" and hide the factor in the axis title.
-        self._hist_plot.getPlotItem().getAxis("bottom").enableAutoSIPrefix(False)
+        self._hist_plot.getAxis("bottom").enableAutoSIPrefix(False)
         self._hist_plot.setYLink(self._plot)
 
         # Staircase corners: every bin edge twice, so a count spans its bin
@@ -222,16 +238,9 @@ class ClassLinePlotWindow(QMainWindow):
         self._hist_events = self._hist_plot.plot(
             [], [], pen=pg.mkPen(style.SIG_APPROACH, width=1))
         self._hist_cohort = self._hist_plot.plot(
-            [], [], pen=pg.mkPen(150, 150, 150, width=2))
+            [], [], pen=pg.mkPen(150, 150, 150, width=4))
         self._hist_curve = self._hist_plot.plot(
             [], [], pen=pg.mkPen(style.SIG_RETRACT, width=1))
-
-        col.addWidget(self._hist_plot, stretch=1)
-        self._hist_lbl = QLabel("")
-        self._hist_lbl.setWordWrap(True)
-        self._hist_lbl.setFont(font)
-        col.addWidget(self._hist_lbl)
-        return panel
 
     def _draw_hist(self, item, counts) -> None:
         """Draw one series as a staircase of per-bin fractions.
@@ -247,10 +256,43 @@ class ClassLinePlotWindow(QMainWindow):
         frac[frac <= 0] = np.nan
         item.setData(np.repeat(frac, 2), self._hist_steps)
 
-    def _set_curve_histogram(self, defl) -> None:
-        """Bin the curve already in hand — no second read of the file."""
-        counts, _below, _above = _ep.compute_deflection_histogram(defl)
+    def _load_or_compute_histogram(
+        self, path: str, defl
+    ) -> tuple["np.ndarray", int, int, bool]:
+        """(counts, n_below, n_above, stored_now) for one curve.
+
+        The stored row when there is one; otherwise binned from the deflection
+        already loaded for the trace, and written, so the cohort total gains
+        the curve. `stored_now` is True only for that write. A file missing
+        from the catalog is binned for display and not stored.
+        """
+        key = _ep.defl_grid_params()
+        file_id = _db.get_file_id(path, self._db_path)
+        if file_id is not None:
+            hit = _db.get_deflection_histogram(file_id, key, self._db_path)
+            if hit is not None:
+                return (*hit, False)
+        counts, below, above = _ep.compute_deflection_histogram(defl)
+        if file_id is None:
+            return counts, below, above, False
+        _db.write_deflection_histogram(
+            file_id, counts, below, above, key, self._db_path)
+        return counts, below, above, True
+
+    def _set_curve_histogram(self, path: str, defl) -> None:
+        counts, below, above, stored_now = self._load_or_compute_histogram(
+            path, defl)
         self._draw_hist(self._hist_curve, counts)
+        if stored_now:
+            # Every curve this window shows is a cohort member, and a row stored
+            # just now was not there when the cohort was summed, so it adds
+            # without double-counting.
+            self._cohort_counts += counts
+            self._cohort_below  += below
+            self._cohort_above  += above
+            self._n_binned      += 1
+            self._draw_hist(self._hist_cohort, self._cohort_counts)
+            self._update_hist_caption()
 
     def _clear_curve_histogram(self) -> None:
         self._hist_curve.setData([], [])
@@ -283,10 +325,19 @@ class ClassLinePlotWindow(QMainWindow):
         finally:
             conn.close()
 
+        self._cohort_counts = cohort
+        self._cohort_below  = below
+        self._cohort_above  = above
+        self._n_binned      = n_binned
+        self._n_events      = n_events
         self._draw_hist(self._hist_cohort, cohort)
         self._draw_hist(self._hist_events, events)
-        self._hist_lbl.setText(
-            self._hist_caption(n_binned, below, above, n_events))
+        self._update_hist_caption()
+
+    def _update_hist_caption(self) -> None:
+        self._hist_lbl.setText(self._hist_caption(
+            self._n_binned, self._cohort_below, self._cohort_above,
+            self._n_events))
 
     def _hist_caption(
         self, n_binned: int, below: int, above: int, n_events: int
@@ -302,8 +353,8 @@ class ClassLinePlotWindow(QMainWindow):
         parts = [f"Non-events: {n_binned:,} of {n_cohort:,} binned"]
         if n_binned < n_cohort:
             parts.append(
-                f"{n_cohort - n_binned:,} not yet measured — "
-                f"re-check catalogued files to fill them in")
+                f"{n_cohort - n_binned:,} not yet binned — each fills in when "
+                f"it is viewed here or re-checked")
         if n_events:
             parts.append(f"events: {n_events:,}")
         if below or above:
@@ -567,16 +618,16 @@ class ClassLinePlotWindow(QMainWindow):
             curve = load_force_curve(path)
         except LoadError as exc:
             self._clear_plot()
-            self._plot.setTitle(name)
+            self._title_lbl.setText(name)
             self._status_lbl.setText(f"Could not load this curve: {exc}")
             return
         self._curve.setData(curve.piezo_retr, curve.defl_retr)
-        self._set_curve_histogram(curve.defl_retr)
-        self._plot.setTitle(name)
+        self._set_curve_histogram(path, curve.defl_retr)
+        self._title_lbl.setText(name)
 
     def _clear_plot(self) -> None:
         self._curve.setData([], [])
-        self._plot.setTitle("")
+        self._title_lbl.setText(" ")
         self._clear_curve_histogram()
 
     def showEvent(self, event) -> None:
