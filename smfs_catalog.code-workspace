@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../.local/share/smfs_catalog"
+		},
+		{
+			"path": "../../../../afm_data"
+		},
+		{
+			"path": "../../.claude"
+		}
+	],
+	"settings": {
+		"python.defaultInterpreterPath": "/home/joseph/anaconda3/envs/smfs-catalog/bin/python"
+	}
+
+}
