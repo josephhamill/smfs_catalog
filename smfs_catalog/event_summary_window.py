@@ -1538,11 +1538,15 @@ class EventSummaryWindow(QMainWindow):
         pop = self._active_population
         paths = self._isoforce_paths(pop)
         if not paths:
-            QMessageBox.information(
-                self, "Isoforce",
-                f"No curves in the current {'Hits' if pop == 'hit' else 'Non-Hits'} "
-                "population have a usable adjacent isoforce pair.",
-            )
+            other = "non_hit" if pop == "hit" else "hit"
+            other_name = "Non-Hits" if pop == "hit" else "Hits"
+            msg = (f"No curves in the current {self._population_label()} "
+                   "population have a usable adjacent isoforce pair.")
+            n_other = len(self._isoforce_paths(other))
+            if n_other:
+                msg += (f"\n\n{n_other} curve(s) in {other_name} do. "
+                        f"Switch to {other_name} to view them.")
+            QMessageBox.information(self, "Isoforce", msg)
             return
         target = self._selected_index if self._selected_index is not None else self._current_index
         current_path = self._results[target].get("path") if 0 <= target < len(self._results) else None
