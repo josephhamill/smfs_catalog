@@ -713,8 +713,8 @@ class EventSummaryWindow(QMainWindow):
                                       self._len_curves, transposed=False)
 
         self._cluster_bar.refresh([p for p in paths if p])
+        self._update_title()   # before _update_stats, which shows its summary
         self._update_stats()
-        self._update_title()
         self._rebuild_list()
         self._update_sel_marker()
 
@@ -802,9 +802,12 @@ class EventSummaryWindow(QMainWindow):
             if o["fit_status"] is None:
                 led.drop(p, "no_segment_chosen", detail)
                 return
-            if not (o["has_force"] and o["has_length"]):
-                f_missing, l_missing = not o["has_force"], not o["has_length"]
-            detail = f"{fit_outcome_text(o)}; {detail}"
+            if o["fit_status"] in ("no_fit", "not_attempted"):
+                reason = ("fit_failed" if o["fit_detail"] == "optimizer failed"
+                          else "fit_not_attempted")
+                led.drop(p, reason,
+                         f"{o['fit_detail'] or 'fitter did not run'}; {detail}")
+                return
         if f_missing and l_missing:
             led.drop(p, "no_fit", detail)
         elif f_missing:

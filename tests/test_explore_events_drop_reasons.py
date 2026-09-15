@@ -48,6 +48,7 @@ def test_each_drop_names_its_stored_reason():
         _outcome(None, n_segments=1),                                # no such segment
         _outcome("no_fit", "no force peak", force=False, length=False),
         _outcome("no_fit", "optimizer failed", force=True, length=False),
+        _outcome("not_attempted", force=False, length=False),
     ])
     win._force_arr[0], win._length_arr[0] = 50.0, 30.0
 
@@ -57,8 +58,17 @@ def test_each_drop_names_its_stored_reason():
     assert drops["/data/c1.ibw"] == ("no_fit", "segment: ultimate")
     assert drops["/data/c2.ibw"][0] == "no_stored_segments"
     assert drops["/data/c3.ibw"] == ("no_segment_chosen", "segment: ultimate")
-    assert drops["/data/c4.ibw"] == ("no_fit", "no force peak; segment: ultimate")
-    assert drops["/data/c5.ibw"] == ("no_length", "optimizer failed; segment: ultimate")
+    assert drops["/data/c4.ibw"] == ("fit_not_attempted", "no force peak; segment: ultimate")
+    assert drops["/data/c5.ibw"] == ("fit_failed", "optimizer failed; segment: ultimate")
+    assert drops["/data/c6.ibw"] == ("fit_not_attempted", "fitter did not run; segment: ultimate")
+
+
+def test_the_dialog_line_leads_with_the_stored_reason():
+    win = _window([_outcome("no_fit", "insufficient loading ramp",
+                            force=False, length=False)])
+
+    assert drop_breakdown_lines(win._plottability_ledger()) == [
+        "1 × fit not attempted (insufficient loading ramp; segment: ultimate)"]
 
 
 def test_population_ledger_uses_the_same_reasons(monkeypatch):
@@ -69,7 +79,7 @@ def test_population_ledger_uses_the_same_reasons(monkeypatch):
     (drop,) = win.population_ledger("hit").drops()
 
     assert (drop.reason, drop.detail) == (
-        "no_fit", "insufficient segment points; segment: ultimate")
+        "fit_not_attempted", "insufficient segment points; segment: ultimate")
 
 
 def test_breakdown_splits_a_reason_by_stored_outcome():
