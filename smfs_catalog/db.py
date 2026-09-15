@@ -1847,10 +1847,13 @@ def write_deflection_histograms_bulk(
     db_path: str = DEFAULT_DB_PATH,
     conn:    Optional[sqlite3.Connection] = None,
 ) -> None:
-    """Write per-curve deflection histograms in a single transaction.
+    """Write per-curve deflection histograms.
 
-    Items are (file_id, counts, n_below, n_above, params_json).  Import writes
-    thousands of these in one pass, so it hands in its own connection.
+    Items are (file_id, counts, n_below, n_above, params_json).
+
+    A connection handed in belongs to a caller that owns the transaction — the
+    scanner commits in batches — so nothing is committed on it here, exactly as
+    write_file_metadata behaves. Without one, the write is its own transaction.
     """
     now = _now()
     rows = [
@@ -1860,18 +1863,21 @@ def write_deflection_histograms_bulk(
     ]
     if not rows:
         return
-    c = conn or get_connection(db_path)
+    sql = """
+        INSERT OR REPLACE INTO deflection_histograms
+            (file_id, counts, n_bins, n_below, n_above,
+             params_json, computed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    if conn is not None:
+        conn.executemany(sql, rows)
+        return
+    own = get_connection(db_path)
     try:
-        with c:
-            c.executemany("""
-                INSERT OR REPLACE INTO deflection_histograms
-                    (file_id, counts, n_bins, n_below, n_above,
-                     params_json, computed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, rows)
+        with own:
+            own.executemany(sql, rows)
     finally:
-        if conn is None:
-            c.close()
+        own.close()
 
 
 def get_deflection_histogram(
@@ -1895,6 +1901,34 @@ def get_deflection_histogram(
         return None
     counts = np.frombuffer(zlib.decompress(row["counts"]), dtype=np.uint32)
     return counts.reshape(row["n_bins"]).copy(), row["n_below"], row["n_above"]
+
+
+def get_or_store_deflection_histogram(
+    file_id: int,
+    defl:    np.ndarray,
+    db_path: str = DEFAULT_DB_PATH,
+    conn:    Optional[sqlite3.Connection] = None,
+) -> tuple[np.ndarray, int, int, bool]:
+    """(counts, n_below, n_above, stored_now) for one curve on the current grid.
+
+    The stored row when there is one; otherwise binned from `defl` and written.
+    `defl` is retract deflection the caller has ALREADY read for its own work —
+    this never opens a file — so wherever a curve is already in memory the
+    histogram is one more small calculation and never a reason to read.
+
+    `stored_now` is True only when this call wrote the row. A handed-in
+    connection is not committed here, as write_file_metadata leaves it to the
+    caller that owns the transaction.
+    """
+    from . import event_processor as _ep
+    key = _ep.defl_grid_params()
+    hit = get_deflection_histogram(file_id, key, db_path, conn=conn)
+    if hit is not None:
+        return (*hit, False)
+    counts, below, above = _ep.compute_deflection_histogram(defl)
+    write_deflection_histogram(
+        file_id, counts, below, above, key, db_path, conn=conn)
+    return counts, below, above, True
 
 
 def sum_deflection_histograms(

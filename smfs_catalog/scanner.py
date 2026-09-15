@@ -764,6 +764,19 @@ def requalify_catalog(
                 "UPDATE files SET content_sha256=?, curve_type=?, "
                 "unusable_reason=?, unusable_detail=? WHERE id=?",
                 (sha, q.curve_type, q.reason, q.detail, row["id"]))
+
+            # The samples are already in memory for the qualification above,
+            # so the deflection histogram is one more calculation — measured
+            # afresh and written, as import does, because putting stored values
+            # right is what a re-check is for.
+            if q.curve_type == "continuous_stretch" and q.usable:
+                counts, n_below, n_above = compute_deflection_histogram(
+                    retract_deflection_nm(
+                        wave["wave"]["wData"], wave["wave"]["labels"],
+                        q.idx_turn))
+                db.write_deflection_histogram(
+                    row["id"], counts, n_below, n_above, defl_grid_params(),
+                    db_path, conn=conn)
             hashed += 1
             requalified += int(changed)
             pending += 1

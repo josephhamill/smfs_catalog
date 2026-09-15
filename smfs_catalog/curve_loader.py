@@ -158,6 +158,11 @@ def retract_deflection_nm(wdata, labels, idx_turn: int) -> np.ndarray:
 
     Requires a wave qualify_wave has already accepted: `idx_turn` is its
     turnaround, and the deflection channel is assumed present.
+
+    Histograms of this array are stored per file and not recomputed on their
+    own. Changing what it returns — the baseline, the scale, where the split
+    falls — means bumping "v" in event_processor.defl_grid_params, or the
+    stored histograms keep describing the old quantity.
     """
     channels   = channel_map(labels, wdata.shape[1])
     deflection = wdata[:, channels[CH_DEFL]]

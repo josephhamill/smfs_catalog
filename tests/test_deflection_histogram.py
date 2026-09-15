@@ -110,39 +110,101 @@ def test_the_scanner_and_the_loader_mean_the_same_thing_by_retract_deflection():
     assert np.allclose(got, [5.0, 6.0, 7.0, 8.0, 9.0])
 
 
-def test_only_a_stretch_wave_is_binned_at_import(monkeypatch, tmp_path):
-    """An image or a force-clamp trace has no retract half to describe, and a
-    truncated one has nothing in it; none of them get a row."""
-    import numpy as np
-    from smfs_catalog import scanner
+_LABELS = [[], [b"", b"Raw", b"Defl", b"ZSnsr", b"Time"], [], []]
+_NOTE = b"\rSpringConstant: 0.05\r"
 
-    n = 2000
+
+def _stretch_wave(n: int = 2000) -> np.ndarray:
+    """A minimal wave that qualifies as a usable continuous stretch."""
     half = n // 2
     piezo = np.concatenate([np.linspace(0.0, 1e-6, half),
                             np.linspace(1e-6, 0.0, n - half)])
-    stretch = np.zeros((n, 4), dtype=float)
-    stretch[:, 0] = piezo
-    stretch[:, 2] = piezo
-    stretch[:, 1] = -1e-8 * np.sin(np.linspace(0, np.pi, n)) - 1e-9
-    stretch[:, 3] = np.linspace(0, 1, n)
-    labels = [[], [b"", b"Raw", b"Defl", b"ZSnsr", b"Time"], [], []]
+    w = np.zeros((n, 4), dtype=float)
+    w[:, 0] = piezo
+    w[:, 2] = piezo
+    w[:, 1] = -1e-8 * np.sin(np.linspace(0, np.pi, n)) - 1e-9
+    w[:, 3] = np.linspace(0, 1, n)
+    return w
 
+
+def _serve_wave(monkeypatch, wdata) -> None:
+    from smfs_catalog import scanner
+    monkeypatch.setattr(scanner, "load_ibw", lambda _buf: {
+        "wave": {"note": _NOTE, "wData": wdata, "labels": _LABELS,
+                 "wave_header": {"sfA": [1e-4]}}})
+
+
+def test_only_a_stretch_wave_is_binned_at_import(monkeypatch, tmp_path):
+    """An image or a force-clamp trace has no retract half to describe, and a
+    truncated one has nothing in it; none of them get a row."""
+    from smfs_catalog import scanner
+
+    stretch = _stretch_wave()
     truncated = stretch.copy()
-    truncated[half - 1:, 1] = 0.0
-
-    note = b"\rSpringConstant: 0.05\r"
+    truncated[stretch.shape[0] // 2 - 1:, 1] = 0.0
 
     def parse(wdata):
         f = tmp_path / "w.ibw"
         f.write_bytes(b"x")
-        monkeypatch.setattr(scanner, "load_ibw", lambda _buf: {
-            "wave": {"note": note, "wData": wdata, "labels": labels,
-                     "wave_header": {"sfA": [1e-4]}}})
+        _serve_wave(monkeypatch, wdata)
         return scanner._parse_ibw(str(f))
 
     assert "_defl_histogram" in parse(stretch)
     assert "_defl_histogram" not in parse(truncated)
     assert "_defl_histogram" not in parse(np.zeros((64, 64), dtype=float))
+
+
+def test_a_handed_in_connection_is_left_for_its_owner_to_commit(catalog):
+    """The scanner commits in batches; a histogram write must not commit the
+    batch out from under it."""
+    import sqlite3
+
+    fid = _add_file(catalog, "/data/batch.ibw")
+    counts, below, above = _ep.compute_deflection_histogram(np.zeros(10))
+    conn = sqlite3.connect(catalog)
+    try:
+        _db.write_deflection_histogram(
+            fid, counts, below, above, _ep.defl_grid_params(), catalog,
+            conn=conn)
+        conn.rollback()
+    finally:
+        conn.close()
+    assert _db.get_deflection_histogram(
+        fid, _ep.defl_grid_params(), catalog) is None
+
+
+def test_a_stored_histogram_is_used_and_a_missing_one_is_binned_and_stored(
+        catalog):
+    fid = _add_file(catalog, "/data/once.ibw")
+    first = np.zeros(50) + 2.0
+
+    counts, _b, _a, stored_now = _db.get_or_store_deflection_histogram(
+        fid, first, catalog)
+    assert stored_now
+    assert int(counts.sum()) == 50
+
+    # Different samples, same file: the stored row answers, nothing is rebinned.
+    counts, _b, _a, stored_now = _db.get_or_store_deflection_histogram(
+        fid, np.zeros(7), catalog)
+    assert not stored_now
+    assert int(counts.sum()) == 50
+
+
+def test_recheck_bins_the_curves_it_reads(monkeypatch, tmp_path, catalog):
+    from smfs_catalog import scanner
+
+    f = tmp_path / "old.ibw"
+    f.write_bytes(b"x")
+    fid = _add_file(catalog, str(f))
+    assert _db.get_deflection_histogram(
+        fid, _ep.defl_grid_params(), catalog) is None
+
+    _serve_wave(monkeypatch, _stretch_wave())
+    scanner.requalify_catalog(catalog)
+
+    row = _db.get_deflection_histogram(fid, _ep.defl_grid_params(), catalog)
+    assert row is not None
+    assert int(row[0].sum()) > 0
 
 
 def test_the_panel_takes_its_grid_from_the_one_place_that_defines_it():

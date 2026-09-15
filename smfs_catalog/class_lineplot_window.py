@@ -259,25 +259,14 @@ class ClassLinePlotWindow(QMainWindow):
     def _load_or_compute_histogram(
         self, path: str, defl
     ) -> tuple["np.ndarray", int, int, bool]:
-        """(counts, n_below, n_above, stored_now) for one curve.
-
-        The stored row when there is one; otherwise binned from the deflection
-        already loaded for the trace, and written, so the cohort total gains
-        the curve. `stored_now` is True only for that write. A file missing
-        from the catalog is binned for display and not stored.
-        """
-        key = _ep.defl_grid_params()
+        """(counts, n_below, n_above, stored_now) for one curve, using the
+        deflection already loaded for the trace. A file missing from the
+        catalog is binned for display and not stored."""
         file_id = _db.get_file_id(path, self._db_path)
-        if file_id is not None:
-            hit = _db.get_deflection_histogram(file_id, key, self._db_path)
-            if hit is not None:
-                return (*hit, False)
-        counts, below, above = _ep.compute_deflection_histogram(defl)
         if file_id is None:
-            return counts, below, above, False
-        _db.write_deflection_histogram(
-            file_id, counts, below, above, key, self._db_path)
-        return counts, below, above, True
+            return (*_ep.compute_deflection_histogram(defl), False)
+        return _db.get_or_store_deflection_histogram(
+            file_id, defl, self._db_path)
 
     def _set_curve_histogram(self, path: str, defl) -> None:
         counts, below, above, stored_now = self._load_or_compute_histogram(
@@ -353,8 +342,9 @@ class ClassLinePlotWindow(QMainWindow):
         parts = [f"Non-events: {n_binned:,} of {n_cohort:,} binned"]
         if n_binned < n_cohort:
             parts.append(
-                f"{n_cohort - n_binned:,} not yet binned — each fills in when "
-                f"it is viewed here or re-checked")
+                f"{n_cohort - n_binned:,} not yet binned — a curve is binned "
+                f"whenever it is read: on import, analysis, re-check, or "
+                f"viewing here")
         if n_events:
             parts.append(f"events: {n_events:,}")
         if below or above:

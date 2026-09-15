@@ -50,6 +50,11 @@ PHYS_F_RANGE = (  -200.0, 600.0)  # pN
 # cannot be added.  Changing either constant changes the grid key, which makes
 # every stored row a cache miss that re-bins lazily.
 #
+# The key cannot see a change to the CALCULATION: how the retract half is cut
+# (the turnaround from qualify_wave) or referenced (retract_deflection_nm's
+# baseline).  After such a change, bump "v" in defl_grid_params, or every row
+# stored before it stays valid-looking and wrong.
+#
 # Range covers the whole catalog: sampling 400 non-events across all eight
 # experimentalists put the extremes at -96 nm and +218 nm.  Out-of-range samples
 # are counted rather than dropped, so a curve that escapes it says so.
