@@ -147,25 +147,34 @@ class ClassLinePlotWindow(QMainWindow):
         outer = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(outer, stretch=1)
 
-        # One GraphicsLayoutWidget holding both plots, the way linked plots are
-        # built elsewhere: plots in one layout share its row geometry, so a
-        # deflection sits at the same height in the trace and the histogram.
-        # The filename is a label spanning both columns rather than the trace's
-        # title, which would shorten the trace's view alone.
-        self._glw = pg.GraphicsLayoutWidget()
-        self._glw.setBackground(style.SURFACE)
-        self._title_lbl = self._glw.addLabel(" ", row=0, col=0, colspan=2)
+        # Trace and its sideways histogram as two plots in a splitter, as in
+        # variable_window: the divider stays draggable, and the Y link keeps a
+        # deflection at the same height in both. That only holds while the two
+        # plot areas are the same height, so nothing sits above or below either
+        # plot alone — the filename is a label over both, and the status and
+        # caption lines run under the whole window.
+        plots_col = QWidget()
+        plots_v = QVBoxLayout(plots_col)
+        plots_v.setContentsMargins(0, 0, 0, 0)
+        plots_v.setSpacing(2)
+        self._title_lbl = QLabel(" ")
+        self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        plots_v.addWidget(self._title_lbl)
 
-        self._plot = self._glw.addPlot(row=1, col=0)
+        hsplit = QSplitter(Qt.Orientation.Horizontal)
+        plots_v.addWidget(hsplit, stretch=1)
+
+        self._plot = pg.PlotWidget()
         set_si_label(self._plot, "bottom", "Piezo",      _quant.NM)
         set_si_label(self._plot, "left",   "Deflection", _quant.NM)
         self._plot.showGrid(x=True, y=True, alpha=0.2)
         self._curve = sample_marks.trace(self._plot, color=style.SIG_RETRACT)
+        hsplit.addWidget(self._plot)
 
         self._build_hist_plot()
-        self._glw.ci.layout.setColumnStretchFactor(0, 5)
-        self._glw.ci.layout.setColumnStretchFactor(1, 2)
-        outer.addWidget(self._glw)
+        hsplit.addWidget(self._hist_plot)
+        hsplit.setSizes([620, 240])
+        outer.addWidget(plots_col)
 
         self._list = QListWidget()
         self._list.setMinimumWidth(140)
@@ -178,8 +187,8 @@ class ClassLinePlotWindow(QMainWindow):
         outer.setStretchFactor(1, 0)
         outer.setSizes([860, 240])
 
-        # Under both plots, full width: under either column alone a label would
-        # shorten that plot and break the alignment the shared layout gives.
+        # Under both plots, full width: under either plot alone a label would
+        # shorten that plot and break the alignment of the linked Y axes.
         self._status_lbl = QLabel("")
         self._status_lbl.setWordWrap(True)
         self._status_lbl.setFont(font)
@@ -218,15 +227,17 @@ class ClassLinePlotWindow(QMainWindow):
         The Y axis is linked to the trace, so a bin lines up with the deflection
         it describes and both panels zoom together.
         """
-        self._hist_plot = self._glw.addPlot(row=1, col=1)
+        self._hist_plot = pg.PlotWidget()
         self._hist_plot.showGrid(x=True, y=True, alpha=0.2)
         self._hist_plot.setLabel("bottom", "Fraction of samples")
-        self._hist_plot.hideAxis("left")
+        # Values hidden, axis kept: the axis draws the horizontal grid lines,
+        # and the trace's own axis already carries the deflection scale.
+        self._hist_plot.getAxis("left").setStyle(showValues=False)
         self._hist_plot.setLogMode(x=True, y=False)
         # A log axis carries its own decades; an SI prefix on top of them would
         # relabel 10^-3 as "1" and hide the factor in the axis title.
         self._hist_plot.getAxis("bottom").enableAutoSIPrefix(False)
-        self._hist_plot.setYLink(self._plot)
+        self._hist_plot.getViewBox().setYLink(self._plot.getViewBox())
 
         # Staircase corners: every bin edge twice, so a count spans its bin
         # rather than being drawn at a point in the middle of it.
@@ -339,7 +350,8 @@ class ClassLinePlotWindow(QMainWindow):
         n_cohort = len(self._cohort_paths)
         if n_cohort == 0:
             return ""
-        parts = [f"Non-events: {n_binned:,} of {n_cohort:,} binned"]
+        parts = ["Blue: this curve · grey: non-events · orange: events",
+                 f"Non-events: {n_binned:,} of {n_cohort:,} binned"]
         if n_binned < n_cohort:
             parts.append(
                 f"{n_cohort - n_binned:,} not yet binned — a curve is binned "
