@@ -1227,6 +1227,8 @@ class EventSummaryWindow(QMainWindow):
         ("l_c_nm",            "l_c_nm"),
         ("l_c_err_nm",        "l_c_err"),
         ("n_fit_pts",         "n_fit_pts"),
+        ("fit_status",        "fit_status"),
+        ("fit_detail",        "fit_detail"),
         ("rupture_force_pN",  "rupture_force_pN"),
         ("dX_from_prev_nm",   "dX_from_prev_nm"),
         ("dF_from_prev_pN",   "dF_from_prev_pN"),

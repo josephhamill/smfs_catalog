@@ -81,6 +81,8 @@ def _seg_row(roi: ROI, i: int, *, file_id, path, roi_index: int) -> dict:
         # alongside every other numeric column here.
         "edge_pinned": None if seg.edge_pinned is None else int(bool(seg.edge_pinned)),
         "n_fit_pts":   seg.n_pts,
+        "fit_status":  seg.fit_status,
+        "fit_detail":  seg.fit_detail,
         "rupture_force_pN": rup.force_pN,
         # dX/dF from the PREVIOUS rupture (None for the first).
         "dX_from_prev_nm": roi.dX_pairs[i - 1] if i > 0 else None,
