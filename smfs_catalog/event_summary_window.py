@@ -14,9 +14,10 @@
 # everything as a hit, so turning off every filter IS the events view.
 #
 # 2×2 grid layout:
-#   Upper-left  : scatter — X = contour length (nm), Y = rupture force (pN)
-#   Upper-right : force histogram (transposed: Y = force, X = count; Y linked to scatter)
-#   Lower-left  : contour-length histogram (X = length, Y = count; X linked to scatter)
+#   Upper-left  : scatter — any variable on X and Y (variables.available),
+#                 opening on extension at rupture vs rupture force
+#   Upper-right : Y histogram (transposed: X = count; Y linked to scatter)
+#   Lower-left  : X histogram (Y = count; X linked to scatter)
 #   Lower-right : empty (reserved)
 #
 # Hits are drawn red, non-hits gray — the REAL criteria_gate.evaluate()
@@ -30,13 +31,16 @@
 # A crosshair cursor in the scatter + matching lines in both histograms
 # marks the current curve when it is a confirmed event.
 #
-# Force/length come from each curve's CURRENTLY SELECTED segment (Ultimate/
-# Penultimate — see the dashboard's Segment combo), read live from event_map
-# via roi_pipeline.segment_summary_bulk: force = that segment's terminating
-# rupture's force_pN, length = that segment's WLC l_c_nm. A curve contributes
-# a point only when both exist for the selected segment (e.g. blank under
-# Penultimate if the curve has only one segment) — never a fabricated value.
-# There is no separate stage-one force gate here.
+# The plotted X/Y come from variables.columns, so seg_* values follow each
+# curve's CURRENTLY SELECTED segment (Ultimate/Penultimate and manual
+# overrides) exactly as the queue table does. A curve contributes a point only
+# when both values exist — never a fabricated value — and the Why dialog says
+# why each missing curve is missing.
+#
+# The cohort handed to the 2DH windows, Isoforce and the WLC navigator is NOT
+# the plotted set: it is still the curves with a selected-segment rupture force
+# AND contour length (_force_arr/_length_arr, population_ledger), whatever the
+# axes show, so changing an axis never changes a downstream cohort.
 #
 # Pre-populated from the DB at open time (no curve loading required).
 
@@ -73,8 +77,9 @@ from . import ledger as _ledger
 from . import histogram_binning as _hb
 from . import style
 from . import clustering as _clustering
-from .widgets import ClusterColourBar, FlowLayout, LabeledControl
-from .qt_utils import _make_session_header, set_si_label, fit_on_screen
+from . import variables as _vars
+from .widgets import ClusterColourBar, FlowLayout, LabeledControl, VariableCombo
+from .qt_utils import _DateAxis, _make_session_header, set_si_label, fit_on_screen
 from .quantities import format_value as _q   # ONE formatter: unit and
 # meaningful digits come from quantities.py, so the same measurement
 # cannot print as 166, 166.2 and 166.20 in three different windows.
@@ -90,6 +95,21 @@ _EVENT_RGBA = style.HIT_RGBA
 _HIST_HIT_RGBA     = style.rgba(style.INK_STRONG, 190)   # bars: opaque enough to read
 _HIST_NON_HIT_RGBA = style.rgba(style.INK_FAINT, 190)
 _CURS_PEN   = pg.mkPen(style.INK, width=1.5, style=Qt.PenStyle.DashLine)
+
+# Model-free by default: both are read off the force peak before any WLC fit,
+# so a curve whose fit failed is still plotted.
+_DEFAULT_X = "seg_x_rupture_nm"
+_DEFAULT_Y = "seg_force_pN"
+
+# seg_* variables that exist only once the selected segment got far enough
+# through roi_events.fit_segments, so a missing value is explained by that
+# segment's stored fit outcome. The rest (ROI-level deltas, segment count) can
+# be missing for reasons the fit outcome does not describe.
+_SEGMENT_FIT_KEYS = frozenset({
+    "seg_l_p_nm", "seg_l_c_nm", "seg_l_p_err", "seg_l_c_err",
+    "seg_force_pN", "seg_x_rupture_nm", "seg_x_junction_nm",
+    "seg_tau", "seg_z_max", "seg_x_max_nm", "seg_edge_pinned",
+})
 
 
 def _vsep() -> QFrame:
@@ -124,14 +144,12 @@ def drop_breakdown_lines(led) -> list[str]:
 
 class EventSummaryWindow(QMainWindow):
     """
-    Displays all confirmed rupture events together as a scatter of
-    rupture force (pN) vs contour length (nm), with linked marginal histograms.
-    Both values come from each curve's currently selected segment (Ultimate/
-    Penultimate), read from event_map — see module docstring.
+    Displays all confirmed rupture events together as a scatter of any two
+    variables, with linked marginal histograms — see module docstring.
 
     Pre-populates from the DB on construction; live updates go through
-    reload_paths(), which re-reads force/length from event_map via
-    segment_summary_bulk — never recomputed locally in this window.
+    reload_paths(), which re-reads every value from the DB — never recomputed
+    locally in this window.
 
     Navigation in RawCurveWindow moves a crosshair cursor to the current
     curve's position in the scatter (or hides it for non-events).
@@ -160,18 +178,25 @@ class EventSummaryWindow(QMainWindow):
         # Population-keyed ("hit"/"non_hit") so fitting/2DH-building the
         # Population selector's two sides never collide or silently reuse
         # each other's window — see module docstring.
-        self._gmm_wins:      dict   = {}   # population → GmmFitWindow
+        self._gmm_wins:      dict   = {}   # "population:x_key:y_key" → GmmFitWindow
         self._norm_2dh_wins: dict   = {}   # population → Normalized2DHWindow
         self._phys_2dh_wins: dict   = {}   # population → Physical2DHWindow
         self._2dh_wins:     list   = []   # registered via set_2dh_window()
         self._fit_wins:      dict   = {}   # "label (population)" → DistFitWindow
         n                  = len(prepass_results)
 
-        # Per-curve event arrays — NaN = no value for the selected segment
+        # Per-curve event arrays — NaN = no value for the selected segment.
+        # Force/length define the downstream cohort (module docstring); X/Y are
+        # what is plotted.
         self._force_arr  = np.full(n, np.nan)   # selected segment's rupture force (pN)
         self._length_arr = np.full(n, np.nan)   # selected segment's WLC contour length (nm)
+        self._x_arr      = np.full(n, np.nan)
+        self._y_arr      = np.full(n, np.nan)
+        self._vars = _vars.available(
+            [r.get("path") for r in prepass_results if r.get("path")], self._db_path)
+        self._var_by_key = {v.key: v for v in self._vars}
         # Selected segment's stored fit outcome, None until loaded — see
-        # _prepopulate and _record_unplottable.
+        # _prepopulate and _record_missing.
         self._seg_outcome: list[dict | None] = [None] * n
         # Real criteria_gate.evaluate() split, recomputed every _rebuild() —
         # True = hit. Kept over the FULL self._results (not just plotted
@@ -180,7 +205,6 @@ class EventSummaryWindow(QMainWindow):
         # drawn.
         self._hit_mask = np.zeros(n, dtype=bool)
         self._active_population = "hit"   # "hit" | "non_hit" — what the action row computes over
-        self._n_events           = 0
         self._current_index    = 0
         self._selected_index: int | None = None   # user selection (≠ playhead cursor)
         # Which segment (Ultimate/Penultimate, the dashboard's global Segment
@@ -240,6 +264,22 @@ class EventSummaryWindow(QMainWindow):
         self._cluster_bar.changed.connect(self._rebuild)
         root.addWidget(self._cluster_bar)
 
+        # Axis choice — what is drawn, like the Show checkboxes; the downstream
+        # cohort does not follow it (module docstring).
+        axis_row = QHBoxLayout()
+        axis_row.setContentsMargins(0, 0, 0, 0)
+        self._x_combo = VariableCombo(self._vars, _DEFAULT_X)
+        self._y_combo = VariableCombo(self._vars, _DEFAULT_Y)
+        self._swap_btn = QPushButton("Swap axes")
+        self._swap_btn.clicked.connect(self._on_swap_axes)
+        axis_row.addWidget(LabeledControl("X:", self._x_combo))
+        axis_row.addWidget(LabeledControl("Y:", self._y_combo))
+        axis_row.addWidget(self._swap_btn)
+        axis_row.addStretch()
+        root.addLayout(axis_row)
+        self._x_combo.currentIndexChanged.connect(self._on_axes_changed)
+        self._y_combo.currentIndexChanged.connect(self._on_axes_changed)
+
         # ── Action row — Filtering + Show checkboxes, Population selector, fit
         # buttons, 2DH buttons, exports, View individual events.
         #
@@ -288,14 +328,13 @@ class EventSummaryWindow(QMainWindow):
 
         action_row.addWidget(_vsep())
 
-        self._fit_force_btn = QPushButton("Fit force…")
-        self._fit_force_btn.clicked.connect(self._on_fit_force)
-        action_row.addWidget(self._fit_force_btn)
-        self._fit_length_btn = QPushButton("Fit length…")
-        self._fit_length_btn.clicked.connect(self._on_fit_length)
-        action_row.addWidget(self._fit_length_btn)
+        self._fit_x_btn = QPushButton("Fit X…")
+        self._fit_x_btn.clicked.connect(self._on_fit_x)
+        action_row.addWidget(self._fit_x_btn)
+        self._fit_y_btn = QPushButton("Fit Y…")
+        self._fit_y_btn.clicked.connect(self._on_fit_y)
+        action_row.addWidget(self._fit_y_btn)
         self._fit_2d_btn = QPushButton("Fit 2D…")
-        self._fit_2d_btn.setToolTip("Fit a 2D Gaussian Mixture Model to the force × length scatter.")
         self._fit_2d_btn.clicked.connect(self._on_fit_2d)
         action_row.addWidget(self._fit_2d_btn)
         self._isoforce_btn = QPushButton("Isoforce…")
@@ -328,19 +367,14 @@ class EventSummaryWindow(QMainWindow):
         # Fit buttons above: exports the selector's current population, not
         # whatever the Show checkboxes happen to be displaying.
         self._export_scatter_btn = QPushButton("Export scatter…")
-        self._export_scatter_btn.setToolTip(
-            "filename, contour length (WLC fit, l_c), rupture force (selected segment) — one row per point."
-        )
         self._export_scatter_btn.clicked.connect(self._on_export_scatter)
         action_row.addWidget(self._export_scatter_btn)
-        self._export_force_hist_btn = QPushButton("Export force hist…")
-        self._export_force_hist_btn.setToolTip("bin_left, bin_right, count — every value included, none dropped off the edges.")
-        self._export_force_hist_btn.clicked.connect(self._on_export_force_hist)
-        action_row.addWidget(self._export_force_hist_btn)
-        self._export_length_hist_btn = QPushButton("Export length hist…")
-        self._export_length_hist_btn.setToolTip("bin_left, bin_right, count — every value included, none dropped off the edges.")
-        self._export_length_hist_btn.clicked.connect(self._on_export_length_hist)
-        action_row.addWidget(self._export_length_hist_btn)
+        self._export_x_hist_btn = QPushButton("Export X hist…")
+        self._export_x_hist_btn.clicked.connect(self._on_export_x_hist)
+        action_row.addWidget(self._export_x_hist_btn)
+        self._export_y_hist_btn = QPushButton("Export Y hist…")
+        self._export_y_hist_btn.clicked.connect(self._on_export_y_hist)
+        action_row.addWidget(self._export_y_hist_btn)
         self._export_rois_btn = QPushButton("Export ROI/segment rows…")
         self._export_rois_btn.setToolTip(
             "One row per ROI segment, not per curve: every rupture in every ROI "
@@ -368,8 +402,8 @@ class EventSummaryWindow(QMainWindow):
 
         # ── 2×2 grid via nested splitters ─────────────────────────────────────
         # Outer horizontal splitter: plot grid | right-hand side panel.
-        # Plot grid left column  : scatter (top) + contour-length histogram (bottom)
-        # Plot grid right column : force histogram (top)  + empty widget (bottom)
+        # Plot grid left column  : scatter (top) + X histogram (bottom)
+        # Plot grid right column : Y histogram (top)  + empty widget (bottom)
         # Side panel (on the RIGHT, matching WlcViewWindow's track list): fit
         # status over the event file-list (click a event to inspect it,
         # double-click to open the WLC fit view) — "View individual events"
@@ -405,10 +439,6 @@ class EventSummaryWindow(QMainWindow):
 
         # ── Upper-left: scatter ────────────────────────────────────────────────
         self._scatter_plot = pg.PlotWidget()
-        set_si_label(self._scatter_plot, "left",
-                     f"Rupture force {style.FORCE} (selected segment)", _quant.PN)
-        set_si_label(self._scatter_plot, "bottom",
-                     f"Contour length {style.L_C} (WLC fit)", _quant.NM)
         self._scatter_plot.showGrid(x=True, y=True, alpha=0.2)
 
         # Small translucent dots make density readable as tone.
@@ -438,61 +468,61 @@ class EventSummaryWindow(QMainWindow):
 
         vsplit_left.addWidget(self._scatter_plot)
 
-        # ── Lower-left: contour-length histogram (X linked to scatter X) ──────
-        self._len_hist_plot = pg.PlotWidget()
-        self._len_hist_plot.setLabel("left", "Count")
-        self._len_hist_plot.showGrid(x=True, y=True, alpha=0.2)
-        self._len_hist_plot.getAxis("bottom").setStyle(showValues=False)
-        self._len_hist_plot.getViewBox().setXLink(self._scatter_plot.getViewBox())
+        # ── Lower-left: X histogram (X linked to scatter X) ────────────────────
+        self._x_hist_plot = pg.PlotWidget()
+        self._x_hist_plot.setLabel("left", "Count")
+        self._x_hist_plot.showGrid(x=True, y=True, alpha=0.2)
+        self._x_hist_plot.getAxis("bottom").setStyle(showValues=False)
+        self._x_hist_plot.getViewBox().setXLink(self._scatter_plot.getViewBox())
 
-        self._len_bar_pass = pg.BarGraphItem(
+        self._x_bar_pass = pg.BarGraphItem(
             x0=[], x1=[], y0=[], y1=[],
             pen=pg.mkPen(None), brush=pg.mkBrush(*_HIST_HIT_RGBA),
         )
-        self._len_bar_fail = pg.BarGraphItem(
+        self._x_bar_fail = pg.BarGraphItem(
             x0=[], x1=[], y0=[], y1=[],
             pen=pg.mkPen(None), brush=pg.mkBrush(*_HIST_NON_HIT_RGBA),
         )
-        self._len_hist_plot.addItem(self._len_bar_fail)
-        self._len_hist_plot.addItem(self._len_bar_pass)
+        self._x_hist_plot.addItem(self._x_bar_fail)
+        self._x_hist_plot.addItem(self._x_bar_pass)
 
-        # Cursor line in length histogram (vertical — tracks X)
-        self._len_cursor = pg.InfiniteLine(angle=90, movable=False, pen=_CURS_PEN)
-        self._len_cursor.hide()
-        self._len_hist_plot.addItem(self._len_cursor)
+        # Cursor line in X histogram (vertical — tracks X)
+        self._x_hist_cursor = pg.InfiniteLine(angle=90, movable=False, pen=_CURS_PEN)
+        self._x_hist_cursor.hide()
+        self._x_hist_plot.addItem(self._x_hist_cursor)
 
-        vsplit_left.addWidget(self._len_hist_plot)
+        vsplit_left.addWidget(self._x_hist_plot)
         vsplit_left.setSizes([480, 180])
 
-        # ── Upper-right: force histogram (Y linked to scatter Y) ──────────────
-        self._hist_plot = pg.PlotWidget()
-        self._hist_plot.setLabel("bottom", "Count")
-        self._hist_plot.showGrid(x=True, y=True, alpha=0.2)
-        self._hist_plot.getAxis("left").setStyle(showValues=False)
-        self._hist_plot.getViewBox().setYLink(self._scatter_plot.getViewBox())
+        # ── Upper-right: Y histogram (Y linked to scatter Y) ──────────────────
+        self._y_hist_plot = pg.PlotWidget()
+        self._y_hist_plot.setLabel("bottom", "Count")
+        self._y_hist_plot.showGrid(x=True, y=True, alpha=0.2)
+        self._y_hist_plot.getAxis("left").setStyle(showValues=False)
+        self._y_hist_plot.getViewBox().setYLink(self._scatter_plot.getViewBox())
 
-        self._hist_bar_pass = pg.BarGraphItem(
+        self._y_bar_pass = pg.BarGraphItem(
             x0=[], x1=[], y0=[], y1=[],
             pen=pg.mkPen(None), brush=pg.mkBrush(*_HIST_HIT_RGBA),
         )
-        self._hist_bar_fail = pg.BarGraphItem(
+        self._y_bar_fail = pg.BarGraphItem(
             x0=[], x1=[], y0=[], y1=[],
             pen=pg.mkPen(None), brush=pg.mkBrush(*_HIST_NON_HIT_RGBA),
         )
         # Per-cluster 1DH outlines, created empty and populated by
         # _draw_cluster_curves.  Held as lists so a change of k adds or removes
         # curves without either panel needing to know k in advance.
-        self._hist_curves: list = []
-        self._len_curves:  list = []
-        self._hist_plot.addItem(self._hist_bar_fail)
-        self._hist_plot.addItem(self._hist_bar_pass)
+        self._y_hist_curves: list = []
+        self._x_hist_curves:  list = []
+        self._y_hist_plot.addItem(self._y_bar_fail)
+        self._y_hist_plot.addItem(self._y_bar_pass)
 
-        # Cursor line in force histogram (horizontal — tracks Y)
-        self._hist_cursor = pg.InfiniteLine(angle=0, movable=False, pen=_CURS_PEN)
-        self._hist_cursor.hide()
-        self._hist_plot.addItem(self._hist_cursor)
+        # Cursor line in Y histogram (horizontal — tracks Y)
+        self._y_hist_cursor = pg.InfiniteLine(angle=0, movable=False, pen=_CURS_PEN)
+        self._y_hist_cursor.hide()
+        self._y_hist_plot.addItem(self._y_hist_cursor)
 
-        vsplit_right.addWidget(self._hist_plot)
+        vsplit_right.addWidget(self._y_hist_plot)
 
         # ── Lower-right: empty (reserved) ─────────────────────────────────────
         vsplit_right.addWidget(QWidget())
@@ -500,15 +530,15 @@ class EventSummaryWindow(QMainWindow):
 
         hsplit.setSizes([780, 280])
 
+        self._apply_axis_labels()
         self._prepopulate()
 
     # ── Pre-population ────────────────────────────────────────────────────────
 
     def _prepopulate(self) -> None:
-        """Load force/length from each curve's currently selected segment
-        (Ultimate/Penultimate) via event_map. A curve contributes a point only
-        when both the selected segment's force and l_c exist — blank
-        otherwise (e.g. Penultimate on a curve with only one segment), never a
+        """Load the downstream force/length, each curve's stored fit outcome,
+        and the plotted X/Y, all for the currently selected segment. Missing
+        values stay NaN (e.g. Penultimate on a one-segment curve), never a
         fabricated value."""
         try:
             from .roi_pipeline import read_segment_select, segment_summary_bulk
@@ -528,9 +558,8 @@ class EventSummaryWindow(QMainWindow):
                     "n_segments": sd.get("n_segments"),
                     "fit_status": sd.get("fit_status"),
                     "fit_detail": sd.get("fit_detail"),
-                    "has_force":  force is not None,
-                    "has_length": length is not None,
                 }
+            self._load_axes()
             self._load_error = None
         except Exception as exc:
             # A summary window is an inspector, so a DB/read failure must not
@@ -557,6 +586,71 @@ class EventSummaryWindow(QMainWindow):
             for win in self._2dh_wins:
                 win.sync_from_event_summary(self)
 
+    # ── Axes ──────────────────────────────────────────────────────────────────
+
+    @property
+    def _x_key(self) -> str:
+        return self._x_combo.currentData()
+
+    @property
+    def _y_key(self) -> str:
+        return self._y_combo.currentData()
+
+    def _axis_label(self, key: str) -> str:
+        return self._var_by_key[key].label if key in self._var_by_key else _vars.label(key)
+
+    def _load_axes(self) -> None:
+        """Read the plotted X/Y for every loaded curve (NaN where missing)."""
+        n = len(self._results)
+        self._x_arr = np.full(n, np.nan)
+        self._y_arr = np.full(n, np.nan)
+        idx = [i for i, r in enumerate(self._results) if r.get("path")]
+        if not idx:
+            return
+        xk, yk = self._x_key, self._y_key
+        _order, cols = _vars.columns([self._results[i]["path"] for i in idx],
+                                     list(dict.fromkeys((xk, yk))), self._db_path)
+        self._x_arr[idx] = cols[xk]
+        self._y_arr[idx] = cols[yk]
+
+    def _apply_axis_labels(self) -> None:
+        xk, yk = self._x_key, self._y_key
+        for side, key in (("bottom", xk), ("left", yk)):
+            if key == _vars.TIME_KEY:
+                self._scatter_plot.setAxisItems({side: _DateAxis(orientation=side)})
+                self._scatter_plot.setLabel(side, "Acquisition time")
+            else:
+                self._scatter_plot.setAxisItems({side: pg.AxisItem(side)})
+                set_si_label(self._scatter_plot, side,
+                             style.mathify(self._axis_label(key)), key=key, si=False)
+        for btn, what, key in ((self._fit_x_btn, "Fit a distribution to", xk),
+                               (self._fit_y_btn, "Fit a distribution to", yk),
+                               (self._export_x_hist_btn, "Histogram of", xk),
+                               (self._export_y_hist_btn, "Histogram of", yk)):
+            btn.setToolTip(f"{what} {self._axis_label(key)}, over the selected population.")
+        self._fit_2d_btn.setToolTip(
+            f"Fit a 2D Gaussian Mixture Model to {self._axis_label(yk)} × "
+            f"{self._axis_label(xk)}.")
+        self._export_scatter_btn.setToolTip(
+            f"path, {self._axis_label(xk)}, {self._axis_label(yk)} — one row per point.")
+
+    def _on_axes_changed(self) -> None:
+        try:
+            self._load_axes()
+            self._load_error = None
+        except Exception as exc:
+            self._load_error = f"{type(exc).__name__}: {exc}"
+        self._apply_axis_labels()
+        # A new axis is a different view, not new data: open fit snapshots are
+        # keyed by their variable and stay valid, so no revision bump here.
+        self._data_signature = self._current_data_signature()
+        self._rebuild()
+        self._update_cursor(self._current_index)
+
+    def _on_swap_axes(self) -> None:
+        VariableCombo.swap(self._x_combo, self._y_combo)
+        self._on_axes_changed()
+
     @staticmethod
     def _window_is_visible(win) -> bool:
         try:
@@ -578,6 +672,9 @@ class EventSummaryWindow(QMainWindow):
             tuple(r.get("path") for r in self._results),
             tuple(_value(v) for v in self._force_arr),
             tuple(_value(v) for v in self._length_arr),
+            (self._x_key, self._y_key),
+            tuple(_value(v) for v in self._x_arr),
+            tuple(_value(v) for v in self._y_arr),
             tuple(bool(v) for v in self._hit_mask),
             self._load_error,
         )
@@ -609,12 +706,11 @@ class EventSummaryWindow(QMainWindow):
         hit_set = set(hits)
         self._hit_mask = np.array([bool(p) and p in hit_set for p in paths], dtype=bool)
 
-        valid = ~np.isnan(self._force_arr) & ~np.isnan(self._length_arr)
+        valid = ~np.isnan(self._y_arr) & ~np.isnan(self._x_arr)
         idx_v = np.where(valid)[0]
-        f_v   = self._force_arr[valid]
-        l_v   = self._length_arr[valid]
+        y_v   = self._y_arr[valid]
+        x_v   = self._x_arr[valid]
         hit_v = self._hit_mask[valid]
-        self._n_events = int(valid.sum())
 
         # Show hits / Show non-hits — display only (module docstring). Hidden
         # points are simply excluded from what's drawn/counted below; the
@@ -647,16 +743,16 @@ class EventSummaryWindow(QMainWindow):
                     lbl = cl.label_for(paths[i]) if paths[i] else None
                     brush = (style.scatter_brush(style.series_labeled(lbl))
                              if lbl is not None else fallback)
-                    out.append({"pos": (float(l_v[j]), float(f_v[j])),
+                    out.append({"pos": (float(x_v[j]), float(y_v[j])),
                                 "data": i, "brush": brush,
                                 "pen": pg.mkPen(None)})
                 return out
             self._scatter_pass.setData(_spots(pas, event_brush))
             self._scatter_fail.setData(_spots(fail, fail_brush))
         else:
-            self._scatter_pass.setData(x=l_v[pas].tolist(),  y=f_v[pas].tolist(),
+            self._scatter_pass.setData(x=x_v[pas].tolist(),  y=y_v[pas].tolist(),
                                        data=idx_v[pas].tolist(),  brush=event_brush)
-            self._scatter_fail.setData(x=l_v[fail].tolist(), y=f_v[fail].tolist(),
+            self._scatter_fail.setData(x=x_v[fail].tolist(), y=y_v[fail].tolist(),
                                        data=idx_v[fail].tolist(), brush=fail_brush)
 
         # Geometry from histogram_binning, the same module the EXPORT of these
@@ -664,53 +760,53 @@ class EventSummaryWindow(QMainWindow):
         # convention variable_window draws on screen. Robust range plus
         # Freedman-Diaconis width; what falls outside is counted and reported,
         # never silently dropped.
-        f_bins = _hb.robust_bins(f_v) if len(f_v) else None
-        l_bins = _hb.robust_bins(l_v) if len(l_v) else None
+        y_bins = _hb.robust_bins(y_v) if len(y_v) else None
+        x_bins = _hb.robust_bins(x_v) if len(x_v) else None
 
-        if f_bins is not None and l_bins is not None:
-            self._hist_n_out = (f_bins.n_out_of_range, l_bins.n_out_of_range)
+        if y_bins is not None and x_bins is not None:
+            self._hist_n_out = (y_bins.n_out_of_range, x_bins.n_out_of_range)
 
-            # Force histogram (transposed: bars along Y axis) — hit/non-hit
+            # Y histogram (transposed: bars along Y axis) — hit/non-hit
             # stacked end-to-end (hit 0→cp, non-hit cp→cp+cf) so both remain
             # visible. Bin edges span ALL valid points regardless of the Show
             # checkboxes, so toggling visibility never moves the axis.
-            f_edges = f_bins.edges
-            cp_f = f_bins.count(f_v[pas])
-            cf_f = f_bins.count(f_v[fail])
-            y0, y1  = f_edges[:-1], f_edges[1:]
-            self._hist_bar_pass.setOpts(x0=np.zeros(len(cp_f)), x1=cp_f, y0=y0, y1=y1,
+            y_edges = y_bins.edges
+            cp_y = y_bins.count(y_v[pas])
+            cf_y = y_bins.count(y_v[fail])
+            y0, y1  = y_edges[:-1], y_edges[1:]
+            self._y_bar_pass.setOpts(x0=np.zeros(len(cp_y)), x1=cp_y, y0=y0, y1=y1,
                                         brush=bar_hit_brush)
-            self._hist_bar_fail.setOpts(x0=cp_f, x1=cp_f + cf_f, y0=y0, y1=y1,
+            self._y_bar_fail.setOpts(x0=cp_y, x1=cp_y + cf_y, y0=y0, y1=y1,
                                         brush=bar_non_brush)
-            # Draw one curve per cluster for both force and length.
+            # Draw one curve per cluster for both axes.
             # Overlaid step outlines rather than stacked bars — stacking hides
             # the very shapes being compared, which is the whole point of
             # drawing them per cluster.  The hit/non-hit bars stay underneath
             # as the substrate; the cluster curves are the reading.
             shown = pas | fail
             self._draw_cluster_curves(cl, paths, idx_v, shown,
-                                      f_v, f_bins, self._hist_curves, transposed=True)
+                                      y_v, y_bins, self._y_hist_curves, transposed=True)
             self._draw_cluster_curves(cl, paths, idx_v, shown,
-                                      l_v, l_bins, self._len_curves, transposed=False)
+                                      x_v, x_bins, self._x_hist_curves, transposed=False)
 
-            # Contour-length histogram (standard: bars along X axis) — same stacking.
-            l_edges = l_bins.edges
-            cp_l = l_bins.count(l_v[pas])
-            cf_l = l_bins.count(l_v[fail])
-            x0, x1  = l_edges[:-1], l_edges[1:]
-            self._len_bar_pass.setOpts(x0=x0, x1=x1, y0=np.zeros(len(cp_l)), y1=cp_l,
+            # X histogram (standard: bars along X axis) — same stacking.
+            x_edges = x_bins.edges
+            cp_x = x_bins.count(x_v[pas])
+            cf_x = x_bins.count(x_v[fail])
+            x0, x1  = x_edges[:-1], x_edges[1:]
+            self._x_bar_pass.setOpts(x0=x0, x1=x1, y0=np.zeros(len(cp_x)), y1=cp_x,
                                        brush=bar_hit_brush)
-            self._len_bar_fail.setOpts(x0=x0, x1=x1, y0=cp_l, y1=cp_l + cf_l,
+            self._x_bar_fail.setOpts(x0=x0, x1=x1, y0=cp_x, y1=cp_x + cf_x,
                                        brush=bar_non_brush)
         else:
             self._hist_n_out = (0, 0)
-            for bar in (self._hist_bar_pass, self._hist_bar_fail,
-                        self._len_bar_pass,  self._len_bar_fail):
+            for bar in (self._y_bar_pass, self._y_bar_fail,
+                        self._x_bar_pass,  self._x_bar_fail):
                 bar.setOpts(x0=[], x1=[], y0=[], y1=[])
             self._draw_cluster_curves(None, paths, idx_v, None, None, None,
-                                      self._hist_curves, transposed=True)
+                                      self._y_hist_curves, transposed=True)
             self._draw_cluster_curves(None, paths, idx_v, None, None, None,
-                                      self._len_curves, transposed=False)
+                                      self._x_hist_curves, transposed=False)
 
         self._cluster_bar.refresh([p for p in paths if p])
         self._update_title()   # before _update_stats, which shows its summary
@@ -729,7 +825,7 @@ class EventSummaryWindow(QMainWindow):
         `transposed` because the force panel draws its bars along Y and the
         length panel along X; the counts are identical, only the axes swap.
         """
-        plot = self._hist_plot if transposed else self._len_hist_plot
+        plot = self._y_hist_plot if transposed else self._x_hist_plot
         for item in store:
             plot.removeItem(item)
         store.clear()
@@ -776,44 +872,44 @@ class EventSummaryWindow(QMainWindow):
         """
         paths = [r.get("path") or "" for r in self._results]
         led = _ledger.Ledger("Explore Events plottability", paths)
+        axes = [(self._x_key, self._x_arr), (self._y_key, self._y_arr)]
         for i, p in enumerate(paths):
             if p:
-                self._record_unplottable(led, i, p)
+                self._record_missing(led, i, p, axes)
         return led
 
-    def _record_unplottable(self, led: _ledger.Ledger, i: int, p: str) -> None:
-        """Drop curve i from `led` if it has no point to plot, with the reason.
+    def _record_missing(self, led: _ledger.Ledger, i: int, p: str, axes) -> None:
+        """Drop curve i from `led` if any (key, values) in `axes` lacks a value
+        for it, with the reason.
 
-        The reason comes from the selected segment's stored outcome when it
-        has been loaded: no stored analysis, no such segment, or the fit
-        outcome the pipeline recorded. Without it, only which value is missing
-        can be said.
+        For a missing seg_* value the reason comes from the selected segment's
+        stored outcome when it has been loaded: no stored analysis, no such
+        segment, or the fit outcome the pipeline recorded. Otherwise the drop
+        names the variables with no value.
         """
-        f_missing = bool(np.isnan(self._force_arr[i]))
-        l_missing = bool(np.isnan(self._length_arr[i]))
-        if not (f_missing or l_missing):
+        missing = [k for k, arr in axes if np.isnan(arr[i])]
+        if not missing:
             return
-        detail = f"segment: {self._segment_select or '?'}"
+        seg_txt = f"segment: {self._segment_select or '?'}"
+        seg_missing = [k for k in missing
+                       if _vars.source_of(k) == _vars.SOURCE_SEGMENT]
         o = self._seg_outcome[i] if i < len(self._seg_outcome) else None
-        if o is not None:
+        if o is not None and seg_missing:
             if o["n_segments"] is None:
                 led.drop(p, "no_stored_segments")
                 return
             if o["fit_status"] is None:
-                led.drop(p, "no_segment_chosen", detail)
+                led.drop(p, "no_segment_chosen", seg_txt)
                 return
-            if o["fit_status"] in ("no_fit", "not_attempted"):
+            if (o["fit_status"] in ("no_fit", "not_attempted")
+                    and any(k in _SEGMENT_FIT_KEYS for k in seg_missing)):
                 reason = ("fit_failed" if o["fit_detail"] == "optimizer failed"
                           else "fit_not_attempted")
                 led.drop(p, reason,
-                         f"{o['fit_detail'] or 'fitter did not run'}; {detail}")
+                         f"{o['fit_detail'] or 'fitter did not run'}; {seg_txt}")
                 return
-        if f_missing and l_missing:
-            led.drop(p, "no_fit", detail)
-        elif f_missing:
-            led.drop(p, "no_force", detail)
-        else:
-            led.drop(p, "no_length", detail)
+        detail = "no " + ", no ".join(self._axis_label(k) for k in dict.fromkeys(missing))
+        led.drop(p, "not_finite", f"{detail}; {seg_txt}" if seg_missing else detail)
 
     def _on_show_drops(self) -> None:
         """The tally and the journey, for the curves this window couldn't plot."""
@@ -821,9 +917,9 @@ class EventSummaryWindow(QMainWindow):
         if led.n_dropped == 0:
             QMessageBox.information(
                 self, "Dropped curves",
-                f"Nothing dropped — all {led.n_asked:,} curves in this "
-                f"population have a force and a contour length for the "
-                f"selected segment.")
+                f"Nothing dropped — all {led.n_asked:,} curves have "
+                f"{self._axis_label(self._x_key)} and "
+                f"{self._axis_label(self._y_key)}.")
             return
         lines = [led.summary("plotted"), ""]
         lines += drop_breakdown_lines(led)
@@ -864,12 +960,12 @@ class EventSummaryWindow(QMainWindow):
         # The histograms use the robust range, so their tails sit outside the
         # bars while remaining in the scatter and in every number here.  Say so
         # rather than leave the shorter bar count unexplained.
-        n_out_f, n_out_l = getattr(self, "_hist_n_out", (0, 0))
+        n_out_y, n_out_x = getattr(self, "_hist_n_out", (0, 0))
         bin_txt = (f"   |   histogram range excludes "
-                   f"{n_out_f} force / {n_out_l} length outliers"
-                   if (n_out_f or n_out_l) else "")
+                   f"{n_out_x} X / {n_out_y} Y outliers"
+                   if (n_out_x or n_out_y) else "")
 
-        valid = ~np.isnan(self._force_arr) & ~np.isnan(self._length_arr)
+        valid = ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
         shown = np.zeros(len(valid), dtype=bool)
         if self._show_hits_chk.isChecked():
             shown |= valid & self._hit_mask
@@ -882,16 +978,14 @@ class EventSummaryWindow(QMainWindow):
             self._stats_label.setText(
                 f"{self._population_summary}   |   0 events shown{drop_txt}")
             return
-        f_v = self._force_arr[shown]
-        l_v = self._length_arr[shown]
-        f_mean, f_med = (_q("seg_force_pN", v, with_unit=True)
-                         for v in (np.mean(f_v), np.median(f_v)))
-        l_mean, l_med = (_q("seg_l_c_nm", v, with_unit=True)
-                         for v in (np.mean(l_v), np.median(l_v)))
+        parts = []
+        for key, arr in ((self._x_key, self._x_arr), (self._y_key, self._y_arr)):
+            v = arr[shown]
+            mean, med = (_q(key, s, with_unit=True) for s in (np.mean(v), np.median(v)))
+            parts.append(f"{self._axis_label(key)}: mean {mean}  median {med}")
         self._stats_label.setText(
             f"{self._population_summary}   |   {n} shown{drop_txt}{bin_txt}   |   "
-            f"force: mean {f_mean}  median {f_med}   |   "
-            f"length: mean {l_mean}  median {l_med}"
+            + "   |   ".join(parts)
         )
 
     # ── Selection / inspection linking ────────────────────────────────────────
@@ -899,7 +993,7 @@ class EventSummaryWindow(QMainWindow):
     def _rebuild_list(self) -> None:
         """Repopulate the side event-list from what's currently shown (Show
         checkboxes — matches the scatter), preserving the selection by path."""
-        valid = ~np.isnan(self._force_arr) & ~np.isnan(self._length_arr)
+        valid = ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
         shown = np.zeros(len(valid), dtype=bool)
         if self._show_hits_chk.isChecked():
             shown |= valid & self._hit_mask
@@ -963,14 +1057,14 @@ class EventSummaryWindow(QMainWindow):
 
     def _update_sel_marker(self) -> None:
         i = self._selected_index
-        if i is None or not (0 <= i < len(self._force_arr)):
+        if i is None or not (0 <= i < len(self._x_arr)):
             self._sel_marker.hide()
             return
-        f = self._force_arr[i]; l = self._length_arr[i]
-        if np.isnan(f) or np.isnan(l):
+        x = self._x_arr[i]; y = self._y_arr[i]
+        if np.isnan(x) or np.isnan(y):
             self._sel_marker.hide()
             return
-        self._sel_marker.setData(x=[l], y=[f])
+        self._sel_marker.setData(x=[x], y=[y])
         self._sel_marker.show()
 
     def _update_sel_readout(self) -> None:
@@ -982,40 +1076,40 @@ class EventSummaryWindow(QMainWindow):
             self._sel_label.setText("")
             return
         name = Path(self._results[i].get("path") or "").name
-        f = self._force_arr[i]; l = self._length_arr[i]
-        if np.isnan(f) or np.isnan(l):
+        x = self._x_arr[i]; y = self._y_arr[i]
+        if np.isnan(x) or np.isnan(y):
             self._sel_label.setText(f"Selected: {name}")
         else:
             self._sel_label.setText(
                 f"Selected: {name}   —   "
-                f"force {_q('seg_force_pN', f, with_unit=True)}, "
-                f"length {_q('seg_l_c_nm', l, with_unit=True)}"
+                f"{self._axis_label(self._x_key)} {_q(self._x_key, x, with_unit=True)}, "
+                f"{self._axis_label(self._y_key)} {_q(self._y_key, y, with_unit=True)}"
             )
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 
     def _update_cursor(self, index: int) -> None:
-        if not (0 <= index < len(self._force_arr)):
+        if not (0 <= index < len(self._x_arr)):
             self._hide_cursor()
             self._view_fit_btn.setEnabled(False)
             return
-        f = self._force_arr[index]
-        l = self._length_arr[index]
-        is_event = not np.isnan(f) and not np.isnan(l)
-        if is_event:
-            self._cursor_v.setValue(l); self._cursor_v.show()
-            self._cursor_h.setValue(f); self._cursor_h.show()
-            self._hist_cursor.setValue(f); self._hist_cursor.show()
-            self._len_cursor.setValue(l);  self._len_cursor.show()
+        x = self._x_arr[index]
+        y = self._y_arr[index]
+        if not np.isnan(x) and not np.isnan(y):
+            self._cursor_v.setValue(x); self._cursor_v.show()
+            self._cursor_h.setValue(y); self._cursor_h.show()
+            self._y_hist_cursor.setValue(y); self._y_hist_cursor.show()
+            self._x_hist_cursor.setValue(x);  self._x_hist_cursor.show()
         else:
             self._hide_cursor()
-        self._view_fit_btn.setEnabled(self._n_events > 0)
+        self._view_fit_btn.setEnabled(
+            bool(np.any(~np.isnan(self._force_arr) & ~np.isnan(self._length_arr))))
 
     def _hide_cursor(self) -> None:
         self._cursor_v.hide()
         self._cursor_h.hide()
-        self._hist_cursor.hide()
-        self._len_cursor.hide()
+        self._y_hist_cursor.hide()
+        self._x_hist_cursor.hide()
 
     def set_criteria_opener(self, cb) -> None:
         """Register the dashboard's Criteria-dialog opener so the in-window
@@ -1067,6 +1161,8 @@ class EventSummaryWindow(QMainWindow):
         n                = len(self._results)
         self._force_arr  = np.full(n, np.nan)
         self._length_arr = np.full(n, np.nan)
+        self._x_arr      = np.full(n, np.nan)
+        self._y_arr      = np.full(n, np.nan)
         self._seg_outcome = [None] * n
         if self._current_index >= n:
             self._current_index = 0
@@ -1113,12 +1209,12 @@ class EventSummaryWindow(QMainWindow):
         return self._cluster_bar.legend_text(
             [r.get("path") for r in self._results if r.get("path")])
 
-    def _provenance_caption(self, n: int | None = None) -> str:
+    def _provenance_caption(self, n: int | None = None, axes=None) -> str:
         """What produced the values a fit window is about to run on —
         population + the Ultimate/Penultimate segment (see _update_title's
         note). Threaded into DistFitWindow/GmmFitWindow as an on-canvas
         caption so it isn't lost the moment a fit pops out into its own
-        window."""
+        window. `axes` are the (key, values) fitted; see population_ledger."""
         seg = {"ultimate": "Ultimate", "penultimate": "Penultimate"}.get(
             self._segment_select, self._segment_select or "?"
         )
@@ -1126,7 +1222,7 @@ class EventSummaryWindow(QMainWindow):
         if n is not None:
             # Both fit windows put the cohort caption on-canvas and into their
             # export manifest, so saying it here reaches both.
-            led = self.population_ledger(self._active_population)
+            led = self.population_ledger(self._active_population, axes)
             parts.append(f"{n} points of {led.n_asked} events"
                          if led.n_asked != n else f"{n} points")
             if led.n_dropped:
@@ -1141,32 +1237,30 @@ class EventSummaryWindow(QMainWindow):
         values it selects — so a fit window can name the data it fitted."""
         return [self._results[int(i)].get("path", "") for i in np.where(sel)[0]]
 
-    def _on_fit_force(self) -> None:
-        sel = self._population_mask() & ~np.isnan(self._force_arr)
-        valid = self._force_arr[sel]
-        if len(valid) < 5:
-            return
-        self._open_fit_window("Rupture force (selected segment)", "pN", valid,
-                              self._paths_for_mask(sel))
+    def _on_fit_x(self) -> None:
+        self._fit_axis(self._x_key, self._x_arr)
 
-    def _on_fit_length(self) -> None:
-        sel = self._population_mask() & ~np.isnan(self._length_arr)
-        valid = self._length_arr[sel]
+    def _on_fit_y(self) -> None:
+        self._fit_axis(self._y_key, self._y_arr)
+
+    def _fit_axis(self, key: str, arr: np.ndarray) -> None:
+        sel = self._population_mask() & ~np.isnan(arr)
+        valid = arr[sel]
         if len(valid) < 5:
             return
-        self._open_fit_window("Contour length (WLC fit, l_c)", "nm", valid,
-                              self._paths_for_mask(sel))
+        self._open_fit_window(self._axis_label(key), _quant.unit_of(key), valid,
+                              self._paths_for_mask(sel), axes=[(key, arr)])
 
     def _on_fit_2d(self) -> None:
-        sel = self._population_mask() & ~np.isnan(self._force_arr) & ~np.isnan(self._length_arr)
-        f_v = self._force_arr[sel]
-        l_v = self._length_arr[sel]
-        if len(f_v) < 5:
+        xk, yk = self._x_key, self._y_key
+        sel = self._population_mask() & ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
+        pop_xy = np.column_stack([self._x_arr[sel], self._y_arr[sel]])
+        if len(pop_xy) < 5:
             return
-        pop_xy = np.column_stack([l_v, f_v])
 
         pop = self._active_population
-        existing = self._gmm_wins.get(pop)
+        gmm_key = f"{pop}:{xk}:{yk}"
+        existing = self._gmm_wins.get(gmm_key)
         if existing is not None and existing.isVisible():
             if getattr(existing, "_event_summary_revision", None) == self._data_revision:
                 existing.raise_()
@@ -1175,15 +1269,17 @@ class EventSummaryWindow(QMainWindow):
             existing.close()
 
         from .gmm_fit_window import GmmFitWindow
+        axes = [(xk, self._x_arr), (yk, self._y_arr)]
         win = GmmFitWindow(pop_xy, self._db_path,
-                           caption=self._provenance_caption(len(pop_xy)),
-                           paths=self._paths_for_mask(sel))
-        self._gmm_wins[pop] = win
+                           caption=self._provenance_caption(len(pop_xy), axes),
+                           paths=self._paths_for_mask(sel),
+                           x_key=xk, y_key=yk)
+        self._gmm_wins[gmm_key] = win
         win._event_summary_revision = self._data_revision
         win.show()
 
     def _open_fit_window(self, label: str, units: str, pass_values: np.ndarray,
-                         paths: list[str] | None = None) -> None:
+                         paths: list[str] | None = None, axes=None) -> None:
         if len(pass_values) < 5:
             return
         from .dist_fit_window import DistFitWindow
@@ -1197,7 +1293,7 @@ class EventSummaryWindow(QMainWindow):
             existing.close()
         win = DistFitWindow(
             key, units, pass_values, self._db_path,
-            caption=self._provenance_caption(len(pass_values)),
+            caption=self._provenance_caption(len(pass_values), axes),
             paths=paths,
         )
         self._fit_wins[key] = win
@@ -1206,22 +1302,25 @@ class EventSummaryWindow(QMainWindow):
 
     # ── Export ────────────────────────────────────────────────────────────────
 
-    def export_provenance(self) -> dict:
+    def export_provenance(self, axes=None) -> dict:
         """This window's settings, for an export manifest — the same protocol
         method the 2DH windows implement (base_2dh_window.export_provenance).
         Segment selection is here because it silently decides what every
         seg_* number in this window MEANS; an export that didn't record it
-        would be ambiguous the moment the toggle moved."""
+        would be ambiguous the moment the toggle moved. `axes` are the
+        (key, values) the export draws on; see population_ledger."""
         # The drop tally travels with every export from this window.
         # A manifest is read months later by someone with no access to the
         # window that produced it, so a row count with nothing saying what it
         # was drawn FROM is exactly the unverifiable claim this issue is
         # about — the same reason the file list is already in here.
-        led = self.population_ledger(self._active_population)
+        led = self.population_ledger(self._active_population, axes)
         return {
             "window":         "explore_events",
             "population":     self._active_population,
             "segment_select": self._segment_select,
+            "x_variable":     self._x_key,
+            "y_variable":     self._y_key,
             "n_events_loaded": len(self._results),
             "population_drops": led.manifest(),
             **_clustering.provenance(
@@ -1230,46 +1329,42 @@ class EventSummaryWindow(QMainWindow):
         }
 
     def _on_export_scatter(self) -> None:
-        sel = self._population_mask() & ~np.isnan(self._force_arr) & ~np.isnan(self._length_arr)
+        xk, yk = self._x_key, self._y_key
+        sel = self._population_mask() & ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
         idx = np.where(sel)[0]
         if len(idx) == 0:
             QMessageBox.information(self, "Export scatter",
                                      "No points in the selected population.")
             return
-        # The fit uncertainties for these same curves. Read fresh from the
-        # same source that populated the plotted arrays (segment_summary_bulk
-        # over event_map, no curve loading), rather than carried in two more
-        # parallel arrays that the window's two separate load paths would both
-        # have to keep in sync.
-        # Without these the export gives a point with no error bar, while the
-        # very same numbers sit in the DB and in the queue table.
-        from .roi_pipeline import segment_summary_bulk
-        sel_paths = [self._results[int(i)]["path"] for i in idx]
-        seg = segment_summary_bulk(sel_paths, self._segment_select, self._db_path)
-
-        def _err(path, key):
-            v = (seg.get(_db.normalize_path(path)) or {}).get(key)
-            return "" if v is None else float(v)
-
         # Full path, not Path(...).name — a basename can't identify a curve
         # in a catalog where the same filename recurs across directories.
-        rows = [
-            (p,
-             float(self._length_arr[i]), _err(p, "l_c_err"),
-             float(self._force_arr[i]),
-             _err(p, "l_p_nm"), _err(p, "l_p_err"))
-            for i, p in zip(idx, sel_paths)
-        ]
-        cols = ["path", "contour_length_nm", "l_c_err_nm", "rupture_force_pN",
-                "l_p_nm", "l_p_err_nm"]
+        sel_paths = [self._results[int(i)]["path"] for i in idx]
+        # A WLC parameter on an axis travels with its fit uncertainty, read
+        # from the same register as the plotted values: without it the export
+        # gives a point with no error bar while the number sits in the DB.
+        errs = {k: k[:-len("_nm")] + "_err" for k in dict.fromkeys((xk, yk))
+                if k.endswith("_nm") and k[:-len("_nm")] + "_err" in _SEGMENT_FIT_KEYS}
+        err_cols = (_vars.columns(sel_paths, list(errs.values()), self._db_path)[1]
+                    if errs else {})
+
+        cols, series = ["path"], [sel_paths]
+        for key, arr in dict(((xk, self._x_arr), (yk, self._y_arr))).items():
+            cols.append(key)
+            series.append([float(v) for v in arr[idx]])
+            if key in errs:
+                cols.append(errs[key])
+                series.append(["" if np.isnan(v) else float(v)
+                               for v in err_cols[errs[key]]])
+        rows = list(zip(*series))
+        axes = [(xk, self._x_arr), (yk, self._y_arr)]
         with _export.export_group(
             self._db_path,
-            f"scatter_force_length_{self._active_population}",
-            [".csv"], kind="scatter_force_length",
+            f"scatter_{_export.slug(yk)}_vs_{_export.slug(xk)}_{self._active_population}",
+            [".csv"], kind="scatter_xy",
         ) as g:
-            g.contributing_files(r[0] for r in rows)
-            g.note_dict(self.export_provenance())
-            g.note(columns=cols, n_points=len(rows))
+            g.contributing_files(sel_paths)
+            g.note_dict(self.export_provenance(axes))
+            g.note(columns=cols, units=_quant.units_for(cols[1:]), n_points=len(rows))
             g.table(".csv", cols, rows)
         QMessageBox.information(
             self, "Export scatter", f"{len(rows)} points.\n\n{g.message()}")
@@ -1365,13 +1460,14 @@ class EventSummaryWindow(QMainWindow):
             f"the current parameter set).\n\n{g.message()}"
         )
 
-    def _on_export_force_hist(self) -> None:
-        self._export_histogram(self._force_arr, "force_pN", "force")
+    def _on_export_x_hist(self) -> None:
+        self._export_histogram(self._x_key, self._x_arr)
 
-    def _on_export_length_hist(self) -> None:
-        self._export_histogram(self._length_arr, "length_nm", "length")
+    def _on_export_y_hist(self) -> None:
+        self._export_histogram(self._y_key, self._y_arr)
 
-    def _export_histogram(self, arr: np.ndarray, stem_suffix: str, label: str) -> None:
+    def _export_histogram(self, key: str, arr: np.ndarray) -> None:
+        stem_suffix, label = _export.slug(key), self._axis_label(key)
         sel = self._population_mask() & ~np.isnan(arr)
         values = arr[sel]
         title = f"Export {label} histogram"
@@ -1395,9 +1491,10 @@ class EventSummaryWindow(QMainWindow):
             [".csv"], kind=f"histogram_{stem_suffix}",
         ) as g:
             g.contributing_files(contributing)
-            g.note_dict(self.export_provenance())
+            g.note_dict(self.export_provenance([(key, arr)]))
             g.note(
-                variable=stem_suffix,
+                variable=key,
+                unit=_quant.unit_of(key),
                 n_values=int(len(values)),
                 n_binned=int(counts.sum()),
                 n_bins=int(bins.n_bins),
@@ -1436,14 +1533,18 @@ class EventSummaryWindow(QMainWindow):
                 break
         return self._experimentalist
 
-    def population_ledger(self, which: str) -> _ledger.Ledger:
+    def population_ledger(self, which: str, axes=None) -> _ledger.Ledger:
         """Who is in `which` population, and why anyone else is not.
 
-        Membership in a population ("is it a hit") and plottability ("does it
-        have force and length to draw") are different questions with
+        Membership in a population ("is it a hit") and completeness ("does it
+        have the values this consumer needs") are different questions with
         different remedies — retune the criteria vs. re-analyse the curve —
         and answering both with one list meant a 2DH received an
         already-filtered cohort and could not tell that it had been filtered.
+
+        `axes` is the (key, values) list a curve must have. The default is the
+        selected segment's rupture force and contour length: the downstream
+        cohort, which does not follow the plotted axes (module docstring).
 
         `asked` is the whole loaded events population, so the ledger reports
         against the number in the visible population summary rather than an
@@ -1453,6 +1554,8 @@ class EventSummaryWindow(QMainWindow):
         """
         paths = [r.get("path") or "" for r in self._results]
         led = _ledger.Ledger("Explore Events population", paths)
+        if axes is None:
+            axes = [("seg_force_pN", self._force_arr), ("seg_l_c_nm", self._length_arr)]
 
         live = self._live_hit_mask()
         mask = live if which == "hit" else ~live
@@ -1463,7 +1566,7 @@ class EventSummaryWindow(QMainWindow):
             if not mask[i]:
                 led.drop(p, "not_in_population", other)
                 continue
-            self._record_unplottable(led, i, p)
+            self._record_missing(led, i, p, axes)
         return led
 
     def population_paths(self, which: str) -> list[str]:
@@ -1550,9 +1653,9 @@ class EventSummaryWindow(QMainWindow):
     # ── WLC view ──────────────────────────────────────────────────────────────
 
     def _current_event_paths(self) -> list[str]:
-        """Paths currently shown (Show checkboxes) with a usable segment fit
-        — matches the side list/scatter, so View Fit navigates exactly what's
-        on screen."""
+        """Paths currently shown (Show checkboxes) with a selected-segment
+        rupture force and contour length — the WLC navigator's cohort, which
+        does not follow the plotted axes (module docstring)."""
         show_hit = self._show_hits_chk.isChecked()
         show_non = self._show_nonhits_chk.isChecked()
         paths: list[str] = []

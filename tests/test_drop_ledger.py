@@ -349,23 +349,31 @@ import numpy as np
 from PyQt6.QtWidgets import QApplication
 _app = QApplication.instance() or QApplication([])
 from smfs_catalog.event_summary_window import EventSummaryWindow
+from smfs_catalog import variables as _vars
 
 ev = EventSummaryWindow([{"path": p} for p in PATHS], DB)
 ev._segment_select = "ultimate"
 # file 0 fully plottable; file 1 has force but no length; file 2 has neither.
 ev._force_arr[:]  = [10.0, 20.0, np.nan]
 ev._length_arr[:] = [50.0, np.nan, np.nan]
+ev._y_arr[:] = ev._force_arr
+ev._x_arr[:] = ev._length_arr
 # Values set by hand, so no stored outcome describes them; stored-outcome
 # reasons are covered in test_explore_events_drop_reasons.
 ev._seg_outcome[:] = [None, None, None]
 ev._rebuild()
 
 pled = ev.population_ledger("hit")
-reasons = {d.path: d.reason for d in pled.drops()}
-check("a curve with no fit at all is reported as no_fit",
-      reasons.get(PATHS[2]) == "no_fit")
-check("a curve missing only the length says so, not 'no fit'",
-      reasons.get(PATHS[1]) == "no_length")
+drops = {d.path: d for d in pled.drops()}
+check("a curve with neither value names both",
+      drops[PATHS[2]].reason == "not_finite"
+      and _vars.label("seg_force_pN") in drops[PATHS[2]].detail
+      and _vars.label("seg_l_c_nm") in drops[PATHS[2]].detail)
+check("a curve missing only the length names only the length",
+      drops[PATHS[1]].reason == "not_finite"
+      and _vars.label("seg_l_c_nm") in drops[PATHS[1]].detail
+      and _vars.label("seg_force_pN") not in drops[PATHS[1]].detail)
+reasons = {p: d.reason for p, d in drops.items()}
 check("population_paths is exactly the ledger's survivors",
       ev.population_paths("hit") == pled.kept())
 

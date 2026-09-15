@@ -333,7 +333,7 @@ class CancelableProgress:
 
 class _DateAxis(pg.AxisItem):
     """
-    Bottom axis that formats Unix timestamps (seconds since epoch) as
+    Axis that formats Unix timestamps (seconds since epoch) as
     human-readable date/time strings.
 
     Inherits from plain AxisItem — NOT DateAxisItem — to avoid PyQtGraph's
@@ -349,8 +349,8 @@ class _DateAxis(pg.AxisItem):
         else      → YYYY-MM-DD
     """
 
-    def __init__(self, **kwargs):
-        super().__init__(orientation="bottom", **kwargs)
+    def __init__(self, orientation: str = "bottom", **kwargs):
+        super().__init__(orientation=orientation, **kwargs)
         self.enableAutoSIPrefix(False)   # keep scale = 1.0 always
 
     def updateAutoSIPrefix(self):

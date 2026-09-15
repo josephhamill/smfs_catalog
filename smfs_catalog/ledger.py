@@ -56,8 +56,6 @@ DROP_REASONS: dict[str, str] = {
     "no_fit":             "the chosen segment's WLC fit produced no l_p/l_c",
     "fit_not_attempted":  "fit not attempted",
     "fit_failed":         "fit failed",
-    "no_force":           "no rupture force for the chosen segment",
-    "no_length":          "no contour length for the chosen segment",
     "not_in_catalog":     "file is not in the catalog",
     "unreadable":         "the curve file could not be read",
     "no_landmarks":       "landmarks missing — no ROI to build from",
