@@ -262,7 +262,7 @@ class _TwoDHWindowBase(QMainWindow):
         # next live refresh (sync_from_event_summary reads population_paths
         # for exactly this population, every time).
         self._population = population
-        pop_label = "Hits" if population == "hit" else "Non-Hits"
+        pop_label = _ledger.population_label(population)
         self.setWindowTitle(f"{window_title}  ({pop_label})")
         self.setWindowFlag(Qt.WindowType.Window)
         fit_on_screen(self, 750, 600)
@@ -521,7 +521,7 @@ class _TwoDHWindowBase(QMainWindow):
     }
 
     def _provenance_caption(self) -> str:
-        pop_label = "Hits" if self._population == "hit" else "Non-Hits"
+        pop_label = _ledger.population_label(self._population)
         seg_label = self._SEG_LABELS.get(self._align_segment, self._align_segment)
         n = len(self._event_histograms)
         parts = [

@@ -21,14 +21,15 @@
 #   Lower-right : empty (reserved)
 #
 # Hits are drawn red, non-hits gray — the REAL criteria_gate.evaluate()
-# split, not a proxy. Two independent controls, deliberately kept separate:
-#   - Show hits / Show non-hits checkboxes — display only, which population(s)
-#     are drawn. Never changes what a computation below sees.
-#   - Scope selector (Hits / Non-Hits / Both) — the population EVERY result
-#     is computed over: the fit drawn on the scatter, Fit X/Y/2D, Isoforce,
-#     the 2DH builds and every export. Explicit and visible in the toggle
-#     state, never inferred from what's shown. Isoforce and the 2DH builds are
-#     disabled under Both: an ensemble is one population's, by definition.
+# split, not a proxy.
+#
+# ONE population control (Hits / Non-Hits / Both): what is drawn IS what is
+# analysed. The scatter, both histograms, the event list, the plotted count,
+# the fit on the scatter, Fit X/Y/2D, Isoforce, the 2DH builds and every
+# export all take that one population, so no number on screen can describe
+# curves that are not on screen. Under Both the 2DH builds and Isoforce take
+# every event: an ensemble is a histogram over the curves it is handed, and
+# cluster structure that crosses the criteria only appears in a mixed one.
 #
 # A crosshair cursor in the scatter + matching lines in both histograms
 # marks the current curve when it is a confirmed event.
@@ -292,8 +293,8 @@ class EventSummaryWindow(QMainWindow):
         self._cluster_bar.changed.connect(self._rebuild)
         root.addWidget(self._cluster_bar)
 
-        # Axis choice — what is drawn, like the Show checkboxes; the downstream
-        # cohort does not follow it (module docstring).
+        # Axis choice — what is plotted; the downstream cohort handed to the
+        # 2DH windows and the WLC navigator does not follow it (module docstring).
         axis_row = QHBoxLayout()
         axis_row.setContentsMargins(0, 0, 0, 0)
         self._x_combo = VariableCombo(self._vars, _DEFAULT_X)
@@ -334,7 +335,7 @@ class EventSummaryWindow(QMainWindow):
         self._x_combo.currentIndexChanged.connect(self._on_axes_changed)
         self._y_combo.currentIndexChanged.connect(self._on_axes_changed)
 
-        # ── Action row — Filtering + Show checkboxes, scope selector, fit
+        # ── Action row — Filtering, the population control, fit
         # buttons, 2DH buttons, exports, View individual events.
         #
         # A FlowLayout, because as one QHBoxLayout these fourteen buttons and
@@ -351,35 +352,20 @@ class EventSummaryWindow(QMainWindow):
         self._criteria_btn.clicked.connect(self._on_open_criteria)
         action_row.addWidget(self._criteria_btn)
 
-        # Show hits / Show non-hits — display only, never changes what a
-        # computation below sees (module docstring).
-        self._show_hits_chk = QCheckBox("Show hits")
-        self._show_hits_chk.setChecked(True)
-        self._show_hits_chk.toggled.connect(self._rebuild)
-        self._show_nonhits_chk = QCheckBox("Show non-hits")
-        self._show_nonhits_chk.setChecked(True)
-        self._show_nonhits_chk.toggled.connect(self._rebuild)
-        action_row.addWidget(self._show_hits_chk)
-        action_row.addWidget(self._show_nonhits_chk)
-
-        action_row.addWidget(_vsep())
-
-        # Scope selector — the population EVERY number in this window is
-        # computed over, the drawn fit included (module docstring:
-        # deliberately independent of Show, which only draws).
+        # The window's one population control: what is drawn IS what is
+        # analysed (module docstring).
         self._pop_btns = {}
         self._pop_group = QButtonGroup(self)
         self._pop_group.setExclusive(True)
-        for pop, label in (("hit", "Hits"), ("non_hit", "Non-Hits"),
-                           ("both", "Both")):
-            btn = QPushButton(label)
+        for pop in ("hit", "non_hit", "both"):
+            btn = QPushButton("Both" if pop == "both"
+                              else _ledger.population_label(pop))
             btn.setCheckable(True)
             btn.setChecked(pop == "hit")
             btn.setToolTip(
-                "Every result in this window — the fit drawn on the scatter, "
-                "Fit X/Y/2D, Isoforce, both 2DH builds and all four exports — "
-                "is computed over this population. The Show checkboxes only "
-                "decide what is drawn."
+                "The population this window draws AND computes over: the "
+                "scatter, both histograms, the event list, the fit, "
+                "Fit X/Y/2D, Isoforce, the 2DH builds and every export."
             )
             btn.toggled.connect(
                 lambda checked, p=pop: self._on_population_toggled(checked, p))
@@ -387,7 +373,7 @@ class EventSummaryWindow(QMainWindow):
             self._pop_btns[pop] = btn
         # The caption travels with its buttons so a wrap cannot strand it.
         action_row.addWidget(LabeledControl(
-            "Analyse (fits, exports, 2DH):", *self._pop_btns.values()))
+            "Population (drawn and analysed):", *self._pop_btns.values()))
 
         action_row.addWidget(_vsep())
 
@@ -421,20 +407,13 @@ class EventSummaryWindow(QMainWindow):
         self._phys_2dh_btn.setToolTip("Open the total physical-units 2D histogram for these traces.")
         self._phys_2dh_btn.clicked.connect(self._on_open_physical_2dh)
         action_row.addWidget(self._phys_2dh_btn)
-        # Kept so the "pick one population" tooltip these three wear under
-        # Both can be taken off again, without a second copy of their text.
-        self._one_population_tips = {
-            btn: btn.toolTip() for btn in
-            (self._isoforce_btn, self._norm_2dh_btn, self._phys_2dh_btn)
-        }
 
         action_row.addWidget(_vsep())
 
         # Export writes to the configured database export directory.
         # override folder set from the dashboard's "Export folder…" button.
         # Reads self._population_mask()/self._active_population, same as the
-        # Fit buttons above: exports the selector's current population, not
-        # whatever the Show checkboxes happen to be displaying.
+        # Fit buttons above and the same curves the scatter draws.
         self._export_scatter_btn = QPushButton("Export scatter…")
         self._export_scatter_btn.clicked.connect(self._on_export_scatter)
         action_row.addWidget(self._export_scatter_btn)
@@ -792,11 +771,12 @@ class EventSummaryWindow(QMainWindow):
         x_v   = self._x_arr[valid]
         hit_v = self._hit_mask[valid]
 
-        # Show hits / Show non-hits — display only (module docstring). Hidden
-        # points are simply excluded from what's drawn/counted below; the
-        # underlying hit/non-hit split and self._hit_mask are untouched.
-        pas  = hit_v  & self._show_hits_chk.isChecked()
-        fail = ~hit_v & self._show_nonhits_chk.isChecked()
+        # One population control (module docstring): these two are the drawn
+        # tones AND the analysed set, so nothing on screen can describe curves
+        # that are not on it. The hit/non-hit split itself is untouched.
+        analysed = self._population_mask()[valid]
+        pas  = hit_v  & analysed
+        fail = ~hit_v & analysed
 
         # Scatter marks are translucent (thousands of overlapping points —
         # density should read as tone); histogram bars are the same two tones
@@ -810,9 +790,9 @@ class EventSummaryWindow(QMainWindow):
         # so scatter clicks can be mapped to a file.
         # Cluster colouring projects the 2DH clustering back onto these
         # two scalars.  It replaces the hit/non-hit TONE, not the hit/non-hit
-        # split: the Show checkboxes still decide what is drawn, so a
-        # non-hit stays hidden if you have hidden non-hits.  An unlabelled
-        # curve keeps the neutral tone rather than borrowing a cluster's hue.
+        # split: the population control still decides what is drawn, so a
+        # non-hit stays off the plot under Hits.  An unlabelled curve keeps the
+        # neutral tone rather than borrowing a cluster's hue.
         cluster_on = self._cluster_bar.is_active()
         cl = _clustering.current() if cluster_on else None
         if cl is not None:
@@ -835,10 +815,6 @@ class EventSummaryWindow(QMainWindow):
             self._scatter_fail.setData(x=x_v[fail].tolist(), y=y_v[fail].tolist(),
                                        data=idx_v[fail].tolist(), brush=fail_brush)
 
-        # The fit describes the ANALYSED population, never the drawn one: the
-        # Show checkboxes decide what is visible, and a number that moved when
-        # a curve was hidden would disagree with the same number in an export.
-        analysed = self._population_mask()[valid]
         self._fit_paths = [paths[int(i)] for i in idx_v[analysed]]
         self._render_fit(x_v[analysed], y_v[analysed])
 
@@ -1077,27 +1053,12 @@ class EventSummaryWindow(QMainWindow):
                                       for d in led.drops()))
         box.exec()
 
-    def _population_hidden_note(self) -> str:
-        """Said out loud when the analysed population is not on screen: the
-        fit and every export still describe it, so its absence from the plot
-        must not read as its absence from the results."""
-        drawn = ((self._show_hits_chk.isChecked() and "hit") or "",
-                 (self._show_nonhits_chk.isChecked() and "non_hit") or "")
-        needed = ("hit", "non_hit") if self._active_population == "both" \
-            else (self._active_population,)
-        missing = [p for p in needed if p not in drawn]
-        if not missing:
-            return ""
-        names = " and ".join("Hits" if p == "hit" else "Non-Hits" for p in missing)
-        return (f"⚠ {names} are hidden, but the fit and every export still "
-                f"describe {self._population_label()}.")
-
     def _update_stats(self) -> None:
-        """Stats reflect what's actually drawn (respects the Show checkboxes),
-        so the numbers on screen always match the plot underneath them — and
-        say what was dropped to get there, so the gap between this
-        number and the population summary is accounted for rather than left to be
-        noticed."""
+        """Stats describe the population control's population, which is also
+        what is drawn, so the numbers on screen always match the plot
+        underneath them — and say what was dropped to get there, so the gap
+        between this number and the population summary is accounted for rather
+        than left to be noticed."""
         if self._load_error is not None:
             self._stats_label.setText(
                 f"Could not load event summary values — {self._load_error}")
@@ -1108,9 +1069,7 @@ class EventSummaryWindow(QMainWindow):
         # Written before the early returns below: a stale fit line under a
         # "0 events shown" stats line would describe curves that are gone.
         self._fit_label.setText(self._fit_text())
-        self._warn_label.setText("\n".join(
-            note for note in (self._population_hidden_note(),
-                              getattr(self, "_fishing_note", "")) if note))
+        self._warn_label.setText(self._fishing_note)
 
         led = self._plottability_ledger()
         self._why_btn.setEnabled(led.n_dropped > 0)
@@ -1126,18 +1085,13 @@ class EventSummaryWindow(QMainWindow):
                    f"{n_out_x} X / {n_out_y} Y outliers"
                    if (n_out_x or n_out_y) else "")
 
-        valid = ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
-        shown = np.zeros(len(valid), dtype=bool)
-        if self._show_hits_chk.isChecked():
-            shown |= valid & self._hit_mask
-        if self._show_nonhits_chk.isChecked():
-            shown |= valid & ~self._hit_mask
+        shown = self._plotted_mask()
         n = int(shown.sum())
         if self._load_error is not None:
             return
         if n == 0:
             self._stats_label.setText(
-                f"{self._population_summary}   |   0 events shown{drop_txt}")
+                f"{self._population_summary}   |   0 events plotted{drop_txt}")
             return
         parts = []
         for key, arr in ((self._x_key, self._x_arr), (self._y_key, self._y_arr)):
@@ -1145,22 +1099,22 @@ class EventSummaryWindow(QMainWindow):
             mean, med = (_q(key, s, with_unit=True) for s in (np.mean(v), np.median(v)))
             parts.append(f"{self._axis_label(key)}: mean {mean}  median {med}")
         self._stats_label.setText(
-            f"{self._population_summary}   |   {n} shown{drop_txt}{bin_txt}   |   "
+            f"{self._population_summary}   |   {n} plotted{drop_txt}{bin_txt}   |   "
             + "   |   ".join(parts)
         )
 
     # ── Selection / inspection linking ────────────────────────────────────────
 
+    def _plotted_mask(self) -> np.ndarray:
+        """The curves actually on the scatter: the selected population's, with
+        both plotted values. The side list, the count in the stats line and
+        the scatter itself must not be able to disagree about this."""
+        return self._population_mask() & ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
+
     def _rebuild_list(self) -> None:
-        """Repopulate the side event-list from what's currently shown (Show
-        checkboxes — matches the scatter), preserving the selection by path."""
-        valid = ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
-        shown = np.zeros(len(valid), dtype=bool)
-        if self._show_hits_chk.isChecked():
-            shown |= valid & self._hit_mask
-        if self._show_nonhits_chk.isChecked():
-            shown |= valid & ~self._hit_mask
-        idx_v = np.where(shown)[0]
+        """Repopulate the side event-list from what is plotted, preserving the
+        selection by path."""
+        idx_v = np.where(self._plotted_mask())[0]
         prev_path = None
         if self._selected_index is not None and 0 <= self._selected_index < len(self._results):
             prev_path = self._results[self._selected_index].get("path")
@@ -1283,25 +1237,18 @@ class EventSummaryWindow(QMainWindow):
             self._criteria_opener()
 
     def _on_population_toggled(self, checked: bool, pop: str) -> None:
-        """A scope button was selected — the others clear via _pop_group.
+        """A population button was selected — the others clear via _pop_group.
 
-        Governs every result (the drawn fit, Fit X/Y/2D, Isoforce, 2DH builds,
-        every export), never what is drawn (see module docstring).
+        Governs what is drawn and every result computed from it (see module
+        docstring). Under "both" the 2DH builds and Isoforce take every event:
+        an ensemble is a histogram over the curves it is given, and cluster
+        structure that crosses the criteria only shows up in a mixed one.
         """
         if not checked:
             return
         self._active_population = pop
         self._fit_chk.setText(f"Linear fit ({self._population_label()})")
-        # A 2DH or an isoforce population is one ensemble; there is no such
-        # thing as a mixed one, so those buttons say so rather than quietly
-        # building something else.
-        one_population = pop != "both"
-        for btn, tip in self._one_population_tips.items():
-            btn.setEnabled(one_population)
-            btn.setToolTip(tip if one_population else
-                           "Select Hits or Non-Hits: this builds one "
-                           "population's ensemble.")
-        self._rebuild()   # the drawn fit follows the scope
+        self._rebuild()
 
     def set_raw_window(self, win) -> None:
         """Register the RawCurveWindow so WlcViewWindow can navigate back to a event."""
@@ -1355,8 +1302,7 @@ class EventSummaryWindow(QMainWindow):
     # ── Distribution fit pop-outs ─────────────────────────────────────────────
 
     def _population_label(self) -> str:
-        return {"hit": "Hits", "non_hit": "Non-Hits"}.get(
-            self._active_population, "all events")
+        return _ledger.population_label(self._active_population)
 
     def _live_hit_mask(self) -> np.ndarray:
         """Boolean mask over self._results, asked of the gate RIGHT NOW.
@@ -1802,11 +1748,10 @@ class EventSummaryWindow(QMainWindow):
 
     def population_paths(self, which: str) -> list[str]:
         """Paths with a usable segment fit belonging to `which` population
-        ("hit"/"non_hit"), independent of the scope selector's CURRENT
-        setting or the Show checkboxes. A 2DH window remembers which
-        population it was opened for and asks for exactly that one on every
-        refresh, so it stays correctly scoped even after the selector or
-        Show checkboxes change underneath it.
+        ("hit"/"non_hit"/"both"), independent of the population control's
+        CURRENT setting. A 2DH window remembers which population it was opened
+        for and asks for exactly that one on every refresh, so it stays
+        correctly scoped even after the control moves underneath it.
 
         The survivors of population_ledger() — callers wanting to report what
         they were given, not only what they got, should ask for the ledger
@@ -1884,21 +1829,13 @@ class EventSummaryWindow(QMainWindow):
     # ── WLC view ──────────────────────────────────────────────────────────────
 
     def _current_event_paths(self) -> list[str]:
-        """Paths currently shown (Show checkboxes) with a selected-segment
-        rupture force and contour length — the WLC navigator's cohort, which
-        does not follow the plotted axes (module docstring)."""
-        show_hit = self._show_hits_chk.isChecked()
-        show_non = self._show_nonhits_chk.isChecked()
-        paths: list[str] = []
-        for i in range(len(self._results)):
-            if np.isnan(self._force_arr[i]) or np.isnan(self._length_arr[i]):
-                continue
-            is_hit = bool(self._hit_mask[i])
-            if (is_hit and not show_hit) or (not is_hit and not show_non):
-                continue
-            p = self._results[i].get("path")
-            if p:
-                paths.append(p)
+        """The selected population's curves with a selected-segment rupture
+        force and contour length — the WLC navigator's cohort, which keeps
+        that requirement whatever the plotted axes are (module docstring)."""
+        sel = (self._population_mask()
+               & ~np.isnan(self._force_arr) & ~np.isnan(self._length_arr))
+        paths = [p for i in np.where(sel)[0]
+                 if (p := self._results[int(i)].get("path"))]
         dates = _db.get_measured_dates(paths, self._db_path)
         return sorted(paths, key=lambda p: (dates.get(p) or "", p))
 

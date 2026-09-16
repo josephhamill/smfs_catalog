@@ -271,31 +271,31 @@ def test_the_scatter_reports_and_exports_its_correlation(tmp_path, monkeypatch):
     win.close()
 
 
-def test_the_drawn_and_analysed_fits_are_one_number(tmp_path, monkeypatch):
-    """Hiding a population must not move a fitted number: the Show checkboxes
-    draw, the scope selector decides what every result is computed over."""
+def test_one_control_draws_and_analyses_the_same_curves(tmp_path, monkeypatch):
+    """What is plotted is what is analysed: the scatter, the event list, the
+    count and the fit all describe the population control's population."""
     from PyQt6.QtWidgets import QApplication
-    from smfs_catalog import export_utils
     _app = QApplication.instance() or QApplication([])
-    db, paths = _catalog_with_curves(tmp_path, 4)
-    out = tmp_path / "exports"
-    out.mkdir()
-    export_utils.set_export_dir_override(str(out), db)
-    monkeypatch.setattr("smfs_catalog.event_summary_window.QMessageBox.information",
-                        lambda *a, **k: None)
+    db, paths = _catalog_with_curves(tmp_path, 6)
 
     win = EventSummaryWindow([{"path": p} for p in paths], db)
-    slope = win._fit.slope
+    # The gate passes everything with no criteria checked, so the split is
+    # stated here instead: the first three curves are hits.
+    monkeypatch.setattr(win, "_live_hit_mask",
+                        lambda: np.array([True] * 3 + [False] * 3), raising=False)
+    win._rebuild()
 
-    win._show_nonhits_chk.setChecked(False)
-    assert win._fit.slope == slope
-    win._show_hits_chk.setChecked(False)              # analysed population hidden
-    assert win._fit.slope == slope
-    assert "hidden" in win._warn_label.text()
-
-    win._on_export_scatter()
-    (manifest_path,) = out.glob("scatter_*_manifest.json")
-    assert json.loads(manifest_path.read_text())["slope"] == pytest.approx(slope)
+    for pop, n_drawn in (("hit", 3), ("non_hit", 3), ("both", 6)):
+        win._pop_btns[pop].setChecked(True)
+        drawn = len(win._scatter_pass.points()) + len(win._scatter_fail.points())
+        assert drawn == n_drawn
+        assert win._event_list.count() == n_drawn
+        assert f"{n_drawn} plotted" in win._stats_label.text()
+        assert win._corr.n == n_drawn
+        assert win._fit_label.text().startswith(
+            f"fit — {'Hits' if pop == 'hit' else 'Non-Hits' if pop == 'non_hit' else 'All events'}:")
+        # The WLC navigator takes the same population.
+        assert len(win._current_event_paths()) == n_drawn
     win.close()
 
 
@@ -314,20 +314,18 @@ def test_both_exports_one_file_naming_each_row(tmp_path, monkeypatch):
     win._pop_btns["both"].setChecked(True)
 
     assert win._active_population == "both"
-    assert win._fit_chk.text() == "Linear fit (all events)"
-    # An ensemble is one population's, so these say so rather than build a mix.
-    assert not win._isoforce_btn.isEnabled()
-    assert not win._norm_2dh_btn.isEnabled()
-    assert not win._phys_2dh_btn.isEnabled()
+    assert win._fit_chk.text() == "Linear fit (All events)"
+    # A mixed ensemble is a legitimate one: these build over every event.
+    assert win._isoforce_btn.isEnabled()
+    assert win._norm_2dh_btn.isEnabled()
+    assert win._phys_2dh_btn.isEnabled()
+    assert sorted(win.population_paths("both")) == sorted(paths)
 
     win._on_export_scatter()
     (csv_path,) = out.glob("scatter_*_both_*.csv")
     header, *rows = csv_path.read_text().strip().splitlines()
     assert header.split(",")[1] == "hit"
     assert len(rows) == len(paths)
-
-    win._pop_btns["hit"].setChecked(True)
-    assert win._isoforce_btn.isEnabled()
     win.close()
 
 
