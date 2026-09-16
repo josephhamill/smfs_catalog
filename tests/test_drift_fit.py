@@ -217,18 +217,19 @@ def test_same_variable_scatter_does_not_manufacture_a_regression_record():
     from pathlib import Path
 
     src = (Path(__file__).resolve().parents[1] /
-           "smfs_catalog" / "scatter_window.py").read_text(encoding="utf-8")
-    assert "self._fit = None if same else _reg.linear_fit" in src
-    assert "self._corr = (None if same else" in src
+           "smfs_catalog" / "event_summary_window.py").read_text(encoding="utf-8")
+    assert "self._fit = None if same or len(x) < 3 else _reg.linear_fit" in src
+    assert "self._corr = (None if same or len(x) < 3 else" in src
+    assert "fit = None if xk == yk or len(x) < 3 else _reg.linear_fit" in src
 
 
-def test_scatter_window_does_not_offer_unreported_log_views():
+def test_the_event_scatter_does_not_offer_unreported_log_views():
     """The raw-scale analysis must not silently hide non-positive values or
     apply a logarithm to Unix timestamps through the date axis."""
     from pathlib import Path
 
     src = (Path(__file__).resolve().parents[1] /
-           "smfs_catalog" / "scatter_window.py").read_text(encoding="utf-8")
+           "smfs_catalog" / "event_summary_window.py").read_text(encoding="utf-8")
     assert "log X" not in src
     assert "log Y" not in src
     assert "setLogMode" not in src

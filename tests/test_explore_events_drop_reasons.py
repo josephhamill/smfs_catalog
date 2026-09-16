@@ -182,6 +182,94 @@ def test_axes_choose_what_is_plotted_but_not_the_downstream_cohort(tmp_path):
     win.close()
 
 
+def _catalog_with_curves(tmp_path, n):
+    """`n` fully fitted curves, each with a different force and extension."""
+    db = str(tmp_path / "many.sqlite")
+    _db.initialise(db)
+    paths = []
+    for i in range(n):
+        path = _db.normalize_path(f"/data/curve{i}.ibw")
+        conn = _db.get_connection(db)
+        with conn:
+            conn.execute(
+                "INSERT INTO files (path, filename, first_seen, last_seen, event)"
+                " VALUES (?, ?, datetime('now'), datetime('now'), 'event')",
+                (path, f"curve{i}.ibw"))
+        fid = conn.execute("SELECT id FROM files WHERE path=?", (path,)).fetchone()[0]
+        conn.close()
+        events = CurveEvents(detector="test", rois=[ROI(
+            onset_idx=0, return_idx=300, onset_piezo_nm=0.0, return_piezo_nm=300.0,
+            ruptures=[Rupture(idx=100, piezo_nm=100.0, d1_height=1.0, prominence=1.0,
+                              force_pN=50.0 + 10.0 * i, extension_nm=20.0 + 5.0 * i)],
+            segments=[Segment(left_idx=0, right_idx=100, left_piezo_nm=0.0,
+                              right_piezo_nm=100.0, l_p_nm=0.4,
+                              l_c_nm=60.0 + 4.0 * i, left_extension_nm=0.0,
+                              fit_status="fit_available")],
+        )])
+        _db.write_event_map(fid, json.dumps(events_to_payload(events)),
+                            json.dumps({"tag": "t"}), cache_version() or "test", db)
+        paths.append(path)
+    return db, paths
+
+
+def test_cluster_colours_are_placed_on_the_chosen_axes(tmp_path):
+    from PyQt6.QtWidgets import QApplication
+    from smfs_catalog import clustering as _cl
+    _app = QApplication.instance() or QApplication([])
+    db, paths = _catalog_with_curves(tmp_path, 4)
+    win = EventSummaryWindow([{"path": p} for p in paths], db)
+    try:
+        _cl.set_current(_cl.Clustering(
+            labels={p: i % 2 for i, p in enumerate(paths)},
+            k=2, seed=1, n_pcs=3, sklearn_version="test"))
+        win._cluster_bar._chk.setChecked(True)          # triggers a rebuild
+
+        assert win._cluster_bar.is_active()
+        drawn = {(round(s.pos().x(), 6), round(s.pos().y(), 6))
+                 for s in win._scatter_pass.points()}
+        assert drawn == {(round(float(x), 6), round(float(y), 6))
+                         for x, y in zip(win._x_arr, win._y_arr)}
+
+        win._y_combo.setCurrentIndex(win._y_combo.findData("seg_l_c_nm"))
+        moved = {(round(s.pos().x(), 6), round(s.pos().y(), 6))
+                 for s in win._scatter_pass.points()}
+        assert moved == {(round(float(x), 6), round(float(y), 6))
+                         for x, y in zip(win._x_arr, win._y_arr)}
+        assert moved != drawn
+    finally:
+        _cl.clear()
+        win.close()
+
+
+def test_the_scatter_reports_and_exports_its_correlation(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QApplication
+    from smfs_catalog import export_utils
+    _app = QApplication.instance() or QApplication([])
+    db, paths = _catalog_with_curves(tmp_path, 4)
+    out = tmp_path / "exports"
+    out.mkdir()
+    export_utils.set_export_dir_override(str(out), db)
+    monkeypatch.setattr("smfs_catalog.event_summary_window.QMessageBox.information",
+                        lambda *a, **k: None)
+
+    win = EventSummaryWindow([{"path": p} for p in paths], db)
+
+    assert win._corr is not None and win._fit is not None
+    assert "Spearman" in win._stats_label.text() and "R²" in win._stats_label.text()
+
+    win._on_export_scatter()
+    (manifest_path,) = out.glob("scatter_*_manifest.json")
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["slope"] == pytest.approx(win._fit.slope)
+    assert manifest["ci_pct"] and "fit_ci_lo" in manifest["columns"]
+
+    # X against itself is an identity, so it must not be reported as a result.
+    win._y_combo.setCurrentIndex(win._y_combo.findData(win._x_key))
+    assert win._fit is None and win._corr is None
+    assert "Spearman" not in win._stats_label.text()
+    win.close()
+
+
 def test_exports_follow_the_axes(tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QApplication
     from smfs_catalog import export_utils

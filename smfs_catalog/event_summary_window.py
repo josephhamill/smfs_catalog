@@ -77,6 +77,7 @@ from . import ledger as _ledger
 from . import histogram_binning as _hb
 from . import style
 from . import clustering as _clustering
+from . import regression as _reg
 from . import variables as _vars
 from .widgets import ClusterColourBar, FlowLayout, LabeledControl, VariableCombo
 from .qt_utils import _DateAxis, _make_session_header, set_si_label, fit_on_screen
@@ -192,6 +193,12 @@ class EventSummaryWindow(QMainWindow):
         self._length_arr = np.full(n, np.nan)   # selected segment's WLC contour length (nm)
         self._x_arr      = np.full(n, np.nan)
         self._y_arr      = np.full(n, np.nan)
+        # The drawn points' correlation and OLS line, recomputed every
+        # _rebuild over what is on screen; None when there is nothing honest
+        # to report (see _render_fit).
+        self._fit:  _reg.LinearFit   | None = None
+        self._corr: _reg.Correlation | None = None
+        self._fit_paths: list[str] = []
         self._vars = _vars.available(
             [r.get("path") for r in prepass_results if r.get("path")], self._db_path)
         self._var_by_key = {v.key: v for v in self._vars}
@@ -272,11 +279,29 @@ class EventSummaryWindow(QMainWindow):
         self._y_combo = VariableCombo(self._vars, _DEFAULT_Y)
         self._swap_btn = QPushButton("Swap axes")
         self._swap_btn.clicked.connect(self._on_swap_axes)
+        self._fit_chk = QCheckBox("Linear fit")
+        self._fit_chk.setToolTip(
+            "OLS line with a 95% confidence band for the mean trend, not for "
+            "individual curves. The interval assumes independent residuals "
+            "with constant variance; consecutive measurements can make it "
+            "too narrow."
+        )
+        self._fit_chk.toggled.connect(self._rebuild)
         axis_row.addWidget(LabeledControl("X:", self._x_combo))
         axis_row.addWidget(LabeledControl("Y:", self._y_combo))
         axis_row.addWidget(self._swap_btn)
+        axis_row.addWidget(self._fit_chk)
         axis_row.addStretch()
         root.addLayout(axis_row)
+
+        # The fishing caution, stated where the number is read: with this many
+        # variables on offer, a p-value found by scanning pairs is not the
+        # p-value it looks like.
+        self._warn_label = QLabel("")
+        self._warn_label.setStyleSheet(style.qss_text(style.TEXT_WARNING))
+        self._warn_label.setFont(style.font(font, size_pt=style.FONT_SMALL_PT))
+        self._warn_label.setWordWrap(True)
+        root.addWidget(self._warn_label)
         self._x_combo.currentIndexChanged.connect(self._on_axes_changed)
         self._y_combo.currentIndexChanged.connect(self._on_axes_changed)
 
@@ -457,6 +482,16 @@ class EventSummaryWindow(QMainWindow):
         )
         self._sel_marker.hide()
         self._scatter_plot.addItem(self._sel_marker, ignoreBounds=True)
+
+        # OLS line and its band, both ignoreBounds: a model drawn over the data
+        # must never be what sets the view range.
+        self._band_lo = pg.PlotCurveItem(x=[0.0, 1.0], y=[0.0, 0.0], pen=pg.mkPen(None))
+        self._band_hi = pg.PlotCurveItem(x=[0.0, 1.0], y=[0.0, 0.0], pen=pg.mkPen(None))
+        self._band    = pg.FillBetweenItem(self._band_lo, self._band_hi,
+                                           brush=style.band_brush(style.series_line(0)))
+        self._fit_line = pg.PlotCurveItem(pen=style.model_pen(style.series_line(0)))
+        for it in (self._band_lo, self._band_hi, self._band, self._fit_line):
+            self._scatter_plot.addItem(it, ignoreBounds=True)
 
         # Crosshair cursor
         self._cursor_v = pg.InfiniteLine(angle=90, movable=False, pen=_CURS_PEN)
@@ -755,6 +790,10 @@ class EventSummaryWindow(QMainWindow):
             self._scatter_fail.setData(x=x_v[fail].tolist(), y=y_v[fail].tolist(),
                                        data=idx_v[fail].tolist(), brush=fail_brush)
 
+        shown_pts = pas | fail
+        self._fit_paths = [paths[int(i)] for i in idx_v[shown_pts]]
+        self._render_fit(x_v[shown_pts], y_v[shown_pts])
+
         # Geometry from histogram_binning, the same module the EXPORT of these
         # very histograms already used (_hb.full_range_bins below) and the same
         # convention variable_window draws on screen. Robust range plus
@@ -813,6 +852,56 @@ class EventSummaryWindow(QMainWindow):
         self._update_stats()
         self._rebuild_list()
         self._update_sel_marker()
+
+    def _render_fit(self, x: np.ndarray, y: np.ndarray) -> None:
+        """Correlation and OLS line for the points on screen.
+
+        Recomputed even when the line is hidden, so the readout and the export
+        stay available without it. A variable against itself is a legitimate
+        temporary axis choice, but its perfect line and rho are identities
+        rather than analyses and must not reach either.
+        """
+        same = self._x_key == self._y_key
+        self._fit = None if same or len(x) < 3 else _reg.linear_fit(x, y)
+        self._corr = (None if same or len(x) < 3 else
+                      _reg.correlate(x, y, method="spearman"))
+        show = self._fit_chk.isChecked() and self._fit is not None
+        for it in (self._fit_line, self._band):
+            it.setVisible(show)
+        if show:
+            xs = np.linspace(float(x.min()), float(x.max()), 200)
+            lo, hi = self._fit.band(xs)
+            self._fit_line.setData(xs, self._fit.predict(xs))
+            self._band_lo.setData(xs, lo)
+            self._band_hi.setData(xs, hi)
+        self._warn_label.setText(
+            f"⚠ {len(self._vars)} variables here make "
+            f"{len(self._vars) * (len(self._vars) - 1) // 2} possible pairs, so "
+            f"~{max(1, round(len(self._vars) * (len(self._vars) - 1) // 2 * 0.05))} "
+            f"would clear p < 0.05 by chance alone. A correlation found by "
+            f"scanning pairs needs confirming on an independent cohort before "
+            f"it means anything."
+            if self._corr is not None and self._corr.p < 0.05 else ""
+        )
+
+    def _fit_text(self) -> str:
+        """Spearman rho, slope and R² for the stats line. Empty without a fit."""
+        bits = []
+        if self._corr is not None:
+            c = self._corr
+            bits.append(f"Spearman ρ {c.rho:+.3f} (n={c.n}, p={c.p:.3g})")
+        if self._fit is not None:
+            f = self._fit
+            if self._x_key == _vars.TIME_KEY:
+                s, lo, hi = _reg.per_hour(f)
+                unit = _quant.unit_of(self._y_key)
+                bits.append(f"slope {s:.4g} [{lo:.4g}, {hi:.4g}] "
+                            f"{unit + '/h' if unit else '/h'}")
+            else:
+                lo, hi = f.slope_ci
+                bits.append(f"slope {f.slope:.4g} [{lo:.4g}, {hi:.4g}]")
+            bits.append(f"R² {f.r2:.3f}")
+        return "   |   ".join(bits)
 
     def _draw_cluster_curves(self, cl, paths, idx_v, shown, values, bins,
                              store: list, *, transposed: bool) -> None:
@@ -983,9 +1072,11 @@ class EventSummaryWindow(QMainWindow):
             v = arr[shown]
             mean, med = (_q(key, s, with_unit=True) for s in (np.mean(v), np.median(v)))
             parts.append(f"{self._axis_label(key)}: mean {mean}  median {med}")
+        fit_txt = self._fit_text()
         self._stats_label.setText(
             f"{self._population_summary}   |   {n} shown{drop_txt}{bin_txt}   |   "
             + "   |   ".join(parts)
+            + (f"   |   {fit_txt}" if fit_txt else "")
         )
 
     # ── Selection / inspection linking ────────────────────────────────────────
@@ -1321,6 +1412,11 @@ class EventSummaryWindow(QMainWindow):
             "segment_select": self._segment_select,
             "x_variable":     self._x_key,
             "y_variable":     self._y_key,
+            "fit_shown":      bool(self._fit_chk.isChecked()),
+            # How many pairs were on offer, so a reader can judge a p-value
+            # that was found by scanning rather than predicted in advance.
+            "n_variables_offered": len(self._vars),
+            "n_pairs_possible":    len(self._vars) * (len(self._vars) - 1) // 2,
             "n_events_loaded": len(self._results),
             "population_drops": led.manifest(),
             **_clustering.provenance(
@@ -1355,6 +1451,31 @@ class EventSummaryWindow(QMainWindow):
                 cols.append(errs[key])
                 series.append(["" if np.isnan(v) else float(v)
                                for v in err_cols[errs[key]]])
+
+        # The line and band are fitted to THESE rows, not to whatever the Show
+        # checkboxes have on screen: an exported fit column must describe the
+        # exported points. Same rule as the screen fit — an axis against
+        # itself is an identity, not a result.
+        x, y = self._x_arr[idx], self._y_arr[idx]
+        fit = None if xk == yk or len(x) < 3 else _reg.linear_fit(x, y)
+        corr = (None if xk == yk or len(x) < 3 else
+                _reg.correlate(x, y, method="spearman"))
+        if fit is not None:
+            f_lo, f_hi = fit.band(x)
+            f_val = fit.predict(x)
+        else:
+            f_lo = f_hi = f_val = np.full(x.shape, np.nan)
+        cols += ["fit", "fit_ci_lo", "fit_ci_hi", "cluster"]
+        # The cluster travels with the row whether or not the colouring is
+        # switched on — a display toggle must not decide what a data file
+        # contains, and the clustering itself does not survive the session.
+        cl = _clustering.current()
+        series += [
+            [float(v) for v in f_val], [float(v) for v in f_lo],
+            [float(v) for v in f_hi],
+            ["" if cl is None or cl.label_for(p) is None else cl.label_for(p)
+             for p in sel_paths],
+        ]
         rows = list(zip(*series))
         axes = [(xk, self._x_arr), (yk, self._y_arr)]
         with _export.export_group(
@@ -1364,6 +1485,7 @@ class EventSummaryWindow(QMainWindow):
         ) as g:
             g.contributing_files(sel_paths)
             g.note_dict(self.export_provenance(axes))
+            g.note_dict(_reg.manifest_fields(fit, corr, x_is_time=xk == _vars.TIME_KEY))
             g.note(columns=cols, units=_quant.units_for(cols[1:]), n_points=len(rows))
             g.table(".csv", cols, rows)
         QMessageBox.information(
