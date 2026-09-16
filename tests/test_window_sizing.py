@@ -172,11 +172,40 @@ from smfs_catalog import decomposition_window     # noqa: E402
 from smfs_catalog import display_roi              # noqa: E402
 from smfs_catalog import event_summary_window     # noqa: E402
 
+def _event_summary_with_readouts():
+    """Explore Events as a real cohort leaves it: every readout carrying the
+    text it holds in front of data.
+
+    An empty window's readouts are a few words long, so measuring one proves
+    nothing about the window a user opens — which is how a 2056 px minimum
+    reached a 1920 px screen. A QLabel offers its whole single-line text as
+    its width hint, so these labels are exactly where that width comes from.
+    """
+    win = event_summary_window.EventSummaryWindow([], _DB)
+    win._stats_label.setText(
+        "393 hits, 330 non-hits   |   segment: Ultimate   |   705 shown   |   "
+        "asked 723, 18 not plottable   |   histogram range excludes 16 X / 16 Y "
+        "outliers   |   Seg rupture extension (nm): mean 124.9 nm  median "
+        "129.0 nm   |   Seg Force (pN): mean 133.5 pN  median 82.1 pN")
+    win._fit_label.setText(
+        "fit — Hits:   Spearman ρ +0.434 (n=705, p=1.14e-33)   |   "
+        "slope 0.9826 [0.697, 1.268]   |   R² 0.188")
+    win._warn_label.setText(
+        "⚠ 34 variables here make 561 possible pairs, so ~28 would clear "
+        "p < 0.05 by chance alone. A correlation found by scanning pairs needs "
+        "confirming on an independent cohort before it means anything.")
+    win._sel_label.setText(
+        "Selected: Image0169.ibw   —   Seg rupture extension (nm) 124.9 nm, "
+        "Seg Force (pN) 133.5 pN")
+    return win
+
+
 CASES = [
     ("DashboardWindow",     lambda: dashboard_window.DashboardWindow(_DB)),
     ("DecompositionWindow", lambda: decomposition_window.DecompositionWindow(_DB)),
     ("ROIWindow",           lambda: display_roi.ROIWindow(_DB)),
     ("EventSummaryWindow",  lambda: event_summary_window.EventSummaryWindow([], _DB)),
+    ("EventSummaryWindow (with readouts)", _event_summary_with_readouts),
 ]
 
 for name, build in CASES:

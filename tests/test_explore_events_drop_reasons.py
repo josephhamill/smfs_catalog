@@ -255,7 +255,8 @@ def test_the_scatter_reports_and_exports_its_correlation(tmp_path, monkeypatch):
     win = EventSummaryWindow([{"path": p} for p in paths], db)
 
     assert win._corr is not None and win._fit is not None
-    assert "Spearman" in win._stats_label.text() and "R²" in win._stats_label.text()
+    assert "Spearman" in win._fit_label.text() and "R²" in win._fit_label.text()
+    assert win._fit_label.text().startswith("fit — Hits:")
 
     win._on_export_scatter()
     (manifest_path,) = out.glob("scatter_*_manifest.json")
@@ -266,7 +267,67 @@ def test_the_scatter_reports_and_exports_its_correlation(tmp_path, monkeypatch):
     # X against itself is an identity, so it must not be reported as a result.
     win._y_combo.setCurrentIndex(win._y_combo.findData(win._x_key))
     assert win._fit is None and win._corr is None
-    assert "Spearman" not in win._stats_label.text()
+    assert win._fit_label.text() == ""
+    win.close()
+
+
+def test_the_drawn_and_analysed_fits_are_one_number(tmp_path, monkeypatch):
+    """Hiding a population must not move a fitted number: the Show checkboxes
+    draw, the scope selector decides what every result is computed over."""
+    from PyQt6.QtWidgets import QApplication
+    from smfs_catalog import export_utils
+    _app = QApplication.instance() or QApplication([])
+    db, paths = _catalog_with_curves(tmp_path, 4)
+    out = tmp_path / "exports"
+    out.mkdir()
+    export_utils.set_export_dir_override(str(out), db)
+    monkeypatch.setattr("smfs_catalog.event_summary_window.QMessageBox.information",
+                        lambda *a, **k: None)
+
+    win = EventSummaryWindow([{"path": p} for p in paths], db)
+    slope = win._fit.slope
+
+    win._show_nonhits_chk.setChecked(False)
+    assert win._fit.slope == slope
+    win._show_hits_chk.setChecked(False)              # analysed population hidden
+    assert win._fit.slope == slope
+    assert "hidden" in win._warn_label.text()
+
+    win._on_export_scatter()
+    (manifest_path,) = out.glob("scatter_*_manifest.json")
+    assert json.loads(manifest_path.read_text())["slope"] == pytest.approx(slope)
+    win.close()
+
+
+def test_both_exports_one_file_naming_each_row(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QApplication
+    from smfs_catalog import export_utils
+    _app = QApplication.instance() or QApplication([])
+    db, paths = _catalog_with_curves(tmp_path, 4)
+    out = tmp_path / "exports"
+    out.mkdir()
+    export_utils.set_export_dir_override(str(out), db)
+    monkeypatch.setattr("smfs_catalog.event_summary_window.QMessageBox.information",
+                        lambda *a, **k: None)
+
+    win = EventSummaryWindow([{"path": p} for p in paths], db)
+    win._pop_btns["both"].setChecked(True)
+
+    assert win._active_population == "both"
+    assert win._fit_chk.text() == "Linear fit (all events)"
+    # An ensemble is one population's, so these say so rather than build a mix.
+    assert not win._isoforce_btn.isEnabled()
+    assert not win._norm_2dh_btn.isEnabled()
+    assert not win._phys_2dh_btn.isEnabled()
+
+    win._on_export_scatter()
+    (csv_path,) = out.glob("scatter_*_both_*.csv")
+    header, *rows = csv_path.read_text().strip().splitlines()
+    assert header.split(",")[1] == "hit"
+    assert len(rows) == len(paths)
+
+    win._pop_btns["hit"].setChecked(True)
+    assert win._isoforce_btn.isEnabled()
     win.close()
 
 
