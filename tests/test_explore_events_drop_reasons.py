@@ -36,7 +36,7 @@ def _window(outcomes):
     win = _Window.__new__(_Window)
     n = len(outcomes)
     win._results = [{"path": f"/data/c{i}.ibw"} for i in range(n)]
-    for name in ("_force_arr", "_length_arr", "_x_arr", "_y_arr"):
+    for name in ("_x_arr", "_y_arr"):
         setattr(win, name, np.full(n, np.nan))
     win._seg_outcome = list(outcomes)
     win._segment_select = "ultimate"
@@ -70,13 +70,16 @@ def test_each_drop_names_its_stored_reason():
     assert drops["/data/c5.ibw"] == ("fit_not_attempted", "fitter did not run; segment: ultimate")
 
 
-def test_a_failed_fit_is_plotted_on_fit_free_axes_but_not_downstream(monkeypatch):
+def test_a_failed_fit_is_plotted_and_handed_on(monkeypatch):
     win = _window([_outcome("no_fit", "optimizer failed")])
     win._x_arr[0], win._y_arr[0] = 12.0, 50.0        # force peak was found
     monkeypatch.setattr(win, "_live_hit_mask", lambda: np.array([True]), raising=False)
 
     assert win._plottability_ledger().n_dropped == 0
-    assert _drops(win.population_ledger("hit")) == {
+    # The population is membership only; a consumer that needs the fit says so.
+    assert win.population_ledger("hit").n_dropped == 0
+    lc = np.array([np.nan])
+    assert _drops(win.population_ledger("hit", [("seg_l_c_nm", lc)])) == {
         "/data/c0.ibw": ("fit_failed", "optimizer failed; segment: ultimate")}
 
 
@@ -127,8 +130,9 @@ def test_outcome_text(status, detail, text):
 
 
 def _catalog_with_one_curve(tmp_path):
-    """One stored curve: penultimate segment fitted (review), ultimate segment's
-    force peak found but its WLC optimizer failed."""
+    """One stored curve: penultimate segment fitted (review); ultimate segment's
+    force peak found and its ramp regains the first rupture's force (a
+    measured reload distance of 30 nm), but its WLC optimizer failed."""
     db = str(tmp_path / "t.sqlite")
     _db.initialise(db)
     path = _db.normalize_path("/data/curve.ibw")
@@ -149,10 +153,11 @@ def _catalog_with_one_curve(tmp_path):
         onset_idx=0, return_idx=300, onset_piezo_nm=0.0, return_piezo_nm=300.0,
         ruptures=[Rupture(idx=i, piezo_nm=float(i), d1_height=1.0, prominence=1.0,
                           force_pN=f, extension_nm=x)
-                  for i, f, x in ((100, 80.0, 40.0), (200, 60.0, 90.0))],
+                  for i, f, x in ((100, 60.0, 40.0), (200, 80.0, 90.0))],
         segments=[seg(0, 100, l_p_nm=0.4, l_c_nm=50.0, left_extension_nm=0.0,
                       fit_status="review", fit_detail="peak at segment boundary"),
-                  seg(100, 200, fit_status="no_fit", fit_detail="optimizer failed")],
+                  seg(100, 200, isoforce_x_nm=70.0,
+                      fit_status="no_fit", fit_detail="optimizer failed")],
     )])
     _db.write_event_map(fid, json.dumps(events_to_payload(events)),
                         json.dumps({"tag": "t"}), cache_version() or "test", db)
@@ -167,11 +172,12 @@ def test_axes_choose_what_is_plotted_but_not_the_downstream_cohort(tmp_path):
     win = EventSummaryWindow([{"path": path}], db)
 
     assert (win._x_key, win._y_key) == ("seg_x_rupture_nm", "seg_force_pN")
-    assert (win._x_arr[0], win._y_arr[0]) == (90.0, 60.0)
+    assert (win._x_arr[0], win._y_arr[0]) == (90.0, 80.0)
     assert win._event_list.count() == 1
-    assert win.population_paths("hit") == []
+    assert win.population_paths("hit") == [path]
 
     win._x_combo.setCurrentIndex(win._x_combo.findData("seg_l_c_nm"))
+    assert win.population_paths("hit") == [path]      # the axes never filter it
 
     assert win._event_list.count() == 0
     (drop,) = win._plottability_ledger().drops()
@@ -353,6 +359,58 @@ def test_exports_follow_the_axes(tmp_path, monkeypatch):
     manifest = json.loads(scatter.read_text())
     assert (manifest["x_variable"], manifest["y_variable"]) == ("seg_x_rupture_nm", _vars.TIME_KEY)
     assert list(out.glob("hist_seg_x_rupture_nm_*_manifest.json"))
+    win.close()
+
+
+def test_downstream_windows_take_the_population_and_apply_their_own_needs(
+        tmp_path, monkeypatch):
+    """A curve whose fit failed is a member: the fit-free 2DH keeps it, the
+    normalized 2DH drops it as its own no_fit, Isoforce keeps it for its
+    measured reload distance, and View individual events lists it."""
+    from PyQt6.QtWidgets import QApplication
+    from smfs_catalog.normalized_2dh_window import Normalized2DHWindow
+    from smfs_catalog.physical_2dh_window import Physical2DHWindow
+    _app = QApplication.instance() or QApplication([])
+    db, path = _catalog_with_one_curve(tmp_path)
+    win = EventSummaryWindow([{"path": path}], db)
+    # No curve file exists here, so a histogram is supplied rather than read.
+    for cls in (Normalized2DHWindow, Physical2DHWindow):
+        monkeypatch.setattr(cls, "_compute_from_curve",
+                            lambda self, *a, **k: np.ones((2, 2), dtype=np.uint32))
+
+    physical = Physical2DHWindow([{"path": path}], db, population="hit")
+    assert physical._align_mode not in physical._FIT_DEPENDENT_ALIGN_MODES
+    physical.sync_from_event_summary(win)
+    assert list(physical._event_histograms) == [path]
+
+    normalized = Normalized2DHWindow([{"path": path}], db, population="hit")
+    normalized.sync_from_event_summary(win)
+    assert normalized._event_histograms == {}
+    assert [d.reason for d in normalized._ledger.drops()] == ["no_fit"]
+
+    assert win._isoforce_paths("hit") == [path]
+    assert win._current_event_paths() == [path]
+    for w in (physical, normalized, win):
+        w.close()
+
+
+def test_fit_x_uses_exactly_the_plotted_curves(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QApplication
+    _app = QApplication.instance() or QApplication([])
+    db, paths = _catalog_with_curves(tmp_path, 6)
+    win = EventSummaryWindow([{"path": p} for p in paths], db)
+    win._y_arr[0] = np.nan          # has an X value but is not plotted
+    win._rebuild()
+    opened = []
+    monkeypatch.setattr(win, "_open_fit_window",
+                        lambda label, units, values, paths=None, axes=None:
+                        opened.append((values, paths)))
+
+    win._on_fit_x()
+
+    (values, fitted_paths), = opened
+    assert len(values) == win._event_list.count() == 5
+    assert paths[0] not in fitted_paths
     win.close()
 
 

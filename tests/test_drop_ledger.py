@@ -353,34 +353,33 @@ from smfs_catalog import variables as _vars
 
 ev = EventSummaryWindow([{"path": p} for p in PATHS], DB)
 ev._segment_select = "ultimate"
-# file 0 fully plottable; file 1 has force but no length; file 2 has neither.
-ev._force_arr[:]  = [10.0, 20.0, np.nan]
-ev._length_arr[:] = [50.0, np.nan, np.nan]
-ev._y_arr[:] = ev._force_arr
-ev._x_arr[:] = ev._length_arr
+# file 0 fully plottable; file 1 has X but no Y; file 2 has neither.
+ev._x_arr[:] = [50.0, 20.0, np.nan]
+ev._y_arr[:] = [10.0, np.nan, np.nan]
 # Values set by hand, so no stored outcome describes them; stored-outcome
 # reasons are covered in test_explore_events_drop_reasons.
 ev._seg_outcome[:] = [None, None, None]
 ev._rebuild()
 
+# The population itself is membership only: a downstream window is handed
+# every member and records its own drops.
 pled = ev.population_ledger("hit")
-drops = {d.path: d for d in pled.drops()}
+check("with no criteria checked, every event is a member",
+      pled.n_dropped == 0 and ev.population_paths("hit") == pled.kept() == PATHS)
+
+# Asked for values, the same ledger names exactly the ones each curve lacks.
+axes = [(ev._x_key, ev._x_arr), (ev._y_key, ev._y_arr)]
+drops = {d.path: d for d in ev.population_ledger("hit", axes).drops()}
 check("a curve with neither value names both",
       drops[PATHS[2]].reason == "not_finite"
-      and _vars.label("seg_force_pN") in drops[PATHS[2]].detail
-      and _vars.label("seg_l_c_nm") in drops[PATHS[2]].detail)
-check("a curve missing only the length names only the length",
+      and _vars.label(ev._x_key) in drops[PATHS[2]].detail
+      and _vars.label(ev._y_key) in drops[PATHS[2]].detail)
+check("a curve missing only Y names only Y",
       drops[PATHS[1]].reason == "not_finite"
-      and _vars.label("seg_l_c_nm") in drops[PATHS[1]].detail
-      and _vars.label("seg_force_pN") not in drops[PATHS[1]].detail)
-reasons = {p: d.reason for p, d in drops.items()}
-check("population_paths is exactly the ledger's survivors",
-      ev.population_paths("hit") == pled.kept())
-
-# With no criteria checked the gate passes everything, so every drop here must
-# be a plottability drop — never a membership one.  That is the split.
+      and _vars.label(ev._y_key) in drops[PATHS[1]].detail
+      and _vars.label(ev._x_key) not in drops[PATHS[1]].detail)
 check("nothing is dropped for membership when the gate passes everything",
-      "not_in_population" not in set(reasons.values()))
+      "not_in_population" not in {d.reason for d in drops.values()})
 
 # The other population is the complement of the SAME gate answer, and its
 # drops must name membership rather than silently vanishing.
@@ -427,7 +426,7 @@ fit_snapshot.close()
 # match the new cohort, including when it changes size.
 ev.set_results([{"path": PATHS[0]}])
 check("set_results resizes every per-curve array",
-      len(ev._results) == len(ev._force_arr) == len(ev._length_arr) == 1)
+      len(ev._results) == len(ev._x_arr) == len(ev._y_arr) == len(ev._seg_outcome) == 1)
 
 print()
 
