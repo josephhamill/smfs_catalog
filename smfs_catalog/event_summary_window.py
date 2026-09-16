@@ -40,10 +40,15 @@
 # when both values exist — never a fabricated value — and the Why dialog says
 # why each missing curve is missing.
 #
-# The cohort handed to the 2DH windows, Isoforce and the WLC navigator is NOT
-# the plotted set: it is still the curves with a selected-segment rupture force
-# AND contour length (_force_arr/_length_arr, population_ledger), whatever the
-# axes show, so changing an axis never changes a downstream cohort.
+# What each consumer is handed:
+#   - Fit X/Y/2D and the scatter and histogram exports compute from the plotted
+#     values, so they take exactly the plotted set (_plotted_mask).
+#   - The 2DH builds and View individual events use no plotted value, so they
+#     take the selected population whole and drop, with reasons, only what
+#     their own work cannot use. The axes never filter them.
+#   - Isoforce takes the selected population AND a measured reload distance.
+# A finer population is made in Filtering…, the one place population
+# decisions live, never by a downstream rule.
 #
 # Pre-populated from the DB at open time (no curve loading required).
 
@@ -200,11 +205,7 @@ class EventSummaryWindow(QMainWindow):
         self._fit_wins:      dict   = {}   # "label (population)" → DistFitWindow
         n                  = len(prepass_results)
 
-        # Per-curve event arrays — NaN = no value for the selected segment.
-        # Force/length define the downstream cohort (module docstring); X/Y are
-        # what is plotted.
-        self._force_arr  = np.full(n, np.nan)   # selected segment's rupture force (pN)
-        self._length_arr = np.full(n, np.nan)   # selected segment's WLC contour length (nm)
+        # The plotted values per curve — NaN = no value.
         self._x_arr      = np.full(n, np.nan)
         self._y_arr      = np.full(n, np.nan)
         # The drawn points' correlation and OLS line, recomputed every
@@ -232,7 +233,7 @@ class EventSummaryWindow(QMainWindow):
         self._current_index    = 0
         self._selected_index: int | None = None   # user selection (≠ playhead cursor)
         # Which segment (Ultimate/Penultimate, the dashboard's global Segment
-        # combo) produced self._force_arr/_length_arr — set in _prepopulate(),
+        # combo) produced the seg_* values — set in _prepopulate(),
         # re-read every reload_paths() so it can never silently go stale
         # relative to what's actually plotted (see the module docstring).
         self._segment_select: str | None = None
@@ -594,10 +595,9 @@ class EventSummaryWindow(QMainWindow):
     # ── Pre-population ────────────────────────────────────────────────────────
 
     def _prepopulate(self) -> None:
-        """Load the downstream force/length, each curve's stored fit outcome,
-        and the plotted X/Y, all for the currently selected segment. Missing
-        values stay NaN (e.g. Penultimate on a one-segment curve), never a
-        fabricated value."""
+        """Load each curve's stored fit outcome and the plotted X/Y, for the
+        currently selected segment. Missing values stay NaN (e.g. Penultimate
+        on a one-segment curve), never a fabricated value."""
         try:
             from .roi_pipeline import read_segment_select, segment_summary_bulk
 
@@ -606,12 +606,7 @@ class EventSummaryWindow(QMainWindow):
             self._segment_select = select
             seg    = segment_summary_bulk(paths, select, self._db_path)
             for i, r in enumerate(self._results):
-                sd     = seg.get(_db.normalize_path(r["path"]), {})
-                force  = sd.get("force_pN")
-                length = sd.get("l_c_nm")
-                if force is not None and length is not None:
-                    self._force_arr[i]  = force
-                    self._length_arr[i] = length
+                sd = seg.get(_db.normalize_path(r["path"]), {})
                 self._seg_outcome[i] = {
                     "n_segments": sd.get("n_segments"),
                     "fit_status": sd.get("fit_status"),
@@ -729,8 +724,6 @@ class EventSummaryWindow(QMainWindow):
         return (
             self._segment_select,
             tuple(r.get("path") for r in self._results),
-            tuple(_value(v) for v in self._force_arr),
-            tuple(_value(v) for v in self._length_arr),
             (self._x_key, self._y_key),
             tuple(_value(v) for v in self._x_arr),
             tuple(_value(v) for v in self._y_arr),
@@ -1217,8 +1210,12 @@ class EventSummaryWindow(QMainWindow):
             self._x_hist_cursor.setValue(x);  self._x_hist_cursor.show()
         else:
             self._hide_cursor()
-        self._view_fit_btn.setEnabled(
-            bool(np.any(~np.isnan(self._force_arr) & ~np.isnan(self._length_arr))))
+        # The render cache is enough to enable a button (it produces no
+        # result); the gate itself is asked again when the button is pressed.
+        pop = self._active_population
+        members = (self._hit_mask if pop == "hit" else ~self._hit_mask
+                   if pop == "non_hit" else np.ones(len(self._hit_mask), dtype=bool))
+        self._view_fit_btn.setEnabled(bool(members.any()))
 
     def _hide_cursor(self) -> None:
         self._cursor_v.hide()
@@ -1282,8 +1279,6 @@ class EventSummaryWindow(QMainWindow):
 
         self._results    = [{"path": p} for p in paths]
         n                = len(self._results)
-        self._force_arr  = np.full(n, np.nan)
-        self._length_arr = np.full(n, np.nan)
         self._x_arr      = np.full(n, np.nan)
         self._y_arr      = np.full(n, np.nan)
         self._seg_outcome = [None] * n
@@ -1368,13 +1363,18 @@ class EventSummaryWindow(QMainWindow):
     def _on_fit_y(self) -> None:
         self._fit_axis(self._y_key, self._y_arr)
 
+    def _plotted_axes(self) -> list:
+        return [(self._x_key, self._x_arr), (self._y_key, self._y_arr)]
+
     def _fit_axis(self, key: str, arr: np.ndarray) -> None:
-        sel = self._population_mask() & ~np.isnan(arr)
+        # The plotted set, not every member with this one value: a fitted
+        # distribution describes the dots on screen.
+        sel = self._plotted_mask()
         valid = arr[sel]
         if len(valid) < 5:
             return
         self._open_fit_window(self._axis_label(key), _quant.unit_of(key), valid,
-                              self._paths_for_mask(sel), axes=[(key, arr)])
+                              self._paths_for_mask(sel), axes=self._plotted_axes())
 
     def _on_fit_2d(self) -> None:
         xk, yk = self._x_key, self._y_key
@@ -1394,7 +1394,7 @@ class EventSummaryWindow(QMainWindow):
             existing.close()
 
         from .gmm_fit_window import GmmFitWindow
-        axes = [(xk, self._x_arr), (yk, self._y_arr)]
+        axes = self._plotted_axes()
         win = GmmFitWindow(pop_xy, self._db_path,
                            caption=self._provenance_caption(len(pop_xy), axes),
                            paths=self._paths_for_mask(sel),
@@ -1516,7 +1516,7 @@ class EventSummaryWindow(QMainWindow):
              for p in sel_paths],
         ]
         rows = list(zip(*series))
-        axes = [(xk, self._x_arr), (yk, self._y_arr)]
+        axes = self._plotted_axes()
         with _export.export_group(
             self._db_path,
             f"scatter_{_export.slug(yk)}_vs_{_export.slug(xk)}_{self._active_population}",
@@ -1637,11 +1637,11 @@ class EventSummaryWindow(QMainWindow):
 
     def _export_histogram(self, key: str, arr: np.ndarray) -> None:
         stem_suffix, label = _export.slug(key), self._axis_label(key)
-        sel = self._population_mask() & ~np.isnan(arr)
+        sel = self._plotted_mask()
         values = arr[sel]
         title = f"Export {label} histogram"
         if len(values) == 0:
-            QMessageBox.information(self, title, "No values in the selected population.")
+            QMessageBox.information(self, title, "Nothing is plotted.")
             return
         # Record the curves behind the bins so the exported cohort is recoverable.
         contributing = [
@@ -1660,7 +1660,7 @@ class EventSummaryWindow(QMainWindow):
             [".csv"], kind=f"histogram_{stem_suffix}",
         ) as g:
             g.contributing_files(contributing)
-            g.note_dict(self.export_provenance([(key, arr)]))
+            g.note_dict(self.export_provenance(self._plotted_axes()))
             # A histogram has no rows to carry a hit column, so the split goes
             # in the manifest: under Both these bars hold both populations.
             binned_hit = self._live_hit_mask()[sel]
@@ -1716,9 +1716,11 @@ class EventSummaryWindow(QMainWindow):
         and answering both with one list meant a 2DH received an
         already-filtered cohort and could not tell that it had been filtered.
 
-        `axes` is the (key, values) list a curve must have. The default is the
-        selected segment's rupture force and contour length: the downstream
-        cohort, which does not follow the plotted axes (module docstring).
+        `axes` is the (key, values) list a curve must also have a value for.
+        By default there is none: the ledger is membership only, which is what
+        the 2DH builds, Isoforce and View individual events start from
+        (module docstring). Results computed from plotted values pass the
+        plotted axes.
 
         `asked` is the whole loaded events population, so the ledger reports
         against the number in the visible population summary rather than an
@@ -1729,11 +1731,11 @@ class EventSummaryWindow(QMainWindow):
         paths = [r.get("path") or "" for r in self._results]
         led = _ledger.Ledger("Explore Events population", paths)
         if axes is None:
-            axes = [("seg_force_pN", self._force_arr), ("seg_l_c_nm", self._length_arr)]
+            axes = []
 
         live = self._live_hit_mask()
         # "both" asks of every loaded event, so nothing is dropped for
-        # membership and the ledger reports only missing values.
+        # membership.
         mask = (np.ones(len(paths), dtype=bool) if which == "both"
                 else live if which == "hit" else ~live)
         other = "non-hit" if which == "hit" else "hit"
@@ -1747,9 +1749,8 @@ class EventSummaryWindow(QMainWindow):
         return led
 
     def population_paths(self, which: str) -> list[str]:
-        """Paths with a usable segment fit belonging to `which` population
-        ("hit"/"non_hit"/"both"), independent of the population control's
-        CURRENT setting. A 2DH window remembers which population it was opened
+        """Paths belonging to `which` population ("hit"/"non_hit"/"both"),
+        independent of the population control's CURRENT setting. A 2DH window remembers which population it was opened
         for and asks for exactly that one on every refresh, so it stays
         correctly scoped even after the control moves underneath it.
 
@@ -1760,12 +1761,12 @@ class EventSummaryWindow(QMainWindow):
         return self.population_ledger(which).kept()
 
     def _isoforce_paths(self, which: str) -> list[str]:
-        """Subset of population_paths(which) with a usable adjacent isoforce
-        pair — the current manual pair when complete, otherwise the last two
-        ruptures. In concrete terms, roi_pipeline.segment_summary_bulk's
-        dX_iso_nm is non-None (the same rule IsoforceWindow uses to draw).
-        Sorted by measured date, like
-        _current_event_paths."""
+        """Isoforce's cohort: the members of `which` population with a
+        measured reload distance — roi_pipeline.segment_summary_bulk's
+        dX_iso_nm is non-None, for the current manual pair when complete,
+        otherwise the last two ruptures of the last ROI with ruptures (so two
+        or more ruptures, the same rule IsoforceWindow uses to draw). Sorted
+        by measured date, like _current_event_paths."""
         paths = self.population_paths(which)
         if not paths:
             return []
@@ -1829,11 +1830,10 @@ class EventSummaryWindow(QMainWindow):
     # ── WLC view ──────────────────────────────────────────────────────────────
 
     def _current_event_paths(self) -> list[str]:
-        """The selected population's curves with a selected-segment rupture
-        force and contour length — the WLC navigator's cohort, which keeps
-        that requirement whatever the plotted axes are (module docstring)."""
-        sel = (self._population_mask()
-               & ~np.isnan(self._force_arr) & ~np.isnan(self._length_arr))
+        """The WLC navigator's cohort: the selected population whole, so a
+        curve whose fit failed can be inspected too (WlcViewWindow draws a
+        curve with no usable fit)."""
+        sel = self._population_mask()
         paths = [p for i in np.where(sel)[0]
                  if (p := self._results[int(i)].get("path"))]
         dates = _db.get_measured_dates(paths, self._db_path)
