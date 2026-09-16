@@ -11,8 +11,7 @@
 # GmmFitWindow — pop-out 2D Gaussian Mixture Model fitting window.
 #
 # Opened from EventSummaryWindow ("Fit 2D…" button).
-# Receives the active Event Summary population as
-# (x, y) = (contour_length_nm, rupture_force_pN).
+# Receives the active Event Summary population as (x, y) on the chosen axes.
 #
 # Left pane  : scatter plot with radius-1/radius-2 covariance contours.
 # Right pane : model builder (K + covariance type) + fit results table +
@@ -55,6 +54,7 @@ from . import style
 from . import db as _db
 from . import quantities as _quant
 from . import export_utils as _export
+from . import variables as _vars
 from .gmm_fit_core import (
     COMPONENT_COLORS,
     COV_TYPE_LABELS, COV_TYPES,
@@ -85,14 +85,14 @@ def _sklearn_version() -> str:
 
 class _ScatterPane(QWidget):
     """
-    Scatter plot of (contour_length, rupture_force) values.
+    Scatter plot of the (x, y) values.
     After a fit, overlays covariance contours at Mahalanobis radii 1 (dashed)
     and 2 (solid) for each component.
     """
 
     def __init__(
         self,
-        xy:      np.ndarray,   # (N, 2): col 0 = length nm, col 1 = force pN
+        xy:      np.ndarray,   # (N, 2): col 0 = x, col 1 = y
         x_label: str,
         y_label: str,
         x_unit:  str = "",
@@ -582,7 +582,8 @@ class _ModelPane(QWidget):
         f  = self._last_fit
         gm = self._last_gm
         with _export.export_group(
-            self._db_path, "fit_gmm_length_force",
+            self._db_path,
+            f"fit_gmm_{_export.slug(self._x_variable)}_{_export.slug(self._y_variable)}",
             ["_components.csv", "_points.csv"], kind="gmm_fit",
         ) as g:
             g.contributing_files(self._paths)
@@ -670,24 +671,23 @@ class GmmFitWindow(QMainWindow):
     Re-opening raises the existing window (caller's responsibility).
     """
 
-    _X_VARIABLE = "Contour length (WLC fit, l_c)"
-    _Y_VARIABLE = "Rupture force (selected segment)"
-    # Text and unit are separate: the unit is declared once in quantities.py,
-    # and the plain text is what reaches the export manifest.
-    _X_LABEL    = _X_VARIABLE
-    _Y_LABEL    = _Y_VARIABLE
-    _X_UNIT     = _quant.NM
-    _Y_UNIT     = _quant.PN
-
     def __init__(
         self,
-        pass_xy: np.ndarray,   # (N, 2): col 0 = length nm, col 1 = force pN
+        pass_xy: np.ndarray,   # (N, 2): col 0 = x_key values, col 1 = y_key values
         db_path: str,
         caption: str = "",
         paths:   list[str] | None = None,
+        x_key:   str = "seg_l_c_nm",
+        y_key:   str = "seg_force_pN",
     ) -> None:
         super().__init__()
         n = len(pass_xy)
+        # Text and unit are separate: the unit is declared once in quantities.py,
+        # and the plain text is what reaches the export manifest.
+        self._x_key, self._y_key = x_key, y_key
+        self._X_VARIABLE = self._X_LABEL = _vars.label(x_key)
+        self._Y_VARIABLE = self._Y_LABEL = _vars.label(y_key)
+        self._X_UNIT, self._Y_UNIT = _quant.unit_of(x_key), _quant.unit_of(y_key)
         # Curves behind these points, positionally aligned with pass_xy —
         # carried so an export can name the data it fitted. Same reasoning as
         # DistFitWindow._paths.
@@ -709,10 +709,10 @@ class GmmFitWindow(QMainWindow):
         y = pass_xy[:, 1]
         hdr = QLabel(
             f"{n} pass values   |   "
-            f"length: {_q('seg_l_c_nm', x.min())}–{_q('seg_l_c_nm', x.max(), with_unit=True)}  "
-            f"(mean {_q('seg_l_c_nm', x.mean())})   |   "
-            f"force: {_q('seg_force_pN', y.min())}–{_q('seg_force_pN', y.max(), with_unit=True)}  "
-            f"(mean {_q('seg_force_pN', y.mean())})"
+            f"{self._X_LABEL}: {_q(x_key, x.min())}–{_q(x_key, x.max(), with_unit=True)}  "
+            f"(mean {_q(x_key, x.mean())})   |   "
+            f"{self._Y_LABEL}: {_q(y_key, y.min())}–{_q(y_key, y.max(), with_unit=True)}  "
+            f"(mean {_q(y_key, y.mean())})"
         )
         hdr.setFont(style.font(hdr.font(), size_pt=style.FONT_SMALL_PT))
         root.addWidget(hdr)

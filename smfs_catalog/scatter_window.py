@@ -32,7 +32,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QCheckBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -43,7 +43,7 @@ from . import regression as _reg
 from . import style
 from . import variables as _vars
 from . import clustering as _clustering
-from .widgets import ClusterColourBar
+from .widgets import ClusterColourBar, VariableCombo
 from .export_utils import slug as _slug
 from .qt_utils import _DateAxis, _make_session_header, set_plot_title, set_si_label, fit_on_screen
 
@@ -162,42 +162,16 @@ class ScatterWindow(QMainWindow):
 
     # ── Controls ─────────────────────────────────────────────────────────────
 
-    def _fill_combo(self, combo: QComboBox, default_key: str) -> None:
-        for i, v in enumerate(self._vars):
-            combo.addItem(v.label, v.key)
-            # Per-ITEM hover, so the description is readable while choosing
-            # rather than only after committing to an axis.  Same register the
-            # queue header reads (variables.DESCRIPTIONS).
-            if v.description:
-                combo.setItemData(i, v.description, Qt.ItemDataRole.ToolTipRole)
-        i = combo.findData(default_key)
-        combo.setCurrentIndex(i if i >= 0 else 0)
-        self._sync_combo_tooltip(combo)
-        combo.currentIndexChanged.connect(
-            lambda _i, c=combo: self._sync_combo_tooltip(c))
-
-    @staticmethod
-    def _sync_combo_tooltip(combo: QComboBox) -> None:
-        """
-        Qt does not carry an item's tooltip onto the closed combo box, so
-        without this the description is reachable only while the popup is
-        open — i.e. never, once an axis has been chosen.
-        """
-        combo.setToolTip(
-            combo.itemData(combo.currentIndex(), Qt.ItemDataRole.ToolTipRole) or "")
-
     def _build_axis_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.addWidget(QLabel("X:"))
-        self._x_combo = QComboBox()
-        self._fill_combo(self._x_combo, _DEFAULT_X)
+        self._x_combo = VariableCombo(self._vars, _DEFAULT_X)
         self._x_combo.currentIndexChanged.connect(self._reload)
         row.addWidget(self._x_combo)
 
         row.addSpacing(12)
         row.addWidget(QLabel("Y:"))
-        self._y_combo = QComboBox()
-        self._fill_combo(self._y_combo, _DEFAULT_Y)
+        self._y_combo = VariableCombo(self._vars, _DEFAULT_Y)
         self._y_combo.currentIndexChanged.connect(self._reload)
         row.addWidget(self._y_combo)
 
@@ -238,11 +212,7 @@ class ScatterWindow(QMainWindow):
         return row
 
     def _on_swap(self) -> None:
-        xi, yi = self._x_combo.currentIndex(), self._y_combo.currentIndex()
-        for combo, i in ((self._x_combo, yi), (self._y_combo, xi)):
-            combo.blockSignals(True)
-            combo.setCurrentIndex(i)
-            combo.blockSignals(False)
+        VariableCombo.swap(self._x_combo, self._y_combo)
         self._reload()
 
     # ── Data ─────────────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QPoint, QRect, QSignalBlocker, QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QFrame, QSizePolicy,
-    QLabel, QPushButton, QCheckBox, QLayout,
+    QLabel, QPushButton, QCheckBox, QComboBox, QLayout,
 )
 
 from . import sample_marks, style
@@ -138,6 +138,39 @@ class LabeledControl(QWidget):
         for c in controls:
             if c is not None:
                 lay.addWidget(c)
+
+
+class VariableCombo(QComboBox):
+    """A dropdown of plottable variables (variables.Variable), keyed by
+    variable key, each item carrying its description as a tooltip."""
+
+    def __init__(self, variables, default_key: str, parent=None) -> None:
+        super().__init__(parent)
+        for i, v in enumerate(variables):
+            self.addItem(v.label, v.key)
+            # Per-ITEM hover, so the description is readable while choosing
+            # rather than only after committing to an axis.
+            if v.description:
+                self.setItemData(i, v.description, Qt.ItemDataRole.ToolTipRole)
+        i = self.findData(default_key)
+        self.setCurrentIndex(i if i >= 0 else 0)
+        self._sync_tooltip()
+        self.currentIndexChanged.connect(lambda _i: self._sync_tooltip())
+
+    def _sync_tooltip(self) -> None:
+        # Qt does not carry an item's tooltip onto the closed combo box, so
+        # without this the description is unreachable once an axis is chosen.
+        self.setToolTip(
+            self.itemData(self.currentIndex(), Qt.ItemDataRole.ToolTipRole) or "")
+
+    @staticmethod
+    def swap(a: "VariableCombo", b: "VariableCombo") -> None:
+        """Exchange the two selections without emitting either change."""
+        ia, ib = a.currentIndex(), b.currentIndex()
+        for combo, i in ((a, ib), (b, ia)):
+            with QSignalBlocker(combo):
+                combo.setCurrentIndex(i)
+            combo._sync_tooltip()
 
 
 class SampleMarksToggle(QCheckBox):
