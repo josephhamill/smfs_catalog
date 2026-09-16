@@ -65,6 +65,21 @@ DROP_REASONS: dict[str, str] = {
 }
 
 
+# ── What a population is called ──────────────────────────────────────────────
+# One register, for the same reason the drop reasons are one: every window that
+# shows a population's name — the Explore Events selector, a 2DH title and its
+# provenance caption, an isoforce export — was spelling it out for itself, and
+# a third value ("both") reached windows still written as an if/else over two.
+POPULATION_LABELS: dict[str, str] = {
+    "hit": "Hits", "non_hit": "Non-Hits", "both": "All events",
+}
+
+
+def population_label(population: str) -> str:
+    """The name this population is shown under, in every window."""
+    return POPULATION_LABELS.get(population, population)
+
+
 @dataclass(frozen=True)
 class Drop:
     """One stage's refusal of one file.
