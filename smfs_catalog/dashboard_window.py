@@ -895,18 +895,9 @@ class DashboardWindow(QMainWindow):
         self._events_btn.clicked.connect(self._open_event_summary)
         blk_btn = QPushButton("View Non-events")
         blk_btn.clicked.connect(self._open_non_events)
-        scat_btn = QPushButton("Plot variables…")
-        scat_btn.setToolTip(
-            "Scatter any per-file variable against any other, over the "
-            "queued events.\n"
-            "Reports Spearman rho with n, and fits a line with a 95% "
-            "confidence band.\n\n"
-            "Put acquisition time on X and the slope is the drift rate."
-        )
-        scat_btn.clicked.connect(self._open_scatter)
 
         self._sync_gate_buttons()
-        return [self._events_btn, blk_btn, scat_btn]
+        return [self._events_btn, blk_btn]
 
     def _sync_gate_buttons(self) -> None:
         """Describe whether the current cohort has an active bounded criterion."""
@@ -2070,25 +2061,6 @@ class DashboardWindow(QMainWindow):
         self._event_summary_win = win
         self._spawn(win)
 
-
-    def _open_scatter(self) -> None:
-        """Any-vs-any scatter over the queued events."""
-        win = getattr(self, "_scatter_win", None)
-        if win is not None and win.isVisible():
-            win.raise_(); win.activateWindow()
-            return
-        paths = self._queue_event_paths()
-        if not paths:
-            QMessageBox.information(
-                self, "Plot variables",
-                "No events in the queue yet — analyse some curves first.")
-            return
-        from .scatter_window import ScatterWindow
-        win = ScatterWindow(paths, db_path=self._db_path,
-                            caption="queued events", session_info=None)
-        win.view_file_requested.connect(self._open_raw_viewer)
-        self._scatter_win = win
-        self._spawn(win)
 
     def _attach_raw(self, win) -> None:
         """Wire a event-summary window to the singleton viewer for WLC navigation."""

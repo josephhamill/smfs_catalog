@@ -24,9 +24,11 @@
 # split, not a proxy. Two independent controls, deliberately kept separate:
 #   - Show hits / Show non-hits checkboxes — display only, which population(s)
 #     are drawn. Never changes what a computation below sees.
-#   - Population selector (Hits / Non-Hits) — which population the action
-#     row (Fit force/length/2D, 2DH build) actually computes over. Explicit
-#     and visible in the toggle state, never inferred from what's shown.
+#   - Scope selector (Hits / Non-Hits / Both) — the population EVERY result
+#     is computed over: the fit drawn on the scatter, Fit X/Y/2D, Isoforce,
+#     the 2DH builds and every export. Explicit and visible in the toggle
+#     state, never inferred from what's shown. Isoforce and the 2DH builds are
+#     disabled under Both: an ensemble is one population's, by definition.
 #
 # A crosshair cursor in the scatter + matching lines in both histograms
 # marks the current curve when it is a confirmed event.
@@ -77,6 +79,7 @@ from . import ledger as _ledger
 from . import histogram_binning as _hb
 from . import style
 from . import clustering as _clustering
+from . import regression as _reg
 from . import variables as _vars
 from .widgets import ClusterColourBar, FlowLayout, LabeledControl, VariableCombo
 from .qt_utils import _DateAxis, _make_session_header, set_si_label, fit_on_screen
@@ -119,6 +122,17 @@ def _vsep() -> QFrame:
     line.setFrameShape(QFrame.Shape.VLine)
     line.setFrameShadow(QFrame.Shadow.Sunken)
     return line
+
+
+def _let_text_wrap(label: QLabel) -> None:
+    """Let a long readout reflow instead of widening the window.
+
+    A QLabel reports its whole single-line text as its width hint, and Qt will
+    not shrink a window below that, so a readout that grows a few words wide
+    can put the window's right-hand edge off the screen.
+    """
+    label.setWordWrap(True)
+    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
 
 def fit_outcome_text(outcome: dict) -> str:
@@ -176,7 +190,7 @@ class EventSummaryWindow(QMainWindow):
         self._wlc_view      = None   # keep reference to prevent GC
         self._isoforce_win  = None   # keep reference to prevent GC
         # Population-keyed ("hit"/"non_hit") so fitting/2DH-building the
-        # Population selector's two sides never collide or silently reuse
+        # scope selector's populations never collide or silently reuse
         # each other's window — see module docstring.
         self._gmm_wins:      dict   = {}   # "population:x_key:y_key" → GmmFitWindow
         self._norm_2dh_wins: dict   = {}   # population → Normalized2DHWindow
@@ -192,6 +206,13 @@ class EventSummaryWindow(QMainWindow):
         self._length_arr = np.full(n, np.nan)   # selected segment's WLC contour length (nm)
         self._x_arr      = np.full(n, np.nan)
         self._y_arr      = np.full(n, np.nan)
+        # The drawn points' correlation and OLS line, recomputed every
+        # _rebuild over what is on screen; None when there is nothing honest
+        # to report (see _render_fit).
+        self._fit:  _reg.LinearFit   | None = None
+        self._corr: _reg.Correlation | None = None
+        self._fit_paths: list[str] = []
+        self._fishing_note = ""
         self._vars = _vars.available(
             [r.get("path") for r in prepass_results if r.get("path")], self._db_path)
         self._var_by_key = {v.key: v for v in self._vars}
@@ -204,7 +225,9 @@ class EventSummaryWindow(QMainWindow):
         # usable segment fit, so it's still counted even when it can't be
         # drawn.
         self._hit_mask = np.zeros(n, dtype=bool)
-        self._active_population = "hit"   # "hit" | "non_hit" — what the action row computes over
+        # "hit" | "non_hit" | "both" — the population every result here is
+        # computed over (see the scope selector below).
+        self._active_population = "hit"
         self._current_index    = 0
         self._selected_index: int | None = None   # user selection (≠ playhead cursor)
         # Which segment (Ultimate/Penultimate, the dashboard's global Segment
@@ -240,7 +263,11 @@ class EventSummaryWindow(QMainWindow):
         font = self._stats_label.font()
         font.setPointSize(style.FONT_SMALL_PT)
         self._stats_label.setFont(font)
-        stats_row.addWidget(self._stats_label)
+        # A one-line label sets the window's minimum width from its own text,
+        # which is how this window's minimum reached 2056 px on a 1920 screen.
+        # Wrapping plus an ignored width hint lets the text reflow instead.
+        _let_text_wrap(self._stats_label)
+        stats_row.addWidget(self._stats_label, 1)
         self._why_btn = QPushButton("Why?")
         self._why_btn.setFont(font)
         self._why_btn.setToolTip(
@@ -255,6 +282,7 @@ class EventSummaryWindow(QMainWindow):
         # crosshair, which tracks the curve being analysed/navigated).
         self._sel_label = QLabel("")
         self._sel_label.setFont(font)
+        _let_text_wrap(self._sel_label)
         root.addWidget(self._sel_label)
 
         # Cluster colouring is placed here rather than in the action row:
@@ -272,15 +300,41 @@ class EventSummaryWindow(QMainWindow):
         self._y_combo = VariableCombo(self._vars, _DEFAULT_Y)
         self._swap_btn = QPushButton("Swap axes")
         self._swap_btn.clicked.connect(self._on_swap_axes)
+        self._fit_chk = QCheckBox("Linear fit")
+        self._fit_chk.setToolTip(
+            "OLS line with a 95% confidence band for the mean trend, not for "
+            "individual curves. The interval assumes independent residuals "
+            "with constant variance; consecutive measurements can make it "
+            "too narrow."
+        )
+        self._fit_chk.toggled.connect(self._rebuild)
         axis_row.addWidget(LabeledControl("X:", self._x_combo))
         axis_row.addWidget(LabeledControl("Y:", self._y_combo))
         axis_row.addWidget(self._swap_btn)
+        axis_row.addWidget(self._fit_chk)
         axis_row.addStretch()
         root.addLayout(axis_row)
+
+        # The fit's own readout, carrying the population it was computed over:
+        # the fit is the one number here a reader will compare against an
+        # exported file, so it says which curves it describes.
+        self._fit_label = QLabel("")
+        self._fit_label.setFont(font)
+        _let_text_wrap(self._fit_label)
+        root.addWidget(self._fit_label)
+
+        # The fishing caution, stated where the number is read: with this many
+        # variables on offer, a p-value found by scanning pairs is not the
+        # p-value it looks like.
+        self._warn_label = QLabel("")
+        self._warn_label.setStyleSheet(style.qss_text(style.TEXT_WARNING))
+        self._warn_label.setFont(style.font(font, size_pt=style.FONT_SMALL_PT))
+        _let_text_wrap(self._warn_label)
+        root.addWidget(self._warn_label)
         self._x_combo.currentIndexChanged.connect(self._on_axes_changed)
         self._y_combo.currentIndexChanged.connect(self._on_axes_changed)
 
-        # ── Action row — Filtering + Show checkboxes, Population selector, fit
+        # ── Action row — Filtering + Show checkboxes, scope selector, fit
         # buttons, 2DH buttons, exports, View individual events.
         #
         # A FlowLayout, because as one QHBoxLayout these fourteen buttons and
@@ -310,21 +364,30 @@ class EventSummaryWindow(QMainWindow):
 
         action_row.addWidget(_vsep())
 
-        # Population selector — which one the buttons to its right actually
-        # compute over (module docstring: deliberately independent of Show).
-        self._pop_hit_btn = QPushButton("Hits")
-        self._pop_hit_btn.setCheckable(True)
-        self._pop_hit_btn.setChecked(True)
-        self._pop_nonhit_btn = QPushButton("Non-Hits")
-        self._pop_nonhit_btn.setCheckable(True)
+        # Scope selector — the population EVERY number in this window is
+        # computed over, the drawn fit included (module docstring:
+        # deliberately independent of Show, which only draws).
+        self._pop_btns = {}
         self._pop_group = QButtonGroup(self)
         self._pop_group.setExclusive(True)
-        self._pop_group.addButton(self._pop_hit_btn)
-        self._pop_group.addButton(self._pop_nonhit_btn)
-        self._pop_hit_btn.toggled.connect(self._on_population_toggled)
-        # The caption travels with its two buttons so a wrap cannot strand it.
+        for pop, label in (("hit", "Hits"), ("non_hit", "Non-Hits"),
+                           ("both", "Both")):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(pop == "hit")
+            btn.setToolTip(
+                "Every result in this window — the fit drawn on the scatter, "
+                "Fit X/Y/2D, Isoforce, both 2DH builds and all four exports — "
+                "is computed over this population. The Show checkboxes only "
+                "decide what is drawn."
+            )
+            btn.toggled.connect(
+                lambda checked, p=pop: self._on_population_toggled(checked, p))
+            self._pop_group.addButton(btn)
+            self._pop_btns[pop] = btn
+        # The caption travels with its buttons so a wrap cannot strand it.
         action_row.addWidget(LabeledControl(
-            "Apply fits / 2DH to:", self._pop_hit_btn, self._pop_nonhit_btn))
+            "Analyse (fits, exports, 2DH):", *self._pop_btns.values()))
 
         action_row.addWidget(_vsep())
 
@@ -358,6 +421,12 @@ class EventSummaryWindow(QMainWindow):
         self._phys_2dh_btn.setToolTip("Open the total physical-units 2D histogram for these traces.")
         self._phys_2dh_btn.clicked.connect(self._on_open_physical_2dh)
         action_row.addWidget(self._phys_2dh_btn)
+        # Kept so the "pick one population" tooltip these three wear under
+        # Both can be taken off again, without a second copy of their text.
+        self._one_population_tips = {
+            btn: btn.toolTip() for btn in
+            (self._isoforce_btn, self._norm_2dh_btn, self._phys_2dh_btn)
+        }
 
         action_row.addWidget(_vsep())
 
@@ -457,6 +526,16 @@ class EventSummaryWindow(QMainWindow):
         )
         self._sel_marker.hide()
         self._scatter_plot.addItem(self._sel_marker, ignoreBounds=True)
+
+        # OLS line and its band, both ignoreBounds: a model drawn over the data
+        # must never be what sets the view range.
+        self._band_lo = pg.PlotCurveItem(x=[0.0, 1.0], y=[0.0, 0.0], pen=pg.mkPen(None))
+        self._band_hi = pg.PlotCurveItem(x=[0.0, 1.0], y=[0.0, 0.0], pen=pg.mkPen(None))
+        self._band    = pg.FillBetweenItem(self._band_lo, self._band_hi,
+                                           brush=style.band_brush(style.series_line(0)))
+        self._fit_line = pg.PlotCurveItem(pen=style.model_pen(style.series_line(0)))
+        for it in (self._band_lo, self._band_hi, self._band, self._fit_line):
+            self._scatter_plot.addItem(it, ignoreBounds=True)
 
         # Crosshair cursor
         self._cursor_v = pg.InfiniteLine(angle=90, movable=False, pen=_CURS_PEN)
@@ -633,6 +712,7 @@ class EventSummaryWindow(QMainWindow):
             f"{self._axis_label(xk)}.")
         self._export_scatter_btn.setToolTip(
             f"path, {self._axis_label(xk)}, {self._axis_label(yk)} — one row per point.")
+        self._fit_chk.setText(f"Linear fit ({self._population_label()})")
 
     def _on_axes_changed(self) -> None:
         try:
@@ -755,6 +835,13 @@ class EventSummaryWindow(QMainWindow):
             self._scatter_fail.setData(x=x_v[fail].tolist(), y=y_v[fail].tolist(),
                                        data=idx_v[fail].tolist(), brush=fail_brush)
 
+        # The fit describes the ANALYSED population, never the drawn one: the
+        # Show checkboxes decide what is visible, and a number that moved when
+        # a curve was hidden would disagree with the same number in an export.
+        analysed = self._population_mask()[valid]
+        self._fit_paths = [paths[int(i)] for i in idx_v[analysed]]
+        self._render_fit(x_v[analysed], y_v[analysed])
+
         # Geometry from histogram_binning, the same module the EXPORT of these
         # very histograms already used (_hb.full_range_bins below) and the same
         # convention variable_window draws on screen. Robust range plus
@@ -813,6 +900,58 @@ class EventSummaryWindow(QMainWindow):
         self._update_stats()
         self._rebuild_list()
         self._update_sel_marker()
+
+    def _render_fit(self, x: np.ndarray, y: np.ndarray) -> None:
+        """Correlation and OLS line for the analysed population's points.
+
+        Recomputed even when the line is hidden, so the readout and the export
+        stay available without it. A variable against itself is a legitimate
+        temporary axis choice, but its perfect line and rho are identities
+        rather than analyses and must not reach either.
+        """
+        same = self._x_key == self._y_key
+        self._fit = None if same or len(x) < 3 else _reg.linear_fit(x, y)
+        self._corr = (None if same or len(x) < 3 else
+                      _reg.correlate(x, y, method="spearman"))
+        show = self._fit_chk.isChecked() and self._fit is not None
+        for it in (self._fit_line, self._band):
+            it.setVisible(show)
+        if show:
+            xs = np.linspace(float(x.min()), float(x.max()), 200)
+            lo, hi = self._fit.band(xs)
+            self._fit_line.setData(xs, self._fit.predict(xs))
+            self._band_lo.setData(xs, lo)
+            self._band_hi.setData(xs, hi)
+        n_pairs = len(self._vars) * (len(self._vars) - 1) // 2
+        self._fishing_note = (
+            f"⚠ {len(self._vars)} variables here make {n_pairs} possible "
+            f"pairs, so ~{max(1, round(n_pairs * 0.05))} would clear p < 0.05 "
+            f"by chance alone. A correlation found by scanning pairs needs "
+            f"confirming on an independent cohort before it means anything."
+            if self._corr is not None and self._corr.p < 0.05 else ""
+        )
+
+    def _fit_text(self) -> str:
+        """Spearman rho, slope and R², named for the population they describe.
+        Empty without a fit."""
+        bits = []
+        if self._corr is not None:
+            c = self._corr
+            bits.append(f"Spearman ρ {c.rho:+.3f} (n={c.n}, p={c.p:.3g})")
+        if self._fit is not None:
+            f = self._fit
+            if self._x_key == _vars.TIME_KEY:
+                s, lo, hi = _reg.per_hour(f)
+                unit = _quant.unit_of(self._y_key)
+                bits.append(f"slope {s:.4g} [{lo:.4g}, {hi:.4g}] "
+                            f"{unit + '/h' if unit else '/h'}")
+            else:
+                lo, hi = f.slope_ci
+                bits.append(f"slope {f.slope:.4g} [{lo:.4g}, {hi:.4g}]")
+            bits.append(f"R² {f.r2:.3f}")
+        if not bits:
+            return ""
+        return f"fit — {self._population_label()}:   " + "   |   ".join(bits)
 
     def _draw_cluster_curves(self, cl, paths, idx_v, shown, values, bins,
                              store: list, *, transposed: bool) -> None:
@@ -938,6 +1077,21 @@ class EventSummaryWindow(QMainWindow):
                                       for d in led.drops()))
         box.exec()
 
+    def _population_hidden_note(self) -> str:
+        """Said out loud when the analysed population is not on screen: the
+        fit and every export still describe it, so its absence from the plot
+        must not read as its absence from the results."""
+        drawn = ((self._show_hits_chk.isChecked() and "hit") or "",
+                 (self._show_nonhits_chk.isChecked() and "non_hit") or "")
+        needed = ("hit", "non_hit") if self._active_population == "both" \
+            else (self._active_population,)
+        missing = [p for p in needed if p not in drawn]
+        if not missing:
+            return ""
+        names = " and ".join("Hits" if p == "hit" else "Non-Hits" for p in missing)
+        return (f"⚠ {names} are hidden, but the fit and every export still "
+                f"describe {self._population_label()}.")
+
     def _update_stats(self) -> None:
         """Stats reflect what's actually drawn (respects the Show checkboxes),
         so the numbers on screen always match the plot underneath them — and
@@ -950,6 +1104,13 @@ class EventSummaryWindow(QMainWindow):
             self._stats_label.setToolTip(self._load_error)
         else:
             self._stats_label.setToolTip("")
+
+        # Written before the early returns below: a stale fit line under a
+        # "0 events shown" stats line would describe curves that are gone.
+        self._fit_label.setText(self._fit_text())
+        self._warn_label.setText("\n".join(
+            note for note in (self._population_hidden_note(),
+                              getattr(self, "_fishing_note", "")) if note))
 
         led = self._plottability_ledger()
         self._why_btn.setEnabled(led.n_dropped > 0)
@@ -1121,11 +1282,26 @@ class EventSummaryWindow(QMainWindow):
         if self._criteria_opener is not None:
             self._criteria_opener()
 
-    def _on_population_toggled(self, checked: bool) -> None:
-        """Hits button toggled — Non-Hits is the exclusive complement via
-        _pop_group. Governs the action row (Fit force/length/2D, 2DH build),
-        never the display (see module docstring)."""
-        self._active_population = "hit" if checked else "non_hit"
+    def _on_population_toggled(self, checked: bool, pop: str) -> None:
+        """A scope button was selected — the others clear via _pop_group.
+
+        Governs every result (the drawn fit, Fit X/Y/2D, Isoforce, 2DH builds,
+        every export), never what is drawn (see module docstring).
+        """
+        if not checked:
+            return
+        self._active_population = pop
+        self._fit_chk.setText(f"Linear fit ({self._population_label()})")
+        # A 2DH or an isoforce population is one ensemble; there is no such
+        # thing as a mixed one, so those buttons say so rather than quietly
+        # building something else.
+        one_population = pop != "both"
+        for btn, tip in self._one_population_tips.items():
+            btn.setEnabled(one_population)
+            btn.setToolTip(tip if one_population else
+                           "Select Hits or Non-Hits: this builds one "
+                           "population's ensemble.")
+        self._rebuild()   # the drawn fit follows the scope
 
     def set_raw_window(self, win) -> None:
         """Register the RawCurveWindow so WlcViewWindow can navigate back to a event."""
@@ -1179,7 +1355,8 @@ class EventSummaryWindow(QMainWindow):
     # ── Distribution fit pop-outs ─────────────────────────────────────────────
 
     def _population_label(self) -> str:
-        return "Hits" if self._active_population == "hit" else "Non-Hits"
+        return {"hit": "Hits", "non_hit": "Non-Hits"}.get(
+            self._active_population, "all events")
 
     def _live_hit_mask(self) -> np.ndarray:
         """Boolean mask over self._results, asked of the gate RIGHT NOW.
@@ -1198,10 +1375,12 @@ class EventSummaryWindow(QMainWindow):
         return np.array([bool(p) and p in hit_set for p in paths], dtype=bool)
 
     def _population_mask(self) -> np.ndarray:
-        """Boolean mask over self._results for whichever population the
-        selector currently points to — what the action row computes over.
-        Sourced from the gate at call time, not from the render cache."""
+        """Boolean mask over self._results for whichever population the scope
+        selector currently points to — what every result here is computed
+        over. Sourced from the gate at call time, not from the render cache."""
         live = self._live_hit_mask()
+        if self._active_population == "both":
+            return np.array([bool(r.get("path")) for r in self._results], dtype=bool)
         return live if self._active_population == "hit" else ~live
 
     def _cluster_caption(self) -> str:
@@ -1321,6 +1500,11 @@ class EventSummaryWindow(QMainWindow):
             "segment_select": self._segment_select,
             "x_variable":     self._x_key,
             "y_variable":     self._y_key,
+            "fit_shown":      bool(self._fit_chk.isChecked()),
+            # How many pairs were on offer, so a reader can judge a p-value
+            # that was found by scanning rather than predicted in advance.
+            "n_variables_offered": len(self._vars),
+            "n_pairs_possible":    len(self._vars) * (len(self._vars) - 1) // 2,
             "n_events_loaded": len(self._results),
             "population_drops": led.manifest(),
             **_clustering.provenance(
@@ -1347,7 +1531,11 @@ class EventSummaryWindow(QMainWindow):
         err_cols = (_vars.columns(sel_paths, list(errs.values()), self._db_path)[1]
                     if errs else {})
 
-        cols, series = ["path"], [sel_paths]
+        # Which population each row belongs to, always — a Both export would
+        # otherwise be two cohorts with nothing telling them apart, and a
+        # single-population file still gains by saying so in the data.
+        live_hit = self._live_hit_mask()
+        cols, series = ["path", "hit"], [sel_paths, [int(live_hit[i]) for i in idx]]
         for key, arr in dict(((xk, self._x_arr), (yk, self._y_arr))).items():
             cols.append(key)
             series.append([float(v) for v in arr[idx]])
@@ -1355,6 +1543,32 @@ class EventSummaryWindow(QMainWindow):
                 cols.append(errs[key])
                 series.append(["" if np.isnan(v) else float(v)
                                for v in err_cols[errs[key]]])
+
+        # Refitted over THESE rows. They are the analysed population, which is
+        # what the screen fit uses too, so the two agree by construction — but
+        # an exported fit column must be computed from the file it ships in.
+        # Same rule as the screen fit: an axis against itself is an identity,
+        # not a result.
+        x, y = self._x_arr[idx], self._y_arr[idx]
+        fit = None if xk == yk or len(x) < 3 else _reg.linear_fit(x, y)
+        corr = (None if xk == yk or len(x) < 3 else
+                _reg.correlate(x, y, method="spearman"))
+        if fit is not None:
+            f_lo, f_hi = fit.band(x)
+            f_val = fit.predict(x)
+        else:
+            f_lo = f_hi = f_val = np.full(x.shape, np.nan)
+        cols += ["fit", "fit_ci_lo", "fit_ci_hi", "cluster"]
+        # The cluster travels with the row whether or not the colouring is
+        # switched on — a display toggle must not decide what a data file
+        # contains, and the clustering itself does not survive the session.
+        cl = _clustering.current()
+        series += [
+            [float(v) for v in f_val], [float(v) for v in f_lo],
+            [float(v) for v in f_hi],
+            ["" if cl is None or cl.label_for(p) is None else cl.label_for(p)
+             for p in sel_paths],
+        ]
         rows = list(zip(*series))
         axes = [(xk, self._x_arr), (yk, self._y_arr)]
         with _export.export_group(
@@ -1364,6 +1578,7 @@ class EventSummaryWindow(QMainWindow):
         ) as g:
             g.contributing_files(sel_paths)
             g.note_dict(self.export_provenance(axes))
+            g.note_dict(_reg.manifest_fields(fit, corr, x_is_time=xk == _vars.TIME_KEY))
             g.note(columns=cols, units=_quant.units_for(cols[1:]), n_points=len(rows))
             g.table(".csv", cols, rows)
         QMessageBox.information(
@@ -1433,9 +1648,17 @@ class EventSummaryWindow(QMainWindow):
             )
             return
 
+        # Same reason as the scatter export's: under Both these rows are two
+        # cohorts, and nothing else in the file says which is which.
+        live_hit = self._live_hit_mask()
+        hit_by_path = {r.get("path"): int(live_hit[i])
+                       for i, r in enumerate(self._results) if r.get("path")}
+        for row in rows:
+            row["hit"] = hit_by_path.get(row.get("path"), "")
+
         covered = {r.get("path") for r in rows if r.get("path")}
-        headers = [h for h, _k in self._ROI_SEGMENT_COLUMNS]
-        keys    = [k for _h, k in self._ROI_SEGMENT_COLUMNS]
+        headers = [h for h, _k in self._ROI_SEGMENT_COLUMNS] + ["hit"]
+        keys    = [k for _h, k in self._ROI_SEGMENT_COLUMNS] + ["hit"]
         with _export.export_group(
             self._db_path,
             f"roi_segments_{self._active_population}",
@@ -1492,10 +1715,15 @@ class EventSummaryWindow(QMainWindow):
         ) as g:
             g.contributing_files(contributing)
             g.note_dict(self.export_provenance([(key, arr)]))
+            # A histogram has no rows to carry a hit column, so the split goes
+            # in the manifest: under Both these bars hold both populations.
+            binned_hit = self._live_hit_mask()[sel]
             g.note(
                 variable=key,
                 unit=_quant.unit_of(key),
                 n_values=int(len(values)),
+                n_hit=int(np.count_nonzero(binned_hit)),
+                n_non_hit=int(np.count_nonzero(~binned_hit)),
                 n_binned=int(counts.sum()),
                 n_bins=int(bins.n_bins),
                 bin_range=[float(bins.edges[0]), float(bins.edges[-1])],
@@ -1558,7 +1786,10 @@ class EventSummaryWindow(QMainWindow):
             axes = [("seg_force_pN", self._force_arr), ("seg_l_c_nm", self._length_arr)]
 
         live = self._live_hit_mask()
-        mask = live if which == "hit" else ~live
+        # "both" asks of every loaded event, so nothing is dropped for
+        # membership and the ledger reports only missing values.
+        mask = (np.ones(len(paths), dtype=bool) if which == "both"
+                else live if which == "hit" else ~live)
         other = "non-hit" if which == "hit" else "hit"
         for i, p in enumerate(paths):
             if not p:
@@ -1571,7 +1802,7 @@ class EventSummaryWindow(QMainWindow):
 
     def population_paths(self, which: str) -> list[str]:
         """Paths with a usable segment fit belonging to `which` population
-        ("hit"/"non_hit"), independent of the Population selector's CURRENT
+        ("hit"/"non_hit"), independent of the scope selector's CURRENT
         setting or the Show checkboxes. A 2DH window remembers which
         population it was opened for and asks for exactly that one on every
         refresh, so it stays correctly scoped even after the selector or

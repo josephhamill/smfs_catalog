@@ -277,7 +277,7 @@ def test_cluster_colours_come_from_the_palette():
     """A cluster is the same colour in every window that draws it.
 
     pca_window used pg.intColor(label, hues=k) for its two score scatters
-    while event_summary, scatter_window, variable_window and
+    while event_summary, variable_window and
     categorical_window all used style.series_labeled(label).  Since PCA is
     where k-means DEFINES the labels, the definitive view disagreed with
     every window that consumed them — cluster 1 was one colour in the PCA
