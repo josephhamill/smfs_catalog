@@ -389,9 +389,10 @@ check("the complement population reports membership drops explicitly",
 check("the two populations ask the same question of the same cohort",
       nled.n_asked == pled.n_asked == len(PATHS))
 
-led_plot = ev._plottability_ledger()
-check("the plottability tally explains the title-vs-stats gap",
-      led_plot.n_asked == len(PATHS) and led_plot.n_dropped == 2)
+led_plot = ev._plotted_ledger(ev._population_mask())
+check("the plotted tally covers the population: plotted + not plotted = curves",
+      led_plot.n_asked == len(PATHS) and led_plot.n_dropped == 2
+      and led_plot.n_kept == int(ev._plotted_mask().sum()))
 check("the manifest carries the tally out of the app",
       ev.export_provenance()["population_drops"]["n_asked"] == len(PATHS))
 check("the fit windows' caption names what it was drawn from",
