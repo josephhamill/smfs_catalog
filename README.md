@@ -86,10 +86,8 @@ first launch. The release notes give the details per platform.
 
 ## Documentation
 
-- [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) — how to use the application
 - [`docs/SPEC_what_the_app_does.md`](docs/SPEC_what_the_app_does.md) — what
   the analysis pipeline does, stage by stage
-- [`docs/CODEBASE_ARCHITECTURE.md`](docs/CODEBASE_ARCHITECTURE.md) — module map
 - [`docs/UNCERTAINTY.md`](docs/UNCERTAINTY.md) — how uncertainties are computed
   and what they do and do not mean
 
