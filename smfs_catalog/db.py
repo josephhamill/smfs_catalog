@@ -396,6 +396,12 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
 
     conn.close()
 
+    # After the schema is settled and this connection's write transaction is
+    # done: reconciling the criteria needs its own connection, and it reads
+    # tables that must already exist.
+    from . import criteria_migration as _criteria_migration
+    _criteria_migration.reconcile(db_path)
+
 
 def directory_of(path: str) -> str:
     """The folder holding `path`.  Derived, never stored — see the files.path comment in initialise()."""
@@ -1122,12 +1128,11 @@ def classification_report_rows(
     event_paths = [r["path"] for r in rows if r["event"] == "event"]
     hit_by_path: dict[str, str] = {}
     if event_paths:
-        has_crit = _gate.has_criteria_checked(event_paths, db_path)
-        hits, _non_hits = _gate.evaluate(event_paths, db_path)
-        hit_set = set(hits)
-        for p in event_paths:
-            if has_crit.get(p, False):
-                hit_by_path[p] = "hit" if p in hit_set else "non_hit"
+        # With no criteria in force the cell stays blank: every event would
+        # read as a hit, which is not the same claim as having passed one.
+        cls = _gate.classify(event_paths, db_path)
+        if cls.gate:
+            hit_by_path = dict(cls.membership)
 
     from .roi_pipeline import SEG_SUMMARY_FIELD, SEG_SUMMARY_KEYS, segment_summary_bulk
     seg_by_path: dict[str, dict] = (

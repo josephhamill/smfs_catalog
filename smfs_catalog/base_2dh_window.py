@@ -400,7 +400,7 @@ class _TwoDHWindowBase(QMainWindow):
         """This person's grid settings, falling back to the lab's.
 
         Precedence is deliberately the SAME as db.load_analysis_params and
-        criteria_gate.get_criteria: this person's own value where they have one,
+        criteria_gate.gate: this person's own value where they have one,
         the DEFAULT_EXPERIMENTALIST row's otherwise, the declared constant last.
 
         Constants are seeded into the Default row at initialise(); the final

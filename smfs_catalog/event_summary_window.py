@@ -10,7 +10,7 @@
 #
 # EventSummaryWindow — shows all detected molecular events together, split
 # live into Hits / Non-hits by the criteria gate. Events are not a third
-# population: criteria_gate.evaluate() with nothing checked already returns
+# population: criteria_gate.classify() with no criteria set already returns
 # everything as a hit, so turning off every filter IS the events view.
 #
 # 2×2 grid layout:
@@ -20,7 +20,7 @@
 #   Lower-left  : X histogram (Y = count; X linked to scatter)
 #   Lower-right : empty (reserved)
 #
-# Hits are drawn red, non-hits gray — the REAL criteria_gate.evaluate()
+# Hits are drawn red, non-hits gray — the REAL criteria_gate.classify()
 # split, not a proxy.
 #
 # ONE population control (Hits / Non-Hits / All events): what is drawn IS what is
@@ -249,7 +249,7 @@ class EventSummaryWindow(QMainWindow):
         # Selected segment's stored fit outcome, None until loaded — see
         # _prepopulate and _record_missing.
         self._seg_outcome: list[dict | None] = [None] * n
-        # Real criteria_gate.evaluate() split, recomputed every _rebuild() —
+        # Real criteria_gate.classify() split, recomputed every _rebuild() —
         # True = hit. Kept over the FULL self._results (not just plotted
         # points): a curve can have a real hit/non-hit verdict without a
         # usable segment fit, so it's still counted even when it can't be
@@ -777,11 +777,11 @@ class EventSummaryWindow(QMainWindow):
     # ── Scatter + histogram rebuild ───────────────────────────────────────────
 
     def _rebuild(self) -> None:
-        """Recompute the real hit/non-hit split (criteria_gate.evaluate(),
+        """Recompute the real hit/non-hit split (criteria_gate.classify(),
         not a proxy) and redraw all three panels."""
         paths = [r.get("path") for r in self._results]
-        hits, _non_hits = _gate.evaluate([p for p in paths if p], self._db_path)
-        hit_set = set(hits)
+        hit_set = set(_gate.classify(
+            [p for p in paths if p], self._db_path).population(_gate.HIT))
         self._hit_mask = np.array([bool(p) and p in hit_set for p in paths], dtype=bool)
 
         valid = ~np.isnan(self._y_arr) & ~np.isnan(self._x_arr)
@@ -1354,8 +1354,7 @@ class EventSummaryWindow(QMainWindow):
         live = [p for p in paths if p]
         if not live:
             return np.zeros(len(paths), dtype=bool)
-        hits, _non_hits = _gate.evaluate(live, self._db_path)
-        hit_set = set(hits)
+        hit_set = set(_gate.classify(live, self._db_path).population(_gate.HIT))
         return np.array([bool(p) and p in hit_set for p in paths], dtype=bool)
 
     def _memberships(self, hits: np.ndarray) -> list[str]:

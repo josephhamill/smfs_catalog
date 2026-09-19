@@ -10,21 +10,24 @@
 #
 # CriteriaDialog — the gate's control surface.
 #
-# Class-scoped to EVENTS: a flat, data-driven list of analysis variables, each
-# with ONE persistent participation checkbox.  Checking a variable makes it
-# gate the hit; its bounds come from the thresholds table (set in the
-# variable window — the how/whether split), shown read-only here with an
-# "Edit bounds…" shortcut.  A live "N of M events survive" readout recomputes on
-# every toggle so the effect of the gate is immediately visible.
+# Class-scoped to EVENTS: a flat, data-driven list of analysis variables.  A
+# variable with either bound set gates the hit; one with neither does not
+# constrain.  There is no participation switch, because the bound IS the
+# participation — see criteria_gate's module docstring for why two switches
+# was the wrong shape.
 #
-# This window decides WHETHER a variable participates; it never edits bounds.
-# Hits/non-hit membership is derived by criteria_gate.evaluate — never stored.
+# Bounds are set in the variable window, which shows the distribution being
+# cut; they are shown here read-only with an "Edit bounds…" shortcut, and
+# cleared here with "Clear".  A live "N of M events are hits" readout
+# recomputes on every change so the effect is immediately visible.
+#
+# Hits/non-hit membership is derived by criteria_gate.classify — never stored.
 
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea,
+    QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
@@ -57,19 +60,19 @@ def _bounds_text(row, key: str = "") -> str:
     return f"x ≤ {f(hi)}"
 
 
-_TICKING_MEANS = (
-    "Ticking selects this variable for the gate. It becomes active once at "
-    "least one bound is set; without a bound it does not constrain the hit.\n\n"
-    "When active, the variable is REQUIRED: a curve with no finite value for "
-    "it becomes a non-hit even if everything else passes. That matters most "
-    "for variables only some curves have — the reload and rupture-separation "
+_BOUNDS_MEAN = (
+    "Setting either bound on a variable makes it gate the hit. Clearing both "
+    "stops it gating; there is nothing else to switch.\n\n"
+    "A gating variable is REQUIRED: a curve with no finite value for it "
+    "becomes a non-hit even if everything else passes. That matters most for "
+    "variables only some curves have — the reload and rupture-separation "
     "distances exist only where an ROI has two or more ruptures."
 )
 
 
 def _criterion_tooltip(key: str) -> str:
     """
-    What the variable means, then what checking it does.
+    What the variable means, then what bounding it does.
 
     The first half is variables.describe() — the same sentence the queue
     header and the scatter axes show, so there is one place to edit it.  The
@@ -77,16 +80,16 @@ def _criterion_tooltip(key: str) -> str:
     is written here and not in the register.
     """
     desc = _vars.describe(key)
-    return f"{desc}\n\n———\n\n{_TICKING_MEANS}" if desc else _TICKING_MEANS
+    return f"{desc}\n\n———\n\n{_BOUNDS_MEAN}" if desc else _BOUNDS_MEAN
 
 
 class CriteriaDialog(QMainWindow):
-    """Per-variable participation checkboxes + live hit survival count."""
+    """The variables that can gate the hit, their bounds, and the live split."""
 
     # Re-emitted from a spawned variable window so the dashboard can route a
     # double-clicked file to its singleton worker viewer.
     view_file_requested = pyqtSignal(str)
-    # Emitted whenever participation changes, so the dashboard updates the
+    # Emitted whenever the gate changes, so the dashboard updates the
     # grey-out state of the result buttons and refreshes open hit/non-hit
     # windows.
     criteria_changed = pyqtSignal()
@@ -105,7 +108,7 @@ class CriteriaDialog(QMainWindow):
         self._variables = variables
         self._event_paths = list(event_paths)
         self._var_wins: list = []   # spawned variable windows, kept from GC
-        self._rows: list[tuple[str, QCheckBox, QLabel]] = []
+        self._rows: list[tuple[str, QLabel, QPushButton]] = []
         # The queue has one active profile owner, selected by its first row.
         # Use the gate's resolver so the controls and live verdict can never
         # describe different profiles when the queue contains several owners.
@@ -119,10 +122,10 @@ class CriteriaDialog(QMainWindow):
         root.setSpacing(6)
 
         intro = QLabel(
-            "Tick the variables that should gate the hit.  A ticked variable "
-            "filters by its bounds (set via “Edit bounds…”); an unticked one "
-            "doesn’t constrain.  Events that fail any active, bounded variable "
-            "— or have no finite value for it — become non-hits."
+            "A variable with bounds gates the hit; one without bounds doesn’t "
+            "constrain.  Set bounds with “Edit bounds…”, remove a criterion "
+            "with “Clear”.  Events that fail any bounded variable — or have no "
+            "finite value for it — become non-hits."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet(style.qss_text())
@@ -143,20 +146,17 @@ class CriteriaDialog(QMainWindow):
         scroll.setWidget(inner)
         root.addWidget(scroll, 1)
 
-        checked = _gate.get_criteria(self._experimentalist, db_path)
         for key, label in variables:
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
             row_l.setContentsMargins(2, 1, 2, 1)
-            chk = QCheckBox(label)
-            chk.setChecked(key in checked)
-            chk.toggled.connect(lambda on, k=key: self._on_toggle(k, on))
+            name = QLabel(label)
             # What the variable IS (the one register, same text the queue
-            # header and the scatter axes show) followed by what ticking it
+            # header and the scatter axes show) followed by what bounding it
             # DOES.  This is the highest-stakes place a variable is named in
-            # the app: a box ticked without understanding silently changes
+            # the app: a bound set without understanding silently changes
             # which curves count as hits for this whole cohort.
-            chk.setToolTip(_criterion_tooltip(key))
+            name.setToolTip(_criterion_tooltip(key))
             bounds_lbl = QLabel("")
             bounds_lbl.setStyleSheet(style.qss_text(style.UI_FAINT))
             edit_btn = QPushButton("Edit bounds…")
@@ -167,11 +167,20 @@ class CriteriaDialog(QMainWindow):
                 "else's."
             )
             edit_btn.clicked.connect(lambda _=False, k=key, lb=label: self._edit_bounds(k, lb))
-            row_l.addWidget(chk, 1)
+            clear_btn = QPushButton("Clear")
+            clear_btn.setToolTip(
+                "Remove this variable's bounds, so it stops gating the hit.\n\n"
+                "The numbers are not kept: a bound that is not in force is not "
+                "stored anywhere, which is what makes this list the whole "
+                "answer to what defines a hit."
+            )
+            clear_btn.clicked.connect(lambda _=False, k=key: self._clear_bounds(k))
+            row_l.addWidget(name, 1)
             row_l.addWidget(bounds_lbl)
             row_l.addWidget(edit_btn)
+            row_l.addWidget(clear_btn)
             self._list_l.addWidget(row_w)
-            self._rows.append((key, chk, bounds_lbl))
+            self._rows.append((key, bounds_lbl, clear_btn))
         self._list_l.addStretch(1)
 
         self._count_lbl = QLabel("")
@@ -201,39 +210,39 @@ class CriteriaDialog(QMainWindow):
 
     def refresh(self) -> None:
         """
-        Resync checkboxes + bounds text to the CURRENT experimentalist, then
-        recompute the live hit survival count.  The checkbox resync matters
-        because this dialog is a reused singleton (dashboard_window's
-        _open_criteria calls set_event_paths on an already-open instance) —
-        without it, reopening on a different owner's queue would keep
-        showing the PREVIOUS owner's checked state, the same staleness bug
-        this whole per-experimentalist change exists to close.
+        Resync the bounds text to the CURRENT experimentalist, then recompute
+        the live hit survival count.  The resync matters because this dialog
+        is a reused singleton (dashboard_window's _open_criteria calls
+        set_event_paths on an already-open instance) — without it, reopening
+        on a different owner's queue would keep showing the PREVIOUS owner's
+        bounds, the same staleness this per-experimentalist split exists to
+        close.
         """
-        checked = _gate.get_criteria(self._experimentalist, self._db_path)
-        for key, chk, bounds_lbl in self._rows:
-            chk.blockSignals(True)
-            chk.setChecked(key in checked)
-            chk.blockSignals(False)
-            bounds_lbl.setText(_bounds_text(
-                _db.get_threshold(key, self._experimentalist, self._db_path), key))
-        hits, non_hits = _gate.evaluate(self._event_paths, self._db_path)
-        active = _gate.get_active_criteria(
-            self._experimentalist, self._db_path)
+        for key, bounds_lbl, clear_btn in self._rows:
+            row = _db.get_threshold(key, self._experimentalist, self._db_path)
+            bounded = row is not None and (
+                row["lower_bound"] is not None or row["upper_bound"] is not None)
+            bounds_lbl.setText(_bounds_text(row, key))
+            clear_btn.setEnabled(bounded)
+        cls = _gate.classify(self._event_paths, self._db_path)
         total = len(self._event_paths)
-        if not active:
+        if not cls.gate:
             self._count_lbl.setText(
-                f"No active criteria — hit undefined ({total:,} events)."
+                f"No criteria set — hit undefined ({total:,} events)."
             )
         else:
+            counts = cls.counts()
             self._count_lbl.setText(
-                f"{len(hits):,} of {total:,} events are hits  ·  "
-                f"{len(non_hits):,} non-hits"
+                f"{counts.get(_gate.HIT, 0):,} of {total:,} events are hits  ·  "
+                f"{counts.get(_gate.NON_HIT, 0):,} non-hits"
             )
 
     # ── Interaction ──────────────────────────────────────────────────────────
 
-    def _on_toggle(self, key: str, on: bool) -> None:
-        _gate.set_criterion(key, on, self._experimentalist, self._db_path)
+    def _clear_bounds(self, key: str) -> None:
+        """Drop this variable's bounds — the way a criterion is removed."""
+        _db.set_threshold(key, None, None, "", self._experimentalist,
+                          self._db_path)
         self.refresh()
         self.criteria_changed.emit()
 

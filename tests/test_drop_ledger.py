@@ -364,7 +364,7 @@ ev._rebuild()
 # The population itself is membership only: a downstream window is handed
 # every member and records its own drops.
 pled = ev.population_ledger("hit")
-check("with no criteria checked, every event is a member",
+check("with no bounds set, every event is a member",
       pled.n_dropped == 0 and ev.population_paths("hit") == pled.kept() == PATHS)
 
 # Asked for values, the same ledger names exactly the ones each curve lacks.

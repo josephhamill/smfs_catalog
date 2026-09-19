@@ -355,7 +355,7 @@ def test_one_control_draws_and_analyses_the_same_curves(tmp_path, monkeypatch):
     db, paths = _catalog_with_curves(tmp_path, 6)
 
     win = EventSummaryWindow([{"path": p} for p in paths], db)
-    # The gate passes everything with no criteria checked, so the split is
+    # The gate passes everything with no bounds set, so the split is
     # stated here instead: the first three curves are hits.
     monkeypatch.setattr(win, "_live_hit_mask",
                         lambda: np.array([True] * 3 + [False] * 3), raising=False)

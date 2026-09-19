@@ -194,13 +194,13 @@ def test_verdict_columns_spell_out_their_vocabulary(key, must_mention):
 
 def test_hit_column_states_the_empty_criteria_rule():
     """
-    'No criteria checked' means EVERY event is a hit.  That is the basis of
-    the hand-built cohort workflow and is the single most surprising thing
-    about the gate, so the column that shows the verdict has to say it.
+    No bounds set means EVERY event is a hit.  That is the basis of the
+    hand-built cohort workflow and is the single most surprising thing about
+    the gate, so the column that shows the verdict has to say it.
     """
     from smfs_catalog import dashboard_window as dw
     tip = dw._FIXED_COL_TOOLTIPS["hit"].lower()
-    assert "no criteria checked" in tip and "every event is a hit" in tip
+    assert "no bounds set" in tip and "every event is a hit" in tip
 
 
 def test_segment_selector_explains_single_segment_fallback():

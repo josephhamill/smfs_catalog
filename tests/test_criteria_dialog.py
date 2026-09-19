@@ -36,15 +36,16 @@ def test_mixed_queue_dialog_uses_gate_owner_and_unbounded_is_inactive(
     db_path = str(tmp_path / "criteria.db")
     db.initialise(db_path)
     paths = _mixed_queue(db_path, tmp_path)
-    gate.set_criterion("metric", True, "A", db_path)
+    db.set_threshold("metric", None, None, "Metric", "A", db_path)
 
     dialog = CriteriaDialog([("metric", "Metric")], paths, db_path)
     try:
         assert dialog._experimentalist == gate.active_owner(db_path) == "A"
         assert dialog._context_label.text() == "Criteria owner: A"
-        assert dialog._rows[0][1].isChecked()
-        assert dialog._count_lbl.text().startswith("No active criteria")
-        assert "without a bound it does not constrain" in dialog._rows[0][1].toolTip()
+        # A row with no bounds is not a criterion, so Clear has nothing to do.
+        assert not dialog._rows[0][2].isEnabled()
+        assert dialog._rows[0][1].text() == "no bounds — passes all"
+        assert dialog._count_lbl.text().startswith("No criteria set")
 
         captured = {}
 

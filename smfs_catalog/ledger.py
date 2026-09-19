@@ -29,7 +29,7 @@
 # therefore stores one record per reported exclusion. A path can have several
 # records when it is refused at several stages or for several reasons.
 #
-# Same shape as criteria_gate.explain(), which returns per-file which criterion
+# Same shape as criteria_gate's reasons, which return per-file which criterion
 # failed and against what bound.  Qt-free for the same reason criteria_gate is:
 # the windows adapt it, it never reaches for them.
 #
