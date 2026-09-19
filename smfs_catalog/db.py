@@ -401,6 +401,7 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
     # tables that must already exist.
     from . import criteria_migration as _criteria_migration
     _criteria_migration.reconcile(db_path)
+    _criteria_migration.whole_integer_bounds(db_path)
 
 
 def directory_of(path: str) -> str:
@@ -1446,7 +1447,20 @@ def set_threshold(
     experimentalist: Optional[str] = None,
     db_path: str = DEFAULT_DB_PATH,
 ) -> None:
-    """Set (or replace) one experimentalist's threshold for one analysis_type."""
+    """Set (or replace) one experimentalist's threshold for one analysis_type.
+
+    Bounds are quantized to the quantity's own precision on the way in, so a
+    stored bound and the bound the user reads are the same number.  They were
+    not: a bound seeded from a percentile of an integer-valued distribution
+    stored 2.590865 for a segment COUNT, displayed it as 3, and rejected the
+    3-segment curves that display promised.  A bound that admits a case it
+    excludes is worse than a wrong bound, because nothing on screen disagrees.
+    """
+    from . import quantities as _quant
+    lower_bound = (None if lower_bound is None
+                   else _quant.quantize(analysis_type, lower_bound))
+    upper_bound = (None if upper_bound is None
+                   else _quant.quantize(analysis_type, upper_bound))
     key = experimentalist or DEFAULT_EXPERIMENTALIST
     conn = get_connection(db_path)
     with conn:

@@ -223,3 +223,61 @@ def test_a_fresh_catalog_is_stamped_and_unchanged(tmp_path):
 
     _db.initialise(db_path)
     assert _current_gate(DEFAULT, db_path) == {"metric": (0.0, 1.0)}
+
+
+def test_a_counts_bound_becomes_whole_without_moving_anybody(tmp_path):
+    """The display said 3 segments passed; the gate rejected them.
+
+    Over integers `<= 2.590865` and `<= 2` admit the same curves, so the
+    verdict cannot move — which is the whole point of ceil/floor here rather
+    than quantize's round-to-nearest.
+    """
+    db_path = str(tmp_path / "whole.db")
+    _db.initialise(db_path)
+    conn = _db.get_connection(db_path)
+    with conn:                       # raw, so set_threshold's quantize is bypassed
+        conn.execute(
+            "INSERT INTO thresholds (experimentalist, analysis_type, lower_bound,"
+            " upper_bound, label, created_at) VALUES (?,?,?,?,'',datetime('now'))",
+            (DEFAULT, "seg_n_segments", 0.797854, 2.590865))
+        conn.execute("DELETE FROM meta WHERE key = 'criteria_integer_bounds_whole_v1'")
+    conn.close()
+
+    _mig.whole_integer_bounds(db_path)
+
+    row = _db.get_threshold("seg_n_segments", DEFAULT, db_path)
+    assert (row["lower_bound"], row["upper_bound"]) == (1.0, 2.0)
+    # Rounding to nearest would have given 3.0 and started admitting the
+    # 3-segment curves the old bound rejected.
+    assert row["upper_bound"] != 3.0
+
+
+def test_a_non_integer_quantity_is_left_alone(tmp_path):
+    """Only counts. Rounding a continuous bound to its displayed decimals
+    WOULD move curves across it, so that is not a display fix."""
+    db_path = str(tmp_path / "whole.db")
+    _db.initialise(db_path)
+    conn = _db.get_connection(db_path)
+    with conn:
+        conn.execute(
+            "INSERT INTO thresholds (experimentalist, analysis_type, lower_bound,"
+            " upper_bound, label, created_at) VALUES (?,?,?,?,'',datetime('now'))",
+            (DEFAULT, "baseline_rms", 0.001, 0.416959942408))
+        conn.execute("DELETE FROM meta WHERE key = 'criteria_integer_bounds_whole_v1'")
+    conn.close()
+
+    _mig.whole_integer_bounds(db_path)
+
+    row = _db.get_threshold("baseline_rms", DEFAULT, db_path)
+    assert row["upper_bound"] == 0.416959942408
+
+
+def test_set_threshold_quantizes_a_count_on_the_way_in(tmp_path):
+    """The write path is what stops this recurring; the migration only
+    catches bounds nobody re-applies."""
+    db_path = str(tmp_path / "whole.db")
+    _db.initialise(db_path)
+    _db.set_threshold("seg_n_segments", 0.8, 2.6, "Segments", DEFAULT, db_path)
+
+    row = _db.get_threshold("seg_n_segments", DEFAULT, db_path)
+    assert (row["lower_bound"], row["upper_bound"]) == (1.0, 3.0)

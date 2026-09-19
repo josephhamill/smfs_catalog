@@ -181,6 +181,56 @@ def reconcile(db_path: str = _db.DEFAULT_DB_PATH) -> None:
         conn.close()
 
 
+_WHOLE_MARKER = "criteria_integer_bounds_whole_v1"
+
+
+def whole_integer_bounds(db_path: str = _db.DEFAULT_DB_PATH) -> None:
+    """Make a count's stored bound a whole number, without moving anybody.
+
+    A bound seeded from a percentile of an integer-valued distribution stored
+    2.590865 for a segment COUNT and displayed it as 3 — so six people read a
+    criterion that admitted 3 segments while it rejected them.  db.set_threshold
+    quantizes now, but a bound nobody re-applies stays as it was.
+
+    CEIL the lower and FLOOR the upper, NOT quantize's round-to-nearest. Over
+    integers `>= 0.798` admits exactly what `>= 1` admits and `<= 2.591`
+    exactly what `<= 2` admits, so every verdict in the catalog is unchanged
+    and only the number on screen becomes true. Rounding 2.590865 to 3 would
+    instead start admitting the 3-segment curves it had been rejecting, which
+    is a change to results dressed up as a display fix.
+    """
+    import math
+
+    from . import quantities as _quant
+
+    conn = _db.get_connection(db_path)
+    try:
+        if conn.execute("SELECT 1 FROM meta WHERE key = ?",
+                        (_WHOLE_MARKER,)).fetchone():
+            return
+        rows = conn.execute(
+            "SELECT experimentalist, analysis_type, lower_bound, upper_bound"
+            " FROM thresholds").fetchall()
+        with conn:
+            for r in rows:
+                if not _quant.get(r["analysis_type"]).integer:
+                    continue
+                lo, hi = r["lower_bound"], r["upper_bound"]
+                new_lo = None if lo is None else float(math.ceil(lo))
+                new_hi = None if hi is None else float(math.floor(hi))
+                if (new_lo, new_hi) == (lo, hi):
+                    continue
+                conn.execute(
+                    "UPDATE thresholds SET lower_bound = ?, upper_bound = ?"
+                    " WHERE experimentalist = ? AND analysis_type = ?",
+                    (new_lo, new_hi, r["experimentalist"], r["analysis_type"]))
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                (_WHOLE_MARKER, _db._now()))
+    finally:
+        conn.close()
+
+
 def _strip_ticks(conn, owners: set[str]) -> None:
     """Remove every `criteria_use:` key — nothing reads them any more."""
     for owner in owners:
