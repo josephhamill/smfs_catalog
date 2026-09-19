@@ -189,3 +189,87 @@ def test_in_force_variables_come_first(tmp_path):
     built = cards.cohort(VARS, paths, "A", db_path)
     assert built[0].key == "invols_rms" and built[0].in_force
     assert not built[1].in_force
+
+
+def test_committing_a_bound_does_not_tear_down_the_card_that_set_it(tmp_path):
+    """The crash this guards was a segfault, not an exception.
+
+    Releasing a handle commits, which emits criteria_changed, which the
+    dashboard answers by fanning out over its children — and that fan-out
+    calls set_event_paths on this window. Rebuilding there destroyed the
+    PlotWidget whose mouse-release was still on the stack, and pyqtgraph's
+    GraphicsScene then received an event for an object C++ had already freed:
+
+        GraphicsScene.mouseReleaseEvent
+        RuntimeError: wrapped C/C++ object of type GraphicsScene has been
+        deleted
+        Fatal Python error: Segmentation fault
+
+    So the same cohort must never rebuild. Identity is the assertion, because
+    "the widget still exists" is precisely what was untrue.
+    """
+    db_path = str(tmp_path / "c.db")
+    db.initialise(db_path)
+    paths = _cohort(db_path, tmp_path)
+    db.set_threshold("baseline_rms", 0.2, 0.5, "Baseline RMS", "A", db_path)
+
+    win = CriteriaDialog(VARS, paths, db_path)
+    try:
+        card = win._widgets["baseline_rms"]
+        rebuilt = []
+        win.criteria_changed.connect(
+            lambda: win.set_event_paths(paths))        # what the dashboard does
+
+        card._region.setRegion((0.3, 0.9))
+        card._on_region_settled()
+
+        assert win._widgets["baseline_rms"] is card, \
+            "the card that set the bound was replaced mid-event"
+        assert card._plot.scene() is not None
+        assert (db.get_threshold("baseline_rms", "A", db_path)["lower_bound"]
+                == 0.3)
+    finally:
+        win.close()
+
+
+def test_a_changed_cohort_does_rebuild(tmp_path):
+    """The guard is "same cohort", not "never" — a new queue needs new cards."""
+    db_path = str(tmp_path / "c.db")
+    db.initialise(db_path)
+    paths = _cohort(db_path, tmp_path)
+
+    win = CriteriaDialog(VARS, paths, db_path)
+    try:
+        before = win._widgets["baseline_rms"]
+        win.set_event_paths(paths[:4])
+        assert win._widgets["baseline_rms"] is not before
+    finally:
+        win.close()
+
+
+def test_dragging_an_unbounded_card_starts_a_criterion(tmp_path):
+    """A card you cannot grab gives you no way to begin.
+
+    The interval on a variable with no bounds used to be hidden, so the only
+    route into a new criterion was to find the end ticks first — the
+    two-step this window exists to remove.
+    """
+    db_path = str(tmp_path / "c.db")
+    db.initialise(db_path)
+    paths = _cohort(db_path, tmp_path)
+
+    win = CriteriaDialog(VARS, paths, db_path)
+    try:
+        card = win._widgets["baseline_rms"]
+        assert not card._card.in_force
+        assert card._region.isVisible(), "nothing to grab"
+        assert "not gating" in card._cost.text()
+
+        card._region.setRegion((0.2, 0.5))
+        card._on_region_settled()
+
+        row = db.get_threshold("baseline_rms", "A", db_path)
+        assert (row["lower_bound"], row["upper_bound"]) == (0.2, 0.5)
+        assert card._chk_lo.isChecked() and card._chk_hi.isChecked()
+    finally:
+        win.close()

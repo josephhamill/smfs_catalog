@@ -104,7 +104,8 @@ class Card:
         if self.n_curves == 0:
             return "no curves"
         if not self.in_force:
-            base = f"{self.values.size:,} of {self.n_curves:,} have a value"
+            base = (f"not gating  ·  {self.values.size:,} of "
+                    f"{self.n_curves:,} have a value")
         else:
             base = f"{self.within():,} of {self.n_curves:,} within"
         if self.n_missing:

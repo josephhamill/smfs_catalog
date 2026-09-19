@@ -126,9 +126,13 @@ class _CardWidget(QWidget):
         root.addWidget(self._plot)
         self._draw_histogram()
 
-        self._region = pg.LinearRegionItem(
-            brush=pg.mkBrush(*style.rgba(style.INK_STRONG, 38)),
-            pen=pg.mkPen(style.LM_THRESHOLD, width=2))
+        # Always present, never hidden. A card with no interval to grab gives
+        # the user nothing to drag and no way to START a criterion, which is
+        # the opposite of what a window built around dragging should do.
+        # Whether it GATES is said by its style, by the two end ticks, and in
+        # words on the cost line — three tells, so a faint interval can never
+        # be mistaken for a bound at the full range.
+        self._region = pg.LinearRegionItem()
         self._region.setZValue(10)
         self._plot.addItem(self._region)
         self._region.sigRegionChanged.connect(self._on_region_moved)
@@ -136,6 +140,23 @@ class _CardWidget(QWidget):
 
         root.addLayout(self._build_controls())
         self._sync_from_card()
+
+    def _style_region(self, in_force: bool) -> None:
+        """Solid and filled when it gates; a faint outline when it does not."""
+        if in_force:
+            brush = pg.mkBrush(*style.rgba(style.INK_STRONG, 38))
+            pen = pg.mkPen(style.LM_THRESHOLD, width=2)
+        else:
+            brush = pg.mkBrush(*style.rgba(style.INK_FAINT, 14))
+            pen = pg.mkPen(style.UI_FAINT, width=1,
+                           style=Qt.PenStyle.DashLine)
+        self._region.setBrush(brush)
+        # The region has no pen of its own — its edges are InfiniteLines, and
+        # each carries the pen that gets drawn.
+        for line in self._region.lines:
+            line.setPen(pen)
+            line.setHoverPen(pg.mkPen(style.LM_THRESHOLD, width=3))
+        self._region.update()
 
     def setFrameless(self) -> None:
         """A card reads as one object, so it gets one border."""
@@ -228,7 +249,7 @@ class _CardWidget(QWidget):
             self._spin_lo.setValue(lo)
             self._spin_hi.setValue(hi)
             self._region.setRegion((lo, hi))
-            self._region.setVisible(c.in_force)
+            self._style_region(c.in_force)
             self._clear_btn.setEnabled(c.in_force)
         finally:
             self._updating = False
@@ -265,6 +286,16 @@ class _CardWidget(QWidget):
                   for v in self._region.getRegion())
         self._updating = True
         try:
+            if not (self._chk_lo.isChecked() or self._chk_hi.isChecked()):
+                # Grabbing the interval on a card that does not gate is the
+                # gesture for starting a criterion — the alternative is
+                # making the user find the ticks first, which is the
+                # two-step this window exists to remove.
+                for chk, spin in ((self._chk_lo, self._spin_lo),
+                                  (self._chk_hi, self._spin_hi)):
+                    chk.setChecked(True)
+                    spin.setEnabled(True)
+                self._style_region(True)
             if self._chk_lo.isChecked():
                 self._spin_lo.setValue(lo)
             if self._chk_hi.isChecked():
@@ -315,7 +346,7 @@ class _CardWidget(QWidget):
         lo, hi = self._current()
         self._updating = True
         try:
-            self._region.setVisible(lo is not None or hi is not None)
+            self._style_region(lo is not None or hi is not None)
         finally:
             self._updating = False
         self.refresh_cost(lo, hi)
@@ -421,6 +452,11 @@ class CriteriaDialog(QMainWindow):
             w = item.widget()
             if w is not None:
                 w.setParent(None)
+                # deleteLater, never an immediate drop: clearing the last
+                # Python reference destroys the C++ widget on the spot, and a
+                # plot destroyed inside an event it is still delivering takes
+                # the process with it.
+                w.deleteLater()
         self._widgets.clear()
 
         cards = _cards.cohort(self._variables, self._event_paths,
@@ -468,9 +504,23 @@ class CriteriaDialog(QMainWindow):
         self._context_label.setText(f"Criteria owner: {who}")
 
     def set_event_paths(self, event_paths: list[str]) -> None:
-        """Update the input cohort (dashboard calls this on queue changes)."""
-        self._event_paths = list(event_paths)
-        self._experimentalist = _gate.active_owner(self._db_path)
+        """Update the input cohort (dashboard calls this on queue changes).
+
+        REBUILDS ONLY IF THE COHORT ACTUALLY CHANGED, and this is load-bearing
+        rather than an optimisation.  Committing a bound emits
+        criteria_changed, the dashboard answers it by fanning out over its
+        children, and that fan-out reaches this window and calls this method.
+        Rebuilding here would destroy the PlotWidget whose mouse-release is
+        still on the stack — a deleted GraphicsScene receiving its own release
+        event, which is a segfault, not an exception.
+        """
+        paths = list(event_paths)
+        owner = _gate.active_owner(self._db_path)
+        if paths == self._event_paths and owner == self._experimentalist:
+            self.refresh()
+            return
+        self._event_paths = paths
+        self._experimentalist = owner
         self._update_title()
         self.rebuild()
 
