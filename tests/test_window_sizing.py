@@ -171,6 +171,7 @@ from smfs_catalog import dashboard_window         # noqa: E402
 from smfs_catalog import decomposition_window     # noqa: E402
 from smfs_catalog import display_roi              # noqa: E402
 from smfs_catalog import event_summary_window     # noqa: E402
+from smfs_catalog import criteria_dialog          # noqa: E402
 
 def _event_summary_with_readouts():
     """Explore Events as a real cohort leaves it: every readout carrying the
@@ -206,6 +207,11 @@ CASES = [
     ("ROIWindow",           lambda: display_roi.ROIWindow(_DB)),
     ("EventSummaryWindow",  lambda: event_summary_window.EventSummaryWindow([], _DB)),
     ("EventSummaryWindow (with readouts)", _event_summary_with_readouts),
+    # A fixed-width grid of fixed-width cards is exactly the shape that
+    # cannot be made narrower, so it is worth naming here explicitly.
+    ("CriteriaDialog", lambda: criteria_dialog.CriteriaDialog(
+        [("baseline_rms", "Baseline RMS"), ("invols_rms", "InvOLS RMS"),
+         ("seg_n_segments", "ROI Segments")], [], _DB)),
 ]
 
 for name, build in CASES:

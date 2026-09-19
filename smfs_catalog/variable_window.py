@@ -414,9 +414,22 @@ class VariableStatsWindow(QMainWindow):
         self._chk_hi.toggled.connect(self._on_chk_hi)
         return row
 
+    def _snap(self, val: float) -> float:
+        """The nearest value this quantity can actually hold.
+
+        A dragged line reports wherever the mouse was, to full float
+        precision.  The spin box rounds that to its own decimals but a line
+        does not, so without snapping the two controls sit on different
+        numbers — visibly so for a count, where the line lands between the
+        integers it is supposed to be choosing among.  Snapping here puts the
+        box and both lines on one value, which is then the value stored.
+        """
+        return _quant.quantize(self._variable_key, val)
+
     def _sync_lo(self, val: float) -> None:
         if self._updating:
             return
+        val = self._snap(val)
         self._updating = True
         self._spin_lo.setValue(val)
         self._th_lo_d.setValue(val)
@@ -426,6 +439,7 @@ class VariableStatsWindow(QMainWindow):
     def _sync_hi(self, val: float) -> None:
         if self._updating:
             return
+        val = self._snap(val)
         self._updating = True
         self._spin_hi.setValue(val)
         self._th_hi_d.setValue(val)
@@ -726,8 +740,13 @@ class VariableStatsWindow(QMainWindow):
         # Seed default bound positions (5th / 95th percentile) so a freshly
         # enabled bound lands somewhere grabbable — not persisted until Apply.
         if seed_thresholds and self._finite_v.size:
-            self._seed_lo = float(np.percentile(self._finite_v, 5))
-            self._seed_hi = float(np.percentile(self._finite_v, 95))
+            # Quantized because a seed BECOMES the bound when the user enables
+            # a side without typing, so it has to be a value this quantity can
+            # actually hold. A percentile of a count is not one.
+            self._seed_lo = _quant.quantize(
+                self._variable_key, float(np.percentile(self._finite_v, 5)))
+            self._seed_hi = _quant.quantize(
+                self._variable_key, float(np.percentile(self._finite_v, 95)))
             # Arrow-key steps come from the quantity registry; dragging and
             # typing remain available for larger changes.
 

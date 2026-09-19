@@ -396,6 +396,13 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
 
     conn.close()
 
+    # After the schema is settled and this connection's write transaction is
+    # done: reconciling the criteria needs its own connection, and it reads
+    # tables that must already exist.
+    from . import criteria_migration as _criteria_migration
+    _criteria_migration.reconcile(db_path)
+    _criteria_migration.whole_integer_bounds(db_path)
+
 
 def directory_of(path: str) -> str:
     """The folder holding `path`.  Derived, never stored — see the files.path comment in initialise()."""
@@ -1122,12 +1129,11 @@ def classification_report_rows(
     event_paths = [r["path"] for r in rows if r["event"] == "event"]
     hit_by_path: dict[str, str] = {}
     if event_paths:
-        has_crit = _gate.has_criteria_checked(event_paths, db_path)
-        hits, _non_hits = _gate.evaluate(event_paths, db_path)
-        hit_set = set(hits)
-        for p in event_paths:
-            if has_crit.get(p, False):
-                hit_by_path[p] = "hit" if p in hit_set else "non_hit"
+        # With no criteria in force the cell stays blank: every event would
+        # read as a hit, which is not the same claim as having passed one.
+        cls = _gate.classify(event_paths, db_path)
+        if cls.gate:
+            hit_by_path = dict(cls.membership)
 
     from .roi_pipeline import SEG_SUMMARY_FIELD, SEG_SUMMARY_KEYS, segment_summary_bulk
     seg_by_path: dict[str, dict] = (
@@ -1441,7 +1447,20 @@ def set_threshold(
     experimentalist: Optional[str] = None,
     db_path: str = DEFAULT_DB_PATH,
 ) -> None:
-    """Set (or replace) one experimentalist's threshold for one analysis_type."""
+    """Set (or replace) one experimentalist's threshold for one analysis_type.
+
+    Bounds are quantized to the quantity's own precision on the way in, so a
+    stored bound and the bound the user reads are the same number.  They were
+    not: a bound seeded from a percentile of an integer-valued distribution
+    stored 2.590865 for a segment COUNT, displayed it as 3, and rejected the
+    3-segment curves that display promised.  A bound that admits a case it
+    excludes is worse than a wrong bound, because nothing on screen disagrees.
+    """
+    from . import quantities as _quant
+    lower_bound = (None if lower_bound is None
+                   else _quant.quantize(analysis_type, lower_bound))
+    upper_bound = (None if upper_bound is None
+                   else _quant.quantize(analysis_type, upper_bound))
     key = experimentalist or DEFAULT_EXPERIMENTALIST
     conn = get_connection(db_path)
     with conn:

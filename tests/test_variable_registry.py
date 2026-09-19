@@ -290,9 +290,9 @@ def test_the_gate_reads_exactly_what_its_own_routing_used_to_read():
 def test_the_gate_still_produces_the_same_hit_split():
     """The end-to-end version of the above — the answer the app actually
     acts on."""
-    _gate.set_criterion("baseline_rms", True, "sam", DB)
     _db.set_threshold("baseline_rms", 1.0, 2.0, "Baseline RMS", "sam", DB)
-    hits, non_hits = _gate.evaluate(ALL, DB)
+    cls = _gate.classify(ALL, DB)
+    hits, non_hits = cls.population(_gate.HIT), cls.population(_gate.NON_HIT)
     assert _db.normalize_path(FULL) in hits           # 1.25, in bounds
     assert _db.normalize_path(SPARSE) in non_hits     # 2.5, out of bounds
     assert _db.normalize_path(BARE) in non_hits       # missing -> non-hit

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import html
 import sqlite3
 import time
 from collections import deque
@@ -201,15 +202,15 @@ _FIXED_COL_TOOLTIPS: dict[str, str] = {
     "hit":
         "The stage-2 verdict: does this curve pass the criteria gate? Only "
         "meaningful for rows classified as 'event'.\n\n"
-        "Worked out live from the checked criteria and bounds belonging to "
-        "THIS file's own experimentalist — a queue routinely mixes several "
-        "people's files, and each is judged against their own. Nothing is "
-        "stored, so it always reflects the criteria as they are right now.\n\n"
-        "WITH NO CRITERIA CHECKED, EVERY EVENT IS A HIT. That is not a bug "
-        "and it is the basis of the hand-built cohort workflow: queue the "
-        "curves you want, check nothing, and the population is exactly what "
-        "you queued.\n\n"
-        "A checked criterion REQUIRES a value: an event with no value for it "
+        "Worked out live from the bounds belonging to THIS file's own "
+        "experimentalist — a queue routinely mixes several people's files, "
+        "and each is judged against their own. Nothing is stored, so it "
+        "always reflects the criteria as they are right now.\n\n"
+        "WITH NO BOUNDS SET, EVERY EVENT IS A HIT. That is not a bug and it "
+        "is the basis of the hand-built cohort workflow: queue the curves you "
+        "want, set no bounds, and the population is exactly what you "
+        "queued.\n\n"
+        "A bounded variable REQUIRES a value: an event with no value for it "
         "becomes a non-hit rather than being ignored.",
 }
 _QUEUE_COLUMNS = _QUEUE_COLUMNS_FIXED + _QUEUE_DERIVED
@@ -891,22 +892,31 @@ class DashboardWindow(QMainWindow):
         indivisible block and read as a separate cluster sitting apart from
         the rest of the row.
         """
+        # The gate's control surface belongs beside the column that reports
+        # its verdict.  It used to live only inside Explore Events, so the
+        # dashboard showed the consequence and offered no way to reach the
+        # cause.  Same singleton dialog either way — _open_criteria was
+        # already a dashboard method that window borrowed.
+        crit_btn = QPushButton("Hit criteria…")
+        crit_btn.setToolTip(
+            "What defines a hit: the variables with bounds set, and those "
+            "bounds.  Changing them moves the Hit column immediately."
+        )
+        crit_btn.clicked.connect(self._open_criteria)
         self._events_btn = QPushButton("Explore Events…")
         self._events_btn.clicked.connect(self._open_event_summary)
         blk_btn = QPushButton("View Non-events")
         blk_btn.clicked.connect(self._open_non_events)
 
         self._sync_gate_buttons()
-        return [self._events_btn, blk_btn]
+        return [crit_btn, self._events_btn, blk_btn]
 
     def _sync_gate_buttons(self) -> None:
         """Describe whether the current cohort has an active bounded criterion."""
-        paths = self._queue_event_paths()
-        has = any(_gate.has_criteria_checked(paths, self._db_path).values())
         self._events_btn.setToolTip(
-            "" if has else
-            "No criteria checked yet — every event currently shows as a hit. "
-            "Use Filtering… inside the window to narrow it down."
+            "" if _gate.gate(None, self._db_path) else
+            "No criteria set yet — every event currently shows as a hit. "
+            "Use Hit criteria… to set bounds on a variable."
         )
 
     def _on_export_classification_report(self) -> None:
@@ -1619,6 +1629,16 @@ class DashboardWindow(QMainWindow):
         fresh_line = self._freshness_line()
         if fresh_line:
             params_line += "<br>" + style.html_text(f"Under those: {fresh_line}")
+        # What is actually cutting the Hit column, stated where the column is
+        # read.  Formatted by the Gate itself, so this line and the criteria
+        # window cannot describe different criteria.  Names here, bounds on
+        # hover: a real gate runs to a dozen criteria.
+        g = _gate.gate(None, self._db_path)
+        params_line += "<br>" + style.html_text(
+            f"Hit criteria: {html.escape(g.names())}")
+        self._gate_lbl.setToolTip(
+            f"The criteria defining a hit, as {g.owner} has them set:\n\n"
+            f"{g.text()}" if g else "")
         params_line += self._acq_filter_line(queue_rows)
         if total == 0:
             self._gate_lbl.setText(
@@ -1938,7 +1958,7 @@ class DashboardWindow(QMainWindow):
 
         if section == 3:
             nb_paths = [r["path"] for r in rows if r["event"] == "event"]
-            hit_set = set(_gate.evaluate(nb_paths, self._db_path)[0]) if nb_paths else set()
+            hit_set, _reasons = self._gate_hit_and_reasons(nb_paths)
             pairs = [
                 (r["path"], self._hit_text(r["event"] or "", r["path"], hit_set) or "—")
                 for r in rows
@@ -1977,9 +1997,8 @@ class DashboardWindow(QMainWindow):
         """Run the gate once and return (hit_set, reasons)."""
         if not nb_paths:
             return set(), {}
-        reasons = _gate.explain(nb_paths, self._db_path)
-        hit_set = set(nb_paths) - set(reasons)
-        return hit_set, reasons
+        cls = _gate.classify(nb_paths, self._db_path)
+        return set(cls.population(_gate.HIT)), cls.reasons
 
     def _set_hit_cell(self, r_idx: int, cls: str, path: str,
                       hit_set: set, reasons: dict) -> None:
@@ -2027,9 +2046,8 @@ class DashboardWindow(QMainWindow):
         nb_paths = [r["path"] for r in rows if r["event"] == "event"]
         if not nb_paths:
             return 0
-        has_crit = _gate.has_criteria_checked(nb_paths, self._db_path)
-        _hits, non_hits = _gate.evaluate(nb_paths, self._db_path)
-        return sum(1 for p in non_hits if has_crit.get(p, False))
+        cls = _gate.classify(nb_paths, self._db_path)
+        return cls.counts().get(_gate.NON_HIT, 0) if cls.gate else 0
 
     def _refresh_hit_column(self) -> None:
         """Recompute the Hit column from the criteria gate (e.g. after a criterion changes) without rebuilding the whole queue table."""

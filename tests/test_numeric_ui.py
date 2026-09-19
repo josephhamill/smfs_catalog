@@ -307,16 +307,28 @@ def test_decimals_widen_rather_than_round_a_stored_bound():
     """A stored bound finer than its quantity's natural precision must be
     shown in full, not rounded to fit.
 
-    The live DB holds `seg_n_segments <= 3.704446`, a p95 seed accepted through
-    a six-decimal box.  Rounding that to <= 4 on display would change
-    which curves are hits — a four-segment curve fails one and passes the
-    other.  Widening is not a cosmetic nicety here; it is what stops a display
-    change from silently re-gating a cohort.
+    Rounding a continuous bound on display would change which curves are
+    hits, so the control widens to whatever the stored value needs.
+    """
+    assert q.decimals_for("seg_force_pN", 166.2) == 1
+    assert q.decimals_for("seg_l_c_nm", 269.520771) == 6
+
+
+def test_a_count_never_widens_past_whole_numbers():
+    """The widening rule does not apply to a quantity that has no fractions.
+
+    Widening one is what produced the six-decimal box that let a p5/p95 seed
+    become `seg_n_segments <= 2.590865` — displayed as 3 while rejecting
+    every 3-segment curve. A count has no finer precision to widen TO, so the
+    box stays whole and the number read is the number stored.
+
+    Nothing fractional is left for the old rule to preserve: the stored
+    bounds were made whole and set_threshold quantizes new ones.
     """
     assert q.get("seg_n_segments").decimals == 0
-    assert q.decimals_for("seg_n_segments", 3.704446) == 6
-    assert q.decimals_for("seg_n_segments", 4.0) == 0     # nothing to preserve
-    assert q.decimals_for("seg_force_pN", 166.2) == 1
+    assert q.decimals_for("seg_n_segments", 2.590865) == 0
+    assert q.decimals_for("seg_n_segments", 4.0) == 0
+    assert q.quantize("seg_n_segments", 2.590865) == 3.0
 
 
 def test_audit_reports_rather_than_changes():
@@ -398,3 +410,35 @@ def test_every_drag_handler_quantises_before_it_stores():
         "before the value reaches the spin box or the database:\n  "
         + "\n  ".join(bad)
     )
+
+
+def test_the_audit_still_finds_a_fractional_count():
+    """decimals_for declines to widen a count; the audit must not inherit that.
+
+    The audit exists to find exactly these — a bound carrying digits its
+    quantity cannot hold — so asking it through the widening rule would have
+    made it blind to its own subject.
+    """
+    found = q.audit_stored_precision({"seg_n_segments": 2.590865})
+    assert [k for k, _v, _d in found] == ["seg_n_segments"]
+    assert q.decimals_for("seg_n_segments", 2.590865) == 0
+
+
+def test_a_counts_spin_box_cannot_hold_a_fraction():
+    """End of the chain: the number in the box is the number stored.
+
+    A six-decimal box for a count is what let a percentile seed through in
+    the first place, so the box is where it has to stop.
+    """
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication, QDoubleSpinBox
+
+    _app = QApplication.instance() or QApplication([])
+    spin = QDoubleSpinBox()
+    q.configure_spinbox(spin, "seg_n_segments",
+                        decimals=q.decimals_for("seg_n_segments", 2.590865))
+    spin.setValue(2.590865)
+    assert spin.value() == 3.0
+    assert spin.singleStep() == 1.0

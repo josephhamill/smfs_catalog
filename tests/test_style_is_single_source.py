@@ -61,6 +61,11 @@ HEX = re.compile(r"#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\b")
 CSS_LITERAL = re.compile(r"\b(?:background-)?color\s*:\s*([^\s;{'\"])", re.I)
 QCOLOR_NUMERIC = re.compile(r"QColor\(\s*\d")
 PG_CONFIG = re.compile(r"setConfigOption\(\s*[\"'](?:background|foreground)[\"']")
+# A module that builds its own plot surface, and the two legitimate ways of
+# getting that surface from style.py.
+BUILDS_A_PLOT = re.compile(r"pg\.(?:PlotWidget|GraphicsLayoutWidget)\(")
+CHROME_FROM_STYLE = re.compile(
+    r"apply_plot_defaults\(\)|setBackground\(\s*style\.")
 BARE_PG_COLOUR = re.compile(
     r"(?:mkPen|mkBrush|TextItem)\([^)]*?[\"'][rgbkwcmy][\"']"
 )
@@ -135,6 +140,31 @@ def test_plot_defaults_come_from_style(path: Path):
     ]
     assert not hits, (
         "call style.apply_plot_defaults() instead:\n  " + "\n  ".join(hits)
+    )
+
+
+@pytest.mark.parametrize("path", _modules(), ids=lambda p: p.name)
+def test_a_module_that_plots_takes_its_chrome_from_style(path: Path):
+    """Building a PlotWidget without asking style.py leaves pyqtgraph's own.
+
+    The sibling test above is the NEGATIVE of this rule — it catches a module
+    that sets the background longhand. Nothing caught a module that never set
+    it at all, so criteria_dialog shipped a grid of plots on pyqtgraph's
+    default chrome and every one of the other 1,631 tests passed.
+
+    A rule that only a reviewer's memory enforces is not a rule. Two forms
+    satisfy it, because both are in use and both do reach style.py:
+    apply_plot_defaults() for a window of PlotWidgets, and
+    setBackground(style.SURFACE) where a GraphicsLayoutWidget is built
+    directly.
+    """
+    src = path.read_text(encoding="utf-8")
+    if not BUILDS_A_PLOT.search(src):
+        return
+    assert CHROME_FROM_STYLE.search(src), (
+        f"{path.name} builds a plot but never takes its chrome from style.py "
+        "— call style.apply_plot_defaults() before building any PlotWidget, "
+        "or setBackground(style.SURFACE) on a GraphicsLayoutWidget."
     )
 
 

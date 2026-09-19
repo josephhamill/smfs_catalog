@@ -29,7 +29,7 @@
 # therefore stores one record per reported exclusion. A path can have several
 # records when it is refused at several stages or for several reasons.
 #
-# Same shape as criteria_gate.explain(), which returns per-file which criterion
+# Same shape as criteria_gate's reasons, which return per-file which criterion
 # failed and against what bound.  Qt-free for the same reason criteria_gate is:
 # the windows adapt it, it never reaches for them.
 #
@@ -65,19 +65,51 @@ DROP_REASONS: dict[str, str] = {
 }
 
 
-# ── What a population is called ──────────────────────────────────────────────
+# ── What a population is called, and who is in it ────────────────────────────
 # One register, for the same reason the drop reasons are one: every window that
 # shows a population's name — the Explore Events selector, a 2DH title and its
-# provenance caption, an isoforce export — was spelling it out for itself, and
-# a third value ("both") reached windows still written as an if/else over two.
+# provenance caption, an isoforce export — was spelling it out for itself.
+#
+# The MEMBERSHIP test lives here too, not only the labels.  A window asking
+# "is this curve in the population I am drawing" was writing out its own
+# if/else over the whole set, so the set's size was a fact spread across four
+# call sites: adding a value meant finding all four and getting all four right.
+# in_population() is the one branch, and POPULATIONS is the one list.
+#
+# Scalar and numpy-free on purpose. A caller with an array maps it; this module
+# stays pure logic, the way it stays free of Qt and the DB.
+POPULATIONS: tuple[str, ...] = ("hit", "non_hit", "all")
+
 POPULATION_LABELS: dict[str, str] = {
-    "hit": "Hits", "non_hit": "Non-Hits", "both": "All events",
+    "hit": "Hits", "non_hit": "Non-Hits", "all": "All events",
 }
 
 
 def population_label(population: str) -> str:
     """The name this population is shown under, in every window."""
     return POPULATION_LABELS.get(population, population)
+
+
+def in_population(which: str, membership: str) -> bool:
+    """Whether a curve whose verdict is `membership` belongs to `which`.
+
+    An empty membership is in nothing, including "all": a result with no path
+    has no verdict to be judged on, and counting it into the whole-set
+    population would put a curve that does not exist into a figure.
+    """
+    if not membership:
+        return False
+    return which == "all" or which == membership
+
+
+def other_populations(which: str) -> tuple[str, ...]:
+    """The named populations a curve in `which` is not in.
+
+    For the "nothing here — switch to X" offers.  "all" is never offered: it
+    contains every other population, so it can never hold curves that the one
+    being looked at does not.
+    """
+    return tuple(p for p in POPULATIONS if p != which and p != "all")
 
 
 @dataclass(frozen=True)

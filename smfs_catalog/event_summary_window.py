@@ -10,7 +10,7 @@
 #
 # EventSummaryWindow — shows all detected molecular events together, split
 # live into Hits / Non-hits by the criteria gate. Events are not a third
-# population: criteria_gate.evaluate() with nothing checked already returns
+# population: criteria_gate.classify() with no criteria set already returns
 # everything as a hit, so turning off every filter IS the events view.
 #
 # 2×2 grid layout:
@@ -20,14 +20,14 @@
 #   Lower-left  : X histogram (Y = count; X linked to scatter)
 #   Lower-right : empty (reserved)
 #
-# Hits are drawn red, non-hits gray — the REAL criteria_gate.evaluate()
+# Hits are drawn red, non-hits gray — the REAL criteria_gate.classify()
 # split, not a proxy.
 #
-# ONE population control (Hits / Non-Hits / Both): what is drawn IS what is
+# ONE population control (Hits / Non-Hits / All events): what is drawn IS what is
 # analysed. The scatter, both histograms, the event list, the plotted count,
 # the fit on the scatter, Fit X/Y/2D, Isoforce, the 2DH builds and every
 # export all take that one population, so no number on screen can describe
-# curves that are not on screen. Under Both the 2DH builds and Isoforce take
+# curves that are not on screen. Under All events the 2DH builds and Isoforce take
 # every event: an ensemble is a histogram over the curves it is handed, and
 # cluster structure that crosses the criteria only appears in a mixed one.
 #
@@ -48,7 +48,7 @@
 #     take the selected population whole and drop, with reasons, only what
 #     their own work cannot use. The axes never filter them.
 #   - Isoforce takes the selected population AND a measured reload distance.
-# A finer population is made in Filtering…, the one place population
+# A finer population is made in Hit criteria…, the one place population
 # decisions live, never by a downstream rule.
 #
 # Pre-populated from the DB at open time (no curve loading required).
@@ -249,13 +249,13 @@ class EventSummaryWindow(QMainWindow):
         # Selected segment's stored fit outcome, None until loaded — see
         # _prepopulate and _record_missing.
         self._seg_outcome: list[dict | None] = [None] * n
-        # Real criteria_gate.evaluate() split, recomputed every _rebuild() —
+        # Real criteria_gate.classify() split, recomputed every _rebuild() —
         # True = hit. Kept over the FULL self._results (not just plotted
         # points): a curve can have a real hit/non-hit verdict without a
         # usable segment fit, so it's still counted even when it can't be
         # drawn.
         self._hit_mask = np.zeros(n, dtype=bool)
-        # "hit" | "non_hit" | "both" — the population every result here is
+        # One of ledger.POPULATIONS — the population every result here is
         # computed over (see the scope selector below).
         self._active_population = "hit"
         self._current_index    = 0
@@ -363,7 +363,7 @@ class EventSummaryWindow(QMainWindow):
         self._x_combo.currentIndexChanged.connect(self._on_axes_changed)
         self._y_combo.currentIndexChanged.connect(self._on_axes_changed)
 
-        # ── Action row — Filtering, the population control, fit
+        # ── Action row — Hit criteria, the population control, fit
         # buttons, 2DH buttons, exports, View individual events.
         #
         # A FlowLayout, because as one QHBoxLayout these fourteen buttons and
@@ -372,10 +372,10 @@ class EventSummaryWindow(QMainWindow):
         # rows as the current width needs.
         action_row = FlowLayout(margin=0, h_spacing=6, v_spacing=4)
 
-        self._criteria_btn = QPushButton("Filtering…")
+        self._criteria_btn = QPushButton("Hit criteria…")
         self._criteria_btn.setToolTip(
-            "Open the criteria dialog — tune which variables gate hit/non-hit "
-            "and watch this window's split update live."
+            "What defines a hit: the variables with bounds set, and those "
+            "bounds. Change them and watch this window's split update live."
         )
         self._criteria_btn.clicked.connect(self._on_open_criteria)
         action_row.addWidget(self._criteria_btn)
@@ -385,9 +385,8 @@ class EventSummaryWindow(QMainWindow):
         self._pop_btns = {}
         self._pop_group = QButtonGroup(self)
         self._pop_group.setExclusive(True)
-        for pop in ("hit", "non_hit", "both"):
-            btn = QPushButton("Both" if pop == "both"
-                              else _ledger.population_label(pop))
+        for pop in _ledger.POPULATIONS:
+            btn = QPushButton(_ledger.population_label(pop))
             btn.setCheckable(True)
             btn.setChecked(pop == "hit")
             btn.setToolTip(
@@ -778,11 +777,11 @@ class EventSummaryWindow(QMainWindow):
     # ── Scatter + histogram rebuild ───────────────────────────────────────────
 
     def _rebuild(self) -> None:
-        """Recompute the real hit/non-hit split (criteria_gate.evaluate(),
+        """Recompute the real hit/non-hit split (criteria_gate.classify(),
         not a proxy) and redraw all three panels."""
         paths = [r.get("path") for r in self._results]
-        hits, _non_hits = _gate.evaluate([p for p in paths if p], self._db_path)
-        hit_set = set(hits)
+        hit_set = set(_gate.classify(
+            [p for p in paths if p], self._db_path).population(_gate.HIT))
         self._hit_mask = np.array([bool(p) and p in hit_set for p in paths], dtype=bool)
 
         valid = ~np.isnan(self._y_arr) & ~np.isnan(self._x_arr)
@@ -1258,9 +1257,7 @@ class EventSummaryWindow(QMainWindow):
             self._hide_cursor()
         # The render cache is enough to enable a button (it produces no
         # result); the gate itself is asked again when the button is pressed.
-        pop = self._active_population
-        members = (self._hit_mask if pop == "hit" else ~self._hit_mask
-                   if pop == "non_hit" else np.ones(len(self._hit_mask), dtype=bool))
+        members = self._mask_for(self._active_population, self._hit_mask)
         self._view_fit_btn.setEnabled(bool(members.any()))
 
     def _hide_cursor(self) -> None:
@@ -1271,7 +1268,7 @@ class EventSummaryWindow(QMainWindow):
 
     def set_criteria_opener(self, cb) -> None:
         """Register the dashboard's Criteria-dialog opener so the in-window
-        'Filtering…' button raises the same singleton dialog instead of the
+        'Hit criteria…' button raises the same singleton dialog instead of the
         window owning its own copy."""
         self._criteria_opener = cb
 
@@ -1283,7 +1280,7 @@ class EventSummaryWindow(QMainWindow):
         """A population button was selected — the others clear via _pop_group.
 
         Governs what is drawn and every result computed from it (see module
-        docstring). Under "both" the 2DH builds and Isoforce take every event:
+        docstring). Under "all" the 2DH builds and Isoforce take every event:
         an ensemble is a histogram over the curves it is given, and cluster
         structure that crosses the criteria only shows up in a mixed one.
         """
@@ -1357,18 +1354,32 @@ class EventSummaryWindow(QMainWindow):
         live = [p for p in paths if p]
         if not live:
             return np.zeros(len(paths), dtype=bool)
-        hits, _non_hits = _gate.evaluate(live, self._db_path)
-        hit_set = set(hits)
+        hit_set = set(_gate.classify(live, self._db_path).population(_gate.HIT))
         return np.array([bool(p) and p in hit_set for p in paths], dtype=bool)
+
+    def _memberships(self, hits: np.ndarray) -> list[str]:
+        """The population each result belongs to, from a hit/non-hit mask.
+
+        Empty for a result with no path: it has no verdict, and ledger's
+        in_population keeps it out of every population including "all".
+        """
+        return [
+            ("hit" if hit else "non_hit") if r.get("path") else ""
+            for r, hit in zip(self._results, hits)
+        ]
+
+    def _mask_for(self, which: str, hits: np.ndarray) -> np.ndarray:
+        """Boolean mask over self._results for the `which` population."""
+        return np.array(
+            [_ledger.in_population(which, m) for m in self._memberships(hits)],
+            dtype=bool,
+        )
 
     def _population_mask(self) -> np.ndarray:
         """Boolean mask over self._results for whichever population the scope
         selector currently points to — what every result here is computed
         over. Sourced from the gate at call time, not from the render cache."""
-        live = self._live_hit_mask()
-        if self._active_population == "both":
-            return np.array([bool(r.get("path")) for r in self._results], dtype=bool)
-        return live if self._active_population == "hit" else ~live
+        return self._mask_for(self._active_population, self._live_hit_mask())
 
     def _cluster_caption(self) -> str:
         """The clustering, for the on-canvas caption. Empty when not shown."""
@@ -1523,7 +1534,7 @@ class EventSummaryWindow(QMainWindow):
         err_cols = (_vars.columns(sel_paths, list(errs.values()), self._db_path)[1]
                     if errs else {})
 
-        # Which population each row belongs to, always — a Both export would
+        # Which population each row belongs to, always — an All events export would
         # otherwise be two cohorts with nothing telling them apart, and a
         # single-population file still gains by saying so in the data.
         live_hit = self._live_hit_mask()
@@ -1640,7 +1651,7 @@ class EventSummaryWindow(QMainWindow):
             )
             return
 
-        # Same reason as the scatter export's: under Both these rows are two
+        # Same reason as the scatter export's: under All events these rows are two
         # cohorts, and nothing else in the file says which is which.
         live_hit = self._live_hit_mask()
         hit_by_path = {r.get("path"): int(live_hit[i])
@@ -1708,7 +1719,7 @@ class EventSummaryWindow(QMainWindow):
             g.contributing_files(contributing)
             g.note_dict(self.export_provenance(self._plotted_axes()))
             # A histogram has no rows to carry a hit column, so the split goes
-            # in the manifest: under Both these bars hold both populations.
+            # in the manifest: under All events these bars hold every population.
             binned_hit = self._live_hit_mask()[sel]
             g.note(
                 variable=key,
@@ -1779,23 +1790,21 @@ class EventSummaryWindow(QMainWindow):
         if axes is None:
             axes = []
 
-        live = self._live_hit_mask()
-        # "both" asks of every loaded event, so nothing is dropped for
-        # membership.
-        mask = (np.ones(len(paths), dtype=bool) if which == "both"
-                else live if which == "hit" else ~live)
-        other = "non-hit" if which == "hit" else "hit"
+        memberships = self._memberships(self._live_hit_mask())
         for i, p in enumerate(paths):
             if not p:
                 continue
-            if not mask[i]:
-                led.drop(p, "not_in_population", other)
+            if not _ledger.in_population(which, memberships[i]):
+                # The detail names where the curve DID land, so a drop reads
+                # as a verdict rather than as "not the one you asked for".
+                led.drop(p, "not_in_population",
+                         _ledger.population_label(memberships[i]))
                 continue
             self._record_missing(led, i, p, axes)
         return led
 
     def population_paths(self, which: str) -> list[str]:
-        """Paths belonging to `which` population ("hit"/"non_hit"/"both"),
+        """Paths belonging to `which` population (one of ledger.POPULATIONS),
         independent of the population control's CURRENT setting. A 2DH window remembers which population it was opened
         for and asks for exactly that one on every refresh, so it stays
         correctly scoped even after the control moves underneath it.
@@ -1909,12 +1918,13 @@ class EventSummaryWindow(QMainWindow):
         pop = self._active_population
         paths = self._isoforce_paths(pop)
         if not paths:
-            other = "non_hit" if pop == "hit" else "hit"
-            other_name = "Non-Hits" if pop == "hit" else "Hits"
             msg = (f"No curves in the current {self._population_label()} "
                    "population have a usable adjacent isoforce pair.")
-            n_other = len(self._isoforce_paths(other))
-            if n_other:
+            for other in _ledger.other_populations(pop):
+                n_other = len(self._isoforce_paths(other))
+                if not n_other:
+                    continue
+                other_name = _ledger.population_label(other)
                 msg += (f"\n\n{n_other} curve(s) in {other_name} do. "
                         f"Switch to {other_name} to view them.")
             QMessageBox.information(self, "Isoforce", msg)
