@@ -12,7 +12,7 @@ from smfs_catalog import db as _db
 from smfs_catalog import roi_pipeline as _rp
 from smfs_catalog import variables as _vars
 from smfs_catalog.event_summary_window import (
-    EventSummaryWindow, drop_breakdown_lines, fit_outcome_text,
+    EventSummaryWindow, drop_breakdown_lines, fit_outcome_rows, fit_outcome_text,
 )
 from smfs_catalog.ledger import Ledger
 from smfs_catalog.provenance import cache_version
@@ -44,6 +44,10 @@ def _window(outcomes):
     return win
 
 
+def _plotted_ledger(win):
+    return win._plotted_ledger(np.ones(len(win._results), dtype=bool))
+
+
 def _drops(led):
     return {d.path: (d.reason, d.detail) for d in led.drops()}
 
@@ -59,7 +63,7 @@ def test_each_drop_names_its_stored_reason():
     ])
     win._x_arr[0], win._y_arr[0] = 12.0, 50.0
 
-    drops = _drops(win._plottability_ledger())
+    drops = _drops(_plotted_ledger(win))
 
     assert "/data/c0.ibw" not in drops
     assert drops["/data/c1.ibw"] == (
@@ -75,7 +79,7 @@ def test_a_failed_fit_is_plotted_and_handed_on(monkeypatch):
     win._x_arr[0], win._y_arr[0] = 12.0, 50.0        # force peak was found
     monkeypatch.setattr(win, "_live_hit_mask", lambda: np.array([True]), raising=False)
 
-    assert win._plottability_ledger().n_dropped == 0
+    assert _plotted_ledger(win).n_dropped == 0
     # The population is membership only; a consumer that needs the fit says so.
     assert win.population_ledger("hit").n_dropped == 0
     lc = np.array([np.nan])
@@ -102,7 +106,7 @@ def test_a_value_the_fit_outcome_does_not_explain_is_named():
 def test_the_dialog_line_leads_with_the_stored_reason():
     win = _window([_outcome("no_fit", "insufficient loading ramp")])
 
-    assert drop_breakdown_lines(win._plottability_ledger()) == [
+    assert drop_breakdown_lines(_plotted_ledger(win)) == [
         "1 × fit not attempted (insufficient loading ramp; segment: ultimate)"]
 
 
@@ -127,6 +131,53 @@ def test_breakdown_splits_a_reason_by_stored_outcome():
 ])
 def test_outcome_text(status, detail, text):
     assert fit_outcome_text({"fit_status": status, "fit_detail": detail}) == text
+
+
+def test_outcome_counts_add_up_to_plotted_and_not_plotted(monkeypatch):
+    win = _window([
+        _outcome("fit_available"), _outcome("fit_available"),
+        _outcome("review", "peak at segment boundary"),
+        _outcome("no_fit", "optimizer failed"),               # force kept, plotted
+        _outcome("no_fit", "no force peak"),
+        _outcome(None, n_segments=None),
+        _outcome(None, n_segments=1),
+    ])
+    win._x_arr[:4], win._y_arr[:4] = 12.0, 50.0
+    win._active_population = "both"
+    monkeypatch.setattr(win, "_live_hit_mask", lambda: np.ones(7, dtype=bool),
+                        raising=False)
+    in_pop = win._population_mask()
+    shown = win._plotted_mask(in_pop)
+    led = win._plotted_ledger(in_pop)
+
+    rows = fit_outcome_rows(win._seg_outcome, shown)
+
+    assert rows[0] == ("fit", 2, 2)
+    assert {t: (n, p) for t, n, p in rows[1:]} == {
+        "review: peak at segment boundary": (1, 1),
+        "optimizer failed": (1, 1),
+        "no force peak": (1, 0),
+        "no stored analysis": (1, 0),
+        "no such segment": (1, 0),
+    }
+    assert sum(n for _, n, _ in rows) == led.n_asked == 7
+    assert sum(p for _, _, p in rows) == led.n_kept == int(shown.sum()) == 4
+    assert led.n_kept + led.n_dropped == led.n_asked
+
+
+def test_the_tally_counts_only_the_population_on_screen(monkeypatch):
+    win = _window([_outcome("fit_available")] * 2 + [_outcome("no_fit", "no force peak")] * 2)
+    win._x_arr[[0, 2]], win._y_arr[[0, 2]] = 12.0, 50.0
+    win._active_population = "hit"
+    monkeypatch.setattr(win, "_live_hit_mask",
+                        lambda: np.array([True, True, False, False]), raising=False)
+    in_pop = win._population_mask()
+
+    led = win._plotted_ledger(in_pop)
+
+    assert (led.n_asked, led.n_kept, led.n_dropped) == (2, 1, 1)
+    assert led.n_kept == int(win._plotted_mask(in_pop).sum())
+    assert [d.path for d in led.drops()] == ["/data/c1.ibw"]
 
 
 def _catalog_with_one_curve(tmp_path):
@@ -180,11 +231,30 @@ def test_axes_choose_what_is_plotted_but_not_the_downstream_cohort(tmp_path):
     assert win.population_paths("hit") == [path]      # the axes never filter it
 
     assert win._event_list.count() == 0
-    (drop,) = win._plottability_ledger().drops()
+    (drop,) = _plotted_ledger(win).drops()
     assert (drop.reason, drop.detail) == ("fit_failed", "optimizer failed; segment: ultimate")
 
     win._on_swap_axes()
     assert (win._x_key, win._y_key) == ("seg_force_pN", "seg_l_c_nm")
+    win.close()
+
+
+def test_the_outcomes_dialog_states_scope_and_totals(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+    _app = QApplication.instance() or QApplication([])
+    db, path = _catalog_with_one_curve(tmp_path)
+    shown = {}
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: shown.update(
+        text=box.text(), info=box.informativeText(), detail=box.detailedText()))
+
+    win = EventSummaryWindow([{"path": path}], db)
+    win._x_combo.setCurrentIndex(win._x_combo.findData("seg_l_c_nm"))
+    win._on_show_outcomes()
+
+    assert "Hits · segment: Ultimate · 1 curves" in shown["text"]
+    assert "optimizer failed" in shown["info"]
+    assert "      1        0            1  total" in shown["info"]
+    assert f"{path}\toptimizer failed\tfit failed" in shown["detail"]
     win.close()
 
 

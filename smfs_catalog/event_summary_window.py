@@ -37,8 +37,9 @@
 # The plotted X/Y come from variables.columns, so seg_* values follow each
 # curve's CURRENTLY SELECTED segment (Ultimate/Penultimate and manual
 # overrides) exactly as the queue table does. A curve contributes a point only
-# when both values exist — never a fabricated value — and the Why dialog says
-# why each missing curve is missing.
+# when both values exist — never a fabricated value. The Fit outcomes dialog
+# counts the population's stored fit outcomes (curves, plotted, not plotted per
+# outcome) and says why each missing curve is missing.
 #
 # What each consumer is handed:
 #   - Fit X/Y/2D and the scatter and histogram exports compute from the plotted
@@ -54,6 +55,7 @@
 
 from __future__ import annotations
 
+import html
 from collections import Counter
 from pathlib import Path
 
@@ -160,6 +162,32 @@ def drop_breakdown_lines(led) -> list[str]:
     split by the stored fit outcome in their detail."""
     counts = Counter(d.label for d in led.drops())
     return [f"{n:,} × {label}" for label, n in counts.most_common()]
+
+
+def curve_outcome_text(outcome: dict | None) -> str:
+    """What the pipeline stored for one curve's selected segment, including
+    the two cases with no fit outcome at all."""
+    if outcome is None:
+        return "outcome not loaded"
+    if outcome.get("n_segments") is None:
+        return "no stored analysis"
+    if outcome.get("fit_status") is None:
+        return "no such segment"
+    return fit_outcome_text(outcome)
+
+
+def fit_outcome_rows(outcomes, plotted) -> list[tuple[str, int, int]]:
+    """(outcome, curves, plotted) per stored outcome, most curves first.
+
+    `outcomes` and the boolean `plotted` cover the same curves, so the curve
+    counts sum to that set and the plotted counts to plotted.sum()."""
+    curves: Counter = Counter()
+    shown: Counter = Counter()
+    for o, p in zip(outcomes, plotted):
+        text = curve_outcome_text(o)
+        curves[text] += 1
+        shown[text] += bool(p)
+    return [(t, n, shown[t]) for t, n in curves.most_common()]
 
 
 class EventSummaryWindow(QMainWindow):
@@ -270,13 +298,12 @@ class EventSummaryWindow(QMainWindow):
         # Wrapping plus an ignored width hint lets the text reflow instead.
         _let_text_wrap(self._stats_label)
         stats_row.addWidget(self._stats_label, 1)
-        self._why_btn = QPushButton("Why?")
-        self._why_btn.setFont(font)
-        self._why_btn.setToolTip(
-            "Which curves this window was given but could not plot, and why.")
-        self._why_btn.clicked.connect(self._on_show_drops)
-        self._why_btn.setEnabled(False)
-        stats_row.addWidget(self._why_btn)
+        self._outcomes_btn = QPushButton("Fit outcomes…")
+        self._outcomes_btn.setFont(font)
+        self._outcomes_btn.setToolTip(
+            "Stored fit outcomes of the population, and why any curve is not plotted.")
+        self._outcomes_btn.clicked.connect(self._on_show_outcomes)
+        stats_row.addWidget(self._outcomes_btn)
         stats_row.addStretch()
         root.addLayout(stats_row)
 
@@ -964,25 +991,24 @@ class EventSummaryWindow(QMainWindow):
         """Refresh the stable title and visible population/segment summary."""
         n_hit = int(self._hit_mask.sum())
         n_non = len(self._results) - n_hit
-        seg = {"ultimate": "Ultimate", "penultimate": "Penultimate"}.get(
-            self._segment_select, self._segment_select or "?"
-        )
         self.setWindowTitle("SMFS — event summary")
         self._population_summary = (
-            f"{n_hit} hits, {n_non} non-hits   |   segment: {seg}")
+            f"{n_hit} hits, {n_non} non-hits   |   segment: {self._segment_label()}")
 
-    def _plottability_ledger(self) -> _ledger.Ledger:
-        """Every loaded curve, and why it cannot be drawn when it cannot.
+    def _segment_label(self) -> str:
+        return {"ultimate": "Ultimate", "penultimate": "Penultimate"}.get(
+            self._segment_select, self._segment_select or "?")
 
-        Population-blind on purpose: this explains the gap between the count
-        in the population summary (the whole events population) and the count in the stats
-        line.
-        """
+    def _plotted_ledger(self, in_pop: np.ndarray) -> _ledger.Ledger:
+        """The selected population's curves, and why each unplotted one
+        cannot be drawn. Asked of `in_pop` only, so kept is exactly
+        _plotted_mask() and asked is the population size."""
         paths = [r.get("path") or "" for r in self._results]
-        led = _ledger.Ledger("Explore Events plottability", paths)
+        led = _ledger.Ledger("Explore Events plotted",
+                             [p for p, m in zip(paths, in_pop) if m])
         axes = [(self._x_key, self._x_arr), (self._y_key, self._y_arr)]
         for i, p in enumerate(paths):
-            if p:
+            if p and in_pop[i]:
                 self._record_missing(led, i, p, axes)
         return led
 
@@ -1019,39 +1045,53 @@ class EventSummaryWindow(QMainWindow):
         detail = "no " + ", no ".join(self._axis_label(k) for k in dict.fromkeys(missing))
         led.drop(p, "not_finite", f"{detail}; {seg_txt}" if seg_missing else detail)
 
-    def _on_show_drops(self) -> None:
-        """The tally and the journey, for the curves this window couldn't plot."""
-        led = self._plottability_ledger()
-        if led.n_dropped == 0:
-            QMessageBox.information(
-                self, "Dropped curves",
-                f"Nothing dropped — all {led.n_asked:,} curves have "
-                f"{self._axis_label(self._x_key)} and "
-                f"{self._axis_label(self._y_key)}.")
-            return
-        lines = [led.summary("plotted"), ""]
-        lines += drop_breakdown_lines(led)
-        lines.append("")
-        lines.append("Curves (first 40):")
-        for d in led.drops()[:40]:
-            lines.append(f"  {Path(d.path).name} — {d.label}")
-        if led.n_dropped > 40:
-            lines.append(f"  … and {led.n_dropped - 40:,} more "
-                         f"(export the scatter for the full list)")
+    def _scope_text(self, n_curves: int) -> str:
+        return (f"{self._population_label()} · segment: {self._segment_label()}"
+                f" · {n_curves:,} curves")
+
+    def _on_show_outcomes(self) -> None:
+        """Stored fit outcomes of the selected population, how many of each
+        are plotted, and why each unplotted curve is missing."""
+        in_pop = self._population_mask()
+        shown = self._plotted_mask(in_pop)
+        led = self._plotted_ledger(in_pop)
+        idx = np.flatnonzero(in_pop)
+        outcomes = [self._seg_outcome[i] for i in idx]
+        rows = fit_outcome_rows(outcomes, shown[idx])
+
+        table = [f"{'curves':>7}  {'plotted':>7}  {'not plotted':>11}  outcome"]
+        for text, n, p in rows + [("total", led.n_asked, led.n_kept)]:
+            table.append(f"{n:>7,}  {p:>7,}  {n - p:>11,}  {text}")
+        lines = [f"<pre>{html.escape(chr(10).join(table))}</pre>"]
+        if led.n_dropped:
+            notes = drop_breakdown_lines(led) + ["", "Curves not plotted (first 40):"]
+            notes += [f"  {Path(d.path).name} — {d.label}" for d in led.drops()[:40]]
+            if led.n_dropped > 40:
+                notes.append(f"  … and {led.n_dropped - 40:,} more "
+                             f"(Show Details for the full list)")
+            lines.append(f"<pre>{html.escape(chr(10).join(notes))}</pre>")
+
+        why = {d.path: d for d in led.drops()}
+        detail = ["path\toutcome\tnot plotted because"]
+        for i in idx:
+            p = self._results[i].get("path") or ""
+            d = why.get(p)
+            detail.append(f"{p}\t{curve_outcome_text(self._seg_outcome[i])}"
+                          f"\t{d.label if d else ''}")
+
         box = QMessageBox(self)
-        box.setWindowTitle("Dropped curves")
-        box.setText(f"<b>{led.summary('plotted')}</b>")
-        box.setInformativeText("\n".join(lines[2:]))
-        box.setDetailedText("\n".join(f"{d.path}\t{d.reason}\t{d.detail}"
-                                      for d in led.drops()))
+        box.setWindowTitle("Fit outcomes")
+        box.setText(f"<b>{html.escape(self._scope_text(led.n_asked))}</b>")
+        box.setInformativeText("".join(lines))
+        box.setDetailedText("\n".join(detail))
         box.exec()
 
     def _update_stats(self) -> None:
         """Stats describe the population control's population, which is also
         what is drawn, so the numbers on screen always match the plot
-        underneath them — and say what was dropped to get there, so the gap
-        between this number and the population summary is accounted for rather
-        than left to be noticed."""
+        underneath them. The line states that population's size and how many
+        of it are not plotted, so plotted + not plotted = curves, and the Fit
+        outcomes dialog explains the same numbers."""
         if self._load_error is not None:
             self._stats_label.setText(
                 f"Could not load event summary values — {self._load_error}")
@@ -1064,12 +1104,15 @@ class EventSummaryWindow(QMainWindow):
         self._fit_label.setText(self._fit_text())
         self._warn_label.setText(self._fishing_note)
 
-        led = self._plottability_ledger()
-        self._why_btn.setEnabled(led.n_dropped > 0)
-        self._why_btn.setToolTip(led.report() if led.n_dropped else
-                                 "Nothing was dropped — every curve is plotted.")
-        drop_txt = (f"   |   asked {led.n_asked:,}, "
-                    f"{led.n_dropped:,} not plottable" if led.n_dropped else "")
+        in_pop = self._population_mask()
+        led = self._plotted_ledger(in_pop)
+        self._outcomes_btn.setToolTip(led.report() if led.n_dropped else
+                                 "Every curve in the population is plotted. "
+                                 "Click for the stored fit outcomes.")
+        scope_txt = (f"{self._population_label()}: {led.n_asked:,} curves, "
+                     f"{led.n_kept:,} plotted")
+        if led.n_dropped:
+            scope_txt += f", {led.n_dropped:,} not plotted"
         # The histograms use the robust range, so their tails sit outside the
         # bars while remaining in the scatter and in every number here.  Say so
         # rather than leave the shorter bar count unexplained.
@@ -1078,13 +1121,13 @@ class EventSummaryWindow(QMainWindow):
                    f"{n_out_x} X / {n_out_y} Y outliers"
                    if (n_out_x or n_out_y) else "")
 
-        shown = self._plotted_mask()
+        shown = self._plotted_mask(in_pop)
         n = int(shown.sum())
         if self._load_error is not None:
             return
         if n == 0:
             self._stats_label.setText(
-                f"{self._population_summary}   |   0 events plotted{drop_txt}")
+                f"{self._population_summary}   |   {scope_txt}")
             return
         parts = []
         for key, arr in ((self._x_key, self._x_arr), (self._y_key, self._y_arr)):
@@ -1092,17 +1135,20 @@ class EventSummaryWindow(QMainWindow):
             mean, med = (_q(key, s, with_unit=True) for s in (np.mean(v), np.median(v)))
             parts.append(f"{self._axis_label(key)}: mean {mean}  median {med}")
         self._stats_label.setText(
-            f"{self._population_summary}   |   {n} plotted{drop_txt}{bin_txt}   |   "
+            f"{self._population_summary}   |   {scope_txt}{bin_txt}   |   "
             + "   |   ".join(parts)
         )
 
     # ── Selection / inspection linking ────────────────────────────────────────
 
-    def _plotted_mask(self) -> np.ndarray:
+    def _plotted_mask(self, in_pop: np.ndarray | None = None) -> np.ndarray:
         """The curves actually on the scatter: the selected population's, with
         both plotted values. The side list, the count in the stats line and
-        the scatter itself must not be able to disagree about this."""
-        return self._population_mask() & ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
+        the scatter itself must not be able to disagree about this. A caller
+        that already holds the population mask passes it as `in_pop`."""
+        if in_pop is None:
+            in_pop = self._population_mask()
+        return in_pop & ~np.isnan(self._x_arr) & ~np.isnan(self._y_arr)
 
     def _rebuild_list(self) -> None:
         """Repopulate the side event-list from what is plotted, preserving the

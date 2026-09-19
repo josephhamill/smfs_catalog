@@ -183,8 +183,8 @@ def _event_summary_with_readouts():
     """
     win = event_summary_window.EventSummaryWindow([], _DB)
     win._stats_label.setText(
-        "393 hits, 330 non-hits   |   segment: Ultimate   |   705 shown   |   "
-        "asked 723, 18 not plottable   |   histogram range excludes 16 X / 16 Y "
+        "393 hits, 330 non-hits   |   segment: Ultimate   |   All events: 723 "
+        "curves, 705 plotted, 18 not plotted   |   histogram range excludes 16 X / 16 Y "
         "outliers   |   Seg rupture extension (nm): mean 124.9 nm  median "
         "129.0 nm   |   Seg Force (pN): mean 133.5 pN  median 82.1 pN")
     win._fit_label.setText(
