@@ -114,11 +114,23 @@ class Gate:
         """False when nothing constrains — then every event is a hit."""
         return bool(self.criteria)
 
-    def text(self) -> str:
-        """One line naming everything in force, for the dashboard."""
+    def names(self) -> str:
+        """Which variables are cutting, for a status line.
+
+        Names only: a real gate runs to a dozen criteria, and spelling out
+        every bound turns one line into a paragraph.  text() is the version
+        with the numbers, for a tooltip or a manifest.
+        """
         if not self.criteria:
             return "none — every event is a hit"
-        return "  ·  ".join(c.text() for c in self.criteria)
+        return f"{len(self.criteria)}: " + " · ".join(
+            c.name for c in self.criteria)
+
+    def text(self) -> str:
+        """Everything in force, with its bounds."""
+        if not self.criteria:
+            return "none — every event is a hit"
+        return "\n".join(c.text() for c in self.criteria)
 
     def manifest(self) -> dict:
         """The gate, for an export manifest.

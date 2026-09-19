@@ -197,7 +197,7 @@ class CriteriaDialog(QMainWindow):
             who = self._experimentalist
         else:
             who = _db.DEFAULT_EXPERIMENTALIST
-        self.setWindowTitle("SMFS — event criteria")
+        self.setWindowTitle("SMFS — hit criteria")
         if hasattr(self, "_context_label"):
             self._context_label.setText(f"Criteria owner: {who}")
 

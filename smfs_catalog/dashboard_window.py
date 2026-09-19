@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import html
 import sqlite3
 import time
 from collections import deque
@@ -891,20 +892,31 @@ class DashboardWindow(QMainWindow):
         indivisible block and read as a separate cluster sitting apart from
         the rest of the row.
         """
+        # The gate's control surface belongs beside the column that reports
+        # its verdict.  It used to live only inside Explore Events, so the
+        # dashboard showed the consequence and offered no way to reach the
+        # cause.  Same singleton dialog either way — _open_criteria was
+        # already a dashboard method that window borrowed.
+        crit_btn = QPushButton("Hit criteria…")
+        crit_btn.setToolTip(
+            "What defines a hit: the variables with bounds set, and those "
+            "bounds.  Changing them moves the Hit column immediately."
+        )
+        crit_btn.clicked.connect(self._open_criteria)
         self._events_btn = QPushButton("Explore Events…")
         self._events_btn.clicked.connect(self._open_event_summary)
         blk_btn = QPushButton("View Non-events")
         blk_btn.clicked.connect(self._open_non_events)
 
         self._sync_gate_buttons()
-        return [self._events_btn, blk_btn]
+        return [crit_btn, self._events_btn, blk_btn]
 
     def _sync_gate_buttons(self) -> None:
         """Describe whether the current cohort has an active bounded criterion."""
         self._events_btn.setToolTip(
             "" if _gate.gate(None, self._db_path) else
             "No criteria set yet — every event currently shows as a hit. "
-            "Use Filtering… inside the window to set bounds on a variable."
+            "Use Hit criteria… to set bounds on a variable."
         )
 
     def _on_export_classification_report(self) -> None:
@@ -1617,6 +1629,16 @@ class DashboardWindow(QMainWindow):
         fresh_line = self._freshness_line()
         if fresh_line:
             params_line += "<br>" + style.html_text(f"Under those: {fresh_line}")
+        # What is actually cutting the Hit column, stated where the column is
+        # read.  Formatted by the Gate itself, so this line and the criteria
+        # window cannot describe different criteria.  Names here, bounds on
+        # hover: a real gate runs to a dozen criteria.
+        g = _gate.gate(None, self._db_path)
+        params_line += "<br>" + style.html_text(
+            f"Hit criteria: {html.escape(g.names())}")
+        self._gate_lbl.setToolTip(
+            f"The criteria defining a hit, as {g.owner} has them set:\n\n"
+            f"{g.text()}" if g else "")
         params_line += self._acq_filter_line(queue_rows)
         if total == 0:
             self._gate_lbl.setText(

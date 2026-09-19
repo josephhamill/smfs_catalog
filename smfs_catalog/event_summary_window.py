@@ -48,7 +48,7 @@
 #     take the selected population whole and drop, with reasons, only what
 #     their own work cannot use. The axes never filter them.
 #   - Isoforce takes the selected population AND a measured reload distance.
-# A finer population is made in Filtering…, the one place population
+# A finer population is made in Hit criteria…, the one place population
 # decisions live, never by a downstream rule.
 #
 # Pre-populated from the DB at open time (no curve loading required).
@@ -363,7 +363,7 @@ class EventSummaryWindow(QMainWindow):
         self._x_combo.currentIndexChanged.connect(self._on_axes_changed)
         self._y_combo.currentIndexChanged.connect(self._on_axes_changed)
 
-        # ── Action row — Filtering, the population control, fit
+        # ── Action row — Hit criteria, the population control, fit
         # buttons, 2DH buttons, exports, View individual events.
         #
         # A FlowLayout, because as one QHBoxLayout these fourteen buttons and
@@ -372,10 +372,10 @@ class EventSummaryWindow(QMainWindow):
         # rows as the current width needs.
         action_row = FlowLayout(margin=0, h_spacing=6, v_spacing=4)
 
-        self._criteria_btn = QPushButton("Filtering…")
+        self._criteria_btn = QPushButton("Hit criteria…")
         self._criteria_btn.setToolTip(
-            "Open the criteria dialog — tune which variables gate hit/non-hit "
-            "and watch this window's split update live."
+            "What defines a hit: the variables with bounds set, and those "
+            "bounds. Change them and watch this window's split update live."
         )
         self._criteria_btn.clicked.connect(self._on_open_criteria)
         action_row.addWidget(self._criteria_btn)
@@ -1268,7 +1268,7 @@ class EventSummaryWindow(QMainWindow):
 
     def set_criteria_opener(self, cb) -> None:
         """Register the dashboard's Criteria-dialog opener so the in-window
-        'Filtering…' button raises the same singleton dialog instead of the
+        'Hit criteria…' button raises the same singleton dialog instead of the
         window owning its own copy."""
         self._criteria_opener = cb
 
