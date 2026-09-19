@@ -143,7 +143,7 @@ def test_outcome_counts_add_up_to_plotted_and_not_plotted(monkeypatch):
         _outcome(None, n_segments=1),
     ])
     win._x_arr[:4], win._y_arr[:4] = 12.0, 50.0
-    win._active_population = "both"
+    win._active_population = "all"
     monkeypatch.setattr(win, "_live_hit_mask", lambda: np.ones(7, dtype=bool),
                         raising=False)
     in_pop = win._population_mask()
@@ -361,7 +361,7 @@ def test_one_control_draws_and_analyses_the_same_curves(tmp_path, monkeypatch):
                         lambda: np.array([True] * 3 + [False] * 3), raising=False)
     win._rebuild()
 
-    for pop, n_drawn in (("hit", 3), ("non_hit", 3), ("both", 6)):
+    for pop, n_drawn in (("hit", 3), ("non_hit", 3), ("all", 6)):
         win._pop_btns[pop].setChecked(True)
         drawn = len(win._scatter_pass.points()) + len(win._scatter_fail.points())
         assert drawn == n_drawn
@@ -375,7 +375,7 @@ def test_one_control_draws_and_analyses_the_same_curves(tmp_path, monkeypatch):
     win.close()
 
 
-def test_both_exports_one_file_naming_each_row(tmp_path, monkeypatch):
+def test_all_events_exports_one_file_naming_each_row(tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QApplication
     from smfs_catalog import export_utils
     _app = QApplication.instance() or QApplication([])
@@ -387,18 +387,18 @@ def test_both_exports_one_file_naming_each_row(tmp_path, monkeypatch):
                         lambda *a, **k: None)
 
     win = EventSummaryWindow([{"path": p} for p in paths], db)
-    win._pop_btns["both"].setChecked(True)
+    win._pop_btns["all"].setChecked(True)
 
-    assert win._active_population == "both"
+    assert win._active_population == "all"
     assert win._fit_chk.text() == "Linear fit (All events)"
     # A mixed ensemble is a legitimate one: these build over every event.
     assert win._isoforce_btn.isEnabled()
     assert win._norm_2dh_btn.isEnabled()
     assert win._phys_2dh_btn.isEnabled()
-    assert sorted(win.population_paths("both")) == sorted(paths)
+    assert sorted(win.population_paths("all")) == sorted(paths)
 
     win._on_export_scatter()
-    (csv_path,) = out.glob("scatter_*_both_*.csv")
+    (csv_path,) = out.glob("scatter_*_all_*.csv")
     header, *rows = csv_path.read_text().strip().splitlines()
     assert header.split(",")[1] == "hit"
     assert len(rows) == len(paths)
