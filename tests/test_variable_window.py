@@ -105,3 +105,47 @@ def test_missing_values_remain_in_scope_but_not_in_finite_or_plot_arrays(
         assert [row["value"] for row in rows] == ["2.0", "", ""]
     finally:
         win.close()
+
+
+def test_a_dragged_bound_snaps_to_what_the_quantity_can_hold(tmp_path):
+    """The line, the spin box and the stored bound are one number.
+
+    A dragged InfiniteLine reports the mouse position to full float
+    precision. The spin box rounds that to its decimals and a line does not,
+    so without snapping the two controls show different numbers — visibly so
+    for a count, where the line lands between the integers it is choosing
+    among, and the bound that gets stored is not the one under the cursor.
+    """
+    db_path = str(tmp_path / "vw.db")
+    db.initialise(db_path)
+    win = VariableStatsWindow("seg_n_segments", "ROI Segments", [], db_path,
+                              session_info=None)
+    try:
+        win._chk_hi.setChecked(True)
+        win._sync_hi(2.590865)          # as if the line were dragged there
+
+        assert win._spin_hi.value() == 3.0
+        assert win._th_hi_d.value() == 3.0
+        assert win._th_hi_h.value() == 3.0
+
+        win._apply_thresholds()
+        row = db.get_threshold("seg_n_segments", win._experimentalist, db_path)
+        assert row["upper_bound"] == 3.0
+    finally:
+        win.close()
+
+
+def test_a_continuous_bound_snaps_to_its_own_precision(tmp_path):
+    """Same rule, finer grid: snapping is the quantity's precision, not 1.0."""
+    db_path = str(tmp_path / "vw.db")
+    db.initialise(db_path)
+    win = VariableStatsWindow("seg_force_pN", "Force", [], db_path,
+                              session_info=None)
+    try:
+        win._chk_hi.setChecked(True)
+        win._sync_hi(166.23456789)
+
+        assert win._spin_hi.value() == win._th_hi_d.value()
+        assert win._spin_hi.value() == 166.2
+    finally:
+        win.close()

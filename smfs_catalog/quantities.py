@@ -334,21 +334,40 @@ def decimals_for(key: str, *displayed_values: float) -> int:
     stored value is seeded prevents the control from silently changing that
     value. The result is capped at Qt's practical limit of 12 decimals.
     """
-    want = get(key).decimals
+    q = get(key)
+    if q.integer:
+        # A count has no finer precision to widen TO. Widening one produced
+        # the six-decimal box that let a p5/p95 seed become the bound
+        # `seg_n_segments <= 2.590865`, displayed as 3 while rejecting 3.
+        # Nothing fractional is left to preserve: criteria_migration made
+        # stored bounds whole and db.set_threshold quantizes new ones.
+        return q.decimals
+    want = q.decimals
     for v in displayed_values:
-        if v is None:
-            continue
-        try:
-            f = float(v)
-        except (TypeError, ValueError):
-            continue
-        if not isfinite(f):
-            continue
-        d = want
-        while d < 12 and round(f, d) != f:
-            d += 1
-        want = max(want, d)
+        want = max(want, digits_needed(v, floor=want))
     return want
+
+
+def digits_needed(value, floor: int = 0) -> int:
+    """How many decimals it takes to write `value` exactly, capped at 12.
+
+    A property of the number, not a display policy — which is why the audit
+    asks this directly rather than asking decimals_for. decimals_for declines
+    to widen a count, and an audit that inherited that would go blind to the
+    fractional count bounds it exists to find.
+    """
+    if value is None:
+        return floor
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return floor
+    if not isfinite(f):
+        return floor
+    d = floor
+    while d < 12 and round(f, d) != f:
+        d += 1
+    return d
 
 
 def quantize(key: str, stored_value: float) -> float:
@@ -422,8 +441,7 @@ def audit_stored_precision(stored: dict[str, float]) -> list[tuple[str, float, i
         if not isfinite(f):
             continue
         q = QUANTITIES[key]
-        shown = q.to_display(f)
-        need = decimals_for(key, shown)
+        need = digits_needed(q.to_display(f))
         if need > q.decimals:
             out.append((key, f, need))
     return out
