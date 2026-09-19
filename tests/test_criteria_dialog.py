@@ -273,3 +273,80 @@ def test_dragging_an_unbounded_card_starts_a_criterion(tmp_path):
         assert card._chk_lo.isChecked() and card._chk_hi.isChecked()
     finally:
         win.close()
+
+
+def test_a_newly_bounded_card_moves_into_the_in_force_section(tmp_path):
+    """A criterion doing the cutting must appear among the ones that cut.
+
+    The segfault fix stopped rebuilding on commit, and re-sectioning was
+    collateral damage: a card could be the single biggest influence on the
+    hit set while still sitting under "Available". Cards are moved rather
+    than rebuilt, so the fix holds and the section is still true.
+    """
+    from PyQt6.QtWidgets import QApplication
+
+    db_path = str(tmp_path / "c.db")
+    db.initialise(db_path)
+    paths = _cohort(db_path, tmp_path)
+
+    win = CriteriaDialog(VARS, paths, db_path)
+    try:
+        card = win._widgets["baseline_rms"]
+        assert card.parentWidget() is win._available_host
+
+        card._region.setRegion((0.2, 0.5))
+        card._on_region_settled()
+        QApplication.processEvents()          # the deferred relayout
+
+        assert card.parentWidget() is win._in_force_host
+        assert win._widgets["baseline_rms"] is card, "the card was rebuilt"
+        assert card._plot.scene() is not None
+    finally:
+        win.close()
+
+
+def test_a_cleared_card_moves_back_out(tmp_path):
+    from PyQt6.QtWidgets import QApplication
+
+    db_path = str(tmp_path / "c.db")
+    db.initialise(db_path)
+    paths = _cohort(db_path, tmp_path)
+    db.set_threshold("baseline_rms", 0.2, 0.5, "Baseline RMS", "A", db_path)
+
+    win = CriteriaDialog(VARS, paths, db_path)
+    try:
+        card = win._widgets["baseline_rms"]
+        assert card.parentWidget() is win._in_force_host
+        card._clear_btn.click()
+        QApplication.processEvents()
+        assert card.parentWidget() is win._available_host
+    finally:
+        win.close()
+
+
+def test_moving_a_bound_within_a_section_does_not_relayout(tmp_path):
+    """Only crossing the boundary moves anything. Dragging an already-active
+    criterion must leave the grid alone — a card jumping under the cursor
+    mid-adjustment is its own bug."""
+    from PyQt6.QtWidgets import QApplication
+
+    db_path = str(tmp_path / "c.db")
+    db.initialise(db_path)
+    paths = _cohort(db_path, tmp_path)
+    db.set_threshold("baseline_rms", 0.2, 0.5, "Baseline RMS", "A", db_path)
+    db.set_threshold("invols_rms", 0.2, 0.5, "InvOLS RMS", "A", db_path)
+
+    win = CriteriaDialog(VARS, paths, db_path)
+    try:
+        card = win._widgets["baseline_rms"]
+        grid = win._in_force_host.layout()
+        before = [grid.itemAt(i).widget() for i in range(grid.count())]
+
+        card._region.setRegion((0.25, 0.45))
+        card._on_region_settled()
+        QApplication.processEvents()
+
+        after = [grid.itemAt(i).widget() for i in range(grid.count())]
+        assert after == before
+    finally:
+        win.close()

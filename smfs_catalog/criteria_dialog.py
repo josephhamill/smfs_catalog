@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
@@ -470,73 +470,95 @@ class CriteriaDialog(QMainWindow):
         f = self._count_lbl.font(); f.setBold(True); self._count_lbl.setFont(f)
         root.addWidget(self._count_lbl)
 
+        self._build_sections()
         self._update_title()
         self.rebuild()
 
     # ── Building ─────────────────────────────────────────────────────────────
 
-    def _section(self, title: str, hint: str) -> None:
-        lbl = QLabel(title)
-        f = lbl.font(); f.setBold(True); lbl.setFont(f)
-        self._body.addWidget(lbl)
-        sub = QLabel(hint)
-        sub.setStyleSheet(style.qss_text(style.UI_FAINT))
-        self._body.addWidget(sub)
+    def _build_sections(self) -> None:
+        """The two section headers and their grids, made ONCE.
+
+        Persistent so that moving a card between sections is a reparent
+        rather than a teardown — see _relayout.
+        """
+        self._in_force_hint = QLabel("")
+        self._available_hint = QLabel("")
+        self._in_force_host = QWidget()
+        self._available_host = QWidget()
+        for host in (self._in_force_host, self._available_host):
+            g = QGridLayout(host)
+            g.setContentsMargins(0, 0, 0, 0)
+            g.setSpacing(8)
+            g.setColumnStretch(_COLUMNS, 1)
+        for title, hint, host in (
+            ("In force", self._in_force_hint, self._in_force_host),
+            ("Available", self._available_hint, self._available_host),
+        ):
+            lbl = QLabel(title)
+            f = lbl.font(); f.setBold(True); lbl.setFont(f)
+            self._body.addWidget(lbl)
+            hint.setStyleSheet(style.qss_text(style.UI_FAINT))
+            self._body.addWidget(hint)
+            self._body.addWidget(host)
+        self._body.addStretch(1)
 
     def rebuild(self) -> None:
-        """Recompute every card and lay the window out again.
+        """Make a card per variable, from scratch.
 
-        Called when the cohort or the owner changes. A bound moving does NOT
-        come through here — that would tear down the card under the cursor
-        that set it.
+        Only for a changed cohort or owner. A bound moving must NOT come
+        through here: it would tear down the card under the cursor that set
+        it, and a plot destroyed inside an event it is still delivering takes
+        the process with it.
         """
-        while self._body.count():
-            item = self._body.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.setParent(None)
-                # deleteLater, never an immediate drop: clearing the last
-                # Python reference destroys the C++ widget on the spot, and a
-                # plot destroyed inside an event it is still delivering takes
-                # the process with it.
-                w.deleteLater()
+        for w in self._widgets.values():
+            w.setParent(None)
+            w.deleteLater()
         self._widgets.clear()
 
-        cards = _cards.cohort(self._variables, self._event_paths,
-                              self._experimentalist, self._db_path)
-        in_force = [c for c in cards if c.in_force]
-        available = [c for c in cards if not c.in_force]
-
-        if in_force:
-            self._section("In force", "These define the hit.")
-            self._body.addWidget(self._grid(in_force))
-        else:
-            self._section("In force",
-                          "Nothing yet — every event is a hit. "
-                          "Set bounds on a variable below.")
-        self._section(
-            "Available",
-            "No bounds set, so these do not constrain. "
-            "Tick an end to start bounding one.")
-        self._body.addWidget(self._grid(available))
-        self._body.addStretch(1)
-        self.refresh_total()
-
-    def _grid(self, cards: list[_cards.Card]) -> QWidget:
-        """One row of cards per _COLUMNS, in the order given."""
-        host = QWidget()
-        grid = QGridLayout(host)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(8)
-        for i, card in enumerate(cards):
+        for card in _cards.cohort(self._variables, self._event_paths,
+                                  self._experimentalist, self._db_path):
             w = _CardWidget(card)
             w.committed.connect(self._on_committed)
             w.moved.connect(self._on_moved)
             w.open_detail.connect(self._open_detail)
-            grid.addWidget(w, i // _COLUMNS, i % _COLUMNS)
             self._widgets[card.key] = w
-        grid.setColumnStretch(_COLUMNS, 1)
-        return host
+        self._relayout()
+        self.refresh_total()
+
+    def _relayout(self) -> None:
+        """Put each card in the section its bounds put it in.
+
+        Cards are MOVED, never rebuilt: removeWidget detaches without
+        destroying, so a card can cross sections in the turn after the drag
+        that activated it without the plot being deleted under its own
+        mouse-release.
+        """
+        in_force, available = [], []
+        for key, _lbl in self._variables:
+            w = self._widgets.get(key)
+            if w is None:
+                continue
+            (in_force if w._card.in_force else available).append(w)
+
+        for host, group in ((self._in_force_host, in_force),
+                            (self._available_host, available)):
+            grid = host.layout()
+            while grid.count():
+                grid.takeAt(0)
+            for i, w in enumerate(group):
+                grid.addWidget(w, i // _COLUMNS, i % _COLUMNS)
+            host.setVisible(bool(group))
+
+        self._in_force_hint.setText(
+            "These define the hit." if in_force else
+            "Nothing yet — every event is a hit. Set bounds on a variable "
+            "below.")
+        self._available_hint.setText(
+            "No bounds set, so these do not constrain. Drag an interval or "
+            "tick an end to start bounding one." if available else
+            "Every variable is bounded.")
+        self._sectioned = {w._card.key for w in in_force}
 
     # ── Live state ───────────────────────────────────────────────────────────
 
@@ -564,6 +586,7 @@ class CriteriaDialog(QMainWindow):
             return
         self._event_paths = paths
         self._experimentalist = owner
+        self._build_sections()
         self._update_title()
         self.rebuild()
 
@@ -600,6 +623,12 @@ class CriteriaDialog(QMainWindow):
         if w is not None:
             w.set_card(_cards.cohort([(key, w._card.label)], self._event_paths,
                                      self._experimentalist, self._db_path)[0])
+            if (key in self._sectioned) != w._card.in_force:
+                # It crossed between the sections. Deferred by a turn of the
+                # event loop, because this runs inside the mouse-release that
+                # set the bound and reparenting the plot under it is not
+                # something to do mid-event.
+                QTimer.singleShot(0, self._relayout)
         self.refresh_total()
         self.criteria_changed.emit()
 
