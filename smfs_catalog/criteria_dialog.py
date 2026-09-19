@@ -55,11 +55,24 @@ from . import style
 from . import variables as _vars
 from .qt_utils import fit_on_screen
 
-# Two columns of cards.  Wide enough that a histogram reads as a shape rather
-# than a smear, narrow enough that two fit beside each other on a laptop.
-_CARD_W = 420
+# Three columns.  Wide enough that a histogram reads as a shape rather than a
+# smear, narrow enough that three fit inside test_window_sizing's laptop width.
+_CARD_W = 400
 _PLOT_H = 110
-_COLUMNS = 2
+_COLUMNS = 3
+
+# Every mark here asks style.py for a ROLE rather than restating a colour.
+# The histogram is DATA, so it is neutral grey and split the way the variable
+# window splits its own: what the bounds keep drawn over what they cut, so the
+# cut is visible in the bars and not only in the handles.
+_PEN_NONE     = pg.mkPen(None)
+_BRUSH_WITHIN = pg.mkBrush(*style.rgba(style.INK_STRONG, 190))
+_BRUSH_CUT    = pg.mkBrush(*style.rgba(style.INK_FAINT, 190))
+# The interval is a GUIDE: bold-dashed, with a light fill to read through.
+_PEN_GATING   = style.guide_pen(style.LM_THRESHOLD)
+_PEN_INACTIVE = style.hair_pen(style.GRID)
+_BRUSH_GATING = style.band_brush(style.INK_STRONG, style.A_FILL)
+_BRUSH_INERT  = style.band_brush(style.INK_FAINT, style.A_FILL // 3)
 
 _BOUNDS_MEAN = (
     "Setting either bound makes this variable gate the hit. Clearing both "
@@ -97,6 +110,10 @@ class _CardWidget(QWidget):
         super().__init__(parent)
         self._card = card
         self._updating = False
+        # Before any PlotWidget is built, as every other plot window in the
+        # app does it: this is what puts the plot on the house surface
+        # instead of pyqtgraph's own black.
+        style.apply_plot_defaults()
         self.setFixedWidth(_CARD_W)
         self.setFrameless()
 
@@ -143,19 +160,14 @@ class _CardWidget(QWidget):
 
     def _style_region(self, in_force: bool) -> None:
         """Solid and filled when it gates; a faint outline when it does not."""
-        if in_force:
-            brush = pg.mkBrush(*style.rgba(style.INK_STRONG, 38))
-            pen = pg.mkPen(style.LM_THRESHOLD, width=2)
-        else:
-            brush = pg.mkBrush(*style.rgba(style.INK_FAINT, 14))
-            pen = pg.mkPen(style.UI_FAINT, width=1,
-                           style=Qt.PenStyle.DashLine)
+        brush = _BRUSH_GATING if in_force else _BRUSH_INERT
+        pen = _PEN_GATING if in_force else _PEN_INACTIVE
         self._region.setBrush(brush)
         # The region has no pen of its own — its edges are InfiniteLines, and
         # each carries the pen that gets drawn.
         for line in self._region.lines:
             line.setPen(pen)
-            line.setHoverPen(pg.mkPen(style.LM_THRESHOLD, width=3))
+            line.setHoverPen(_PEN_GATING)
         self._region.update()
 
     def setFrameless(self) -> None:
@@ -168,26 +180,53 @@ class _CardWidget(QWidget):
     # ── Construction ─────────────────────────────────────────────────────────
 
     def _draw_histogram(self) -> None:
-        """The distribution this criterion cuts, as bars.
+        """The distribution this criterion cuts, with the cut drawn into it.
 
         A histogram rather than a box or violin: the cut usually goes BETWEEN
         modes, and that is the one thing a box plot cannot show and a violin's
-        kernel width can invent. Binning is histogram_binning's, the same
+        kernel width can invent.  Binning is histogram_binning's, the same
         geometry the variable window draws.
+
+        Two bar items, kept from that window: what the bounds cut underneath
+        in faint ink, what they keep drawn over it in strong ink.  The bars
+        themselves then say where the cut falls, so the card still reads at a
+        glance when the handles are off the edge of the visible range.
         """
         c = self._card
-        if c.bins is None:
-            empty = QLabel("no values in this cohort")
-            empty.setStyleSheet(style.qss_text(style.UI_FAINT))
-            return
-        counts = c.bins.count(c.values)
-        self._plot.plot(
-            c.bins.edges, counts, stepMode="center", fillLevel=0,
-            pen=pg.mkPen(None),
-            brush=pg.mkBrush(*style.rgba(style.INK_FAINT, 190)))
+        self._bars_cut = pg.BarGraphItem(x0=[], x1=[], y0=[], y1=[],
+                                         pen=_PEN_NONE, brush=_BRUSH_CUT)
+        self._bars_within = pg.BarGraphItem(x0=[], x1=[], y0=[], y1=[],
+                                            pen=_PEN_NONE, brush=_BRUSH_WITHIN)
+        self._plot.addItem(self._bars_cut)
+        self._plot.addItem(self._bars_within)
         span = c.span()
         if span:
             self._plot.setXRange(*span, padding=0.02)
+        self.redraw_bars()
+
+    def redraw_bars(self, lower=None, upper=None) -> None:
+        """Re-split the bars for the bounds being asked about.
+
+        Counting is one numpy comparison per bin, so this keeps up with a
+        drag — the expensive question (is this curve a hit) is a conjunction
+        over every criterion and waits for the handle to be let go.
+        """
+        c = self._card
+        if c.bins is None:
+            return
+        counts = c.bins.count(c.values)
+        edges = c.bins.edges
+        lo = c.lower if lower is None else lower
+        hi = c.upper if upper is None else upper
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        keep = np.ones(centres.shape, dtype=bool)
+        if lo is not None:
+            keep &= centres >= lo
+        if hi is not None:
+            keep &= centres <= hi
+        self._bars_cut.setOpts(x0=edges[:-1], x1=edges[1:], y0=0, y1=counts)
+        self._bars_within.setOpts(x0=edges[:-1][keep], x1=edges[1:][keep],
+                                  y0=0, y1=counts[keep])
 
     def _build_controls(self) -> QHBoxLayout:
         """Per-end tick + number, then Clear.
@@ -254,6 +293,7 @@ class _CardWidget(QWidget):
         finally:
             self._updating = False
         self.refresh_cost()
+        self.redraw_bars()
 
     def refresh_cost(self, lower=None, upper=None) -> None:
         """The line under the title, from the bounds being asked about."""
@@ -303,6 +343,7 @@ class _CardWidget(QWidget):
         finally:
             self._updating = False
         self.refresh_cost(*self._current())
+        self.redraw_bars(*self._current())
         self.moved.emit(self._card.key)
 
     def _on_region_settled(self) -> None:
@@ -336,6 +377,7 @@ class _CardWidget(QWidget):
         finally:
             self._updating = False
         self.refresh_cost(lo, hi)
+        self.redraw_bars(lo, hi)
         self.committed.emit(self._card.key, lo, hi)
 
     def _on_end_toggled(self, on: bool, is_lower: bool) -> None:
@@ -350,6 +392,7 @@ class _CardWidget(QWidget):
         finally:
             self._updating = False
         self.refresh_cost(lo, hi)
+        self.redraw_bars(lo, hi)
         self.committed.emit(self._card.key, lo, hi)
 
     def _on_clear(self) -> None:
@@ -384,7 +427,7 @@ class CriteriaDialog(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self.setWindowFlag(Qt.WindowType.Window)
-        fit_on_screen(self, 980, 760)
+        fit_on_screen(self, 1320, 800)
         self._db_path = db_path
         self._variables = variables
         self._event_paths = list(event_paths)
