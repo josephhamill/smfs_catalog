@@ -101,6 +101,11 @@ _COLOR_RUPTURE_INNER = style.rgba(style.LM_RUPTURE_I, 220)  # INNER (sub-event)
 _COLOR_ONSET    = style.rgba(style.LM_ONSET, 220)
 _COLOR_THRESH   = style.rgba(style.LM_THRESHOLD, 220)
 
+# How far past the larger d1 threshold the panel is willing to show before it
+# stops widening.  A peak is read against the thresholds here; how big it is
+# is read from the results columns.
+_D1_FRAME_REACH = 3.0
+
 
 # ── Keys this window owns in the experimentalist_profiles JSON blob ─────────────────────
 class ROIWindow(QWidget):
@@ -614,6 +619,8 @@ class ROIWindow(QWidget):
         self._thresh_line_onset.setValue(self._onset_threshold_nm)
         self._thresh_line_onset.blockSignals(False)
 
+        self._frame_d1(sigs.d1)
+
         # Masks (in piezo-space).  Anchor covers piezo[mask_anchor_idx : ];
         # post-snap covers piezo[snapoff_idx : mask_postsnap_idx].
         n = len(px)
@@ -1007,6 +1014,35 @@ class ROIWindow(QWidget):
     def _preview_threshold(self, value: float) -> None:
         self._threshold_nm_per_nm = float(value)
         self._spin_threshold.setValue(value)
+
+    def _frame_d1(self, d1) -> None:
+        """Hold the d1 panel to the scale its thresholds are set on.
+
+        Autorange fits the tallest rupture, and every smaller peak then lies on
+        the axis — the opposite of what this panel is for, which is deciding
+        where the thresholds belong.  The thresholds are the scale the user
+        chose, so they cap the view, and a peak far above one runs off the top;
+        its height is read from the results columns, not off this axis.
+
+        It only ever tightens.  d1 does not always hold a peak that dwarfs the
+        rest, and widening the view to the cap on a curve that never reaches it
+        would spread a small signal thinner than autorange already does.
+
+        Recomputed on every draw, and both threshold drags end in a recompute,
+        so a dragged line cannot leave the view.
+        """
+        reach = _D1_FRAME_REACH * max(abs(self._threshold_nm_per_nm),
+                                      abs(self._inner_threshold_nm_per_nm))
+        finite = d1[np.isfinite(d1)] if d1 is not None else None
+        if finite is None or finite.size == 0 or not np.isfinite(reach) or reach <= 0:
+            self._d1_plot.enableAutoRange(axis="y")
+            return
+        lo = max(float(finite.min()), -reach)
+        hi = min(float(finite.max()),  reach)
+        if not lo < hi:
+            self._d1_plot.enableAutoRange(axis="y")
+            return
+        self._d1_plot.setYRange(lo, hi)
 
     def _commit_threshold(self) -> None:
         self._threshold_nm_per_nm = float(self._spin_threshold.value())

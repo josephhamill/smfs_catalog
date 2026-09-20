@@ -24,6 +24,7 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QApplication            # noqa: E402
 
+from smfs_catalog import display_roi as droi       # noqa: E402
 from smfs_catalog import rawcurve_window as raw    # noqa: E402
 from smfs_catalog import wlc_view_window as wvw     # noqa: E402
 from smfs_catalog.curve_loader import ForceCurve    # noqa: E402
@@ -162,3 +163,63 @@ def test_framing_is_piezo_only(qapp):
     before = _y_range(p._plot)
     p._frame_events([61.0, 76.0])
     assert _y_range(p._plot) == before
+
+
+# ── d1: the thresholds are the scale, not the tallest peak ───────────────────
+
+class _D1Probe:
+    """Only the state _frame_d1 reads."""
+
+    _frame_d1 = droi.ROIWindow._frame_d1
+
+    def __init__(self, outer=1.4, inner=0.946, d1=None):
+        self._d1_plot = pg.PlotWidget()
+        self._threshold_nm_per_nm = outer
+        self._inner_threshold_nm_per_nm = inner
+        if d1 is not None:
+            self._d1_plot.plot(np.arange(len(d1)).tolist(), d1.tolist())
+
+
+def _d1_with_one_giant_peak() -> np.ndarray:
+    """Catalog curve 134115's proportions: a 14.0 nm/nm rupture over a trace
+    that otherwise lives between -1.1 and about 2, against a 1.4 threshold."""
+    d1 = np.random.default_rng(0).normal(0.0, 0.35, 4000)
+    d1[1000:1010] = 14.0
+    d1[2000:2010] = 1.9
+    d1[3000:3010] = 1.6
+    return np.clip(d1, -1.09, None)
+
+
+def test_one_giant_peak_does_not_flatten_the_smaller_ones(qapp):
+    d1 = _d1_with_one_giant_peak()
+    p = _D1Probe()
+    p._frame_d1(d1)
+    lo, hi = p._d1_plot.getPlotItem().getViewBox().viewRange()[1]
+
+    assert hi < float(d1.max()) / 2.0, (
+        f"the tallest peak still sets the scale: view reaches {hi:.2f} for a "
+        f"peak of {d1.max():.2f}")
+    assert hi > p._threshold_nm_per_nm, (
+        "the threshold the peaks are judged against must stay in view")
+
+
+def test_framing_never_widens_the_d1_view(qapp):
+    """d1 does not always hold a peak that dwarfs the rest.  Measured across
+    five catalog curves, three never reach the cap, and opening the view out to
+    it would spread a small signal thinner than autorange already does."""
+    modest = np.clip(np.random.default_rng(1).normal(0.0, 0.4, 2000), -1.5, 3.22)
+    p = _D1Probe(d1=modest)
+    loose = _y_range(p._d1_plot)          # what autorange alone would show
+    p._frame_d1(modest)
+    framed = p._d1_plot.getPlotItem().getViewBox().viewRange()[1]
+
+    # Spans, so pyqtgraph's own padding is on both sides of the comparison.
+    assert np.ptp(framed) <= np.ptp(loose) + 1e-9, (
+        f"widened the view: {np.ptp(framed):.2f} framed against "
+        f"{np.ptp(loose):.2f} loose")
+
+
+def test_an_empty_d1_leaves_the_panel_autoranging(qapp):
+    p = _D1Probe()
+    p._frame_d1(np.array([]))
+    assert p._d1_plot.getPlotItem().getViewBox().autoRangeEnabled()[1]
