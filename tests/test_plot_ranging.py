@@ -24,7 +24,9 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QApplication            # noqa: E402
 
+from smfs_catalog import rawcurve_window as raw    # noqa: E402
 from smfs_catalog import wlc_view_window as wvw     # noqa: E402
+from smfs_catalog.curve_loader import ForceCurve    # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -83,3 +85,80 @@ def test_the_envelope_is_still_drawn(qapp):
     band = p._draw_fit_ci(xm, _fitted_segment(), (0, 0, 255))
     assert band
     assert band[0] in p._top.getPlotItem().items
+
+
+# ── Raw curve: the contact ramp is not what the markers were drawn for ───────
+
+def _event_curve() -> ForceCurve:
+    """A ramp whose contact region reaches 25 nm and whose events sit within
+    2 nm of the baseline — the ordinary proportions of a real curve (measured
+    on catalog curve 134114: 34.95 nm of view for 9.81 nm of content)."""
+    # Contact at low piezo, free baseline at high piezo, events in between —
+    # the arrangement curve 134114 has (contact near 2250 nm, ROIs at 2340 and
+    # 2549, baseline beyond 2600).
+    piezo_a = np.linspace(0.0, 100.0, 400)
+    defl_a  = np.where(piezo_a < 30.0, (30.0 - piezo_a) * 0.85, 0.0)
+    piezo_r = np.linspace(0.0, 100.0, 400)
+    defl_r  = np.where(piezo_r < 30.0, (30.0 - piezo_r) * 0.85, 0.0)
+    # Two ruptures out where the tether is stretched, small against the ramp.
+    defl_r[(piezo_r > 60.0) & (piezo_r < 62.0)] = -1.8
+    defl_r[(piezo_r > 75.0) & (piezo_r < 77.0)] = -1.2
+    return ForceCurve(
+        path="curve.ibw",
+        piezo_appr=piezo_a, defl_appr=defl_a,
+        piezo_retr=piezo_r, defl_retr=defl_r,
+        spring_constant=10.0,
+    )
+
+
+class _FrameProbe:
+    """Only the state _frame_events and _draw_event_marker_coords read."""
+
+    _frame_events            = raw.RawCurveWindow._frame_events
+    _draw_event_marker_coords = raw.RawCurveWindow._draw_event_marker_coords
+    _ramp_series             = staticmethod(raw.RawCurveWindow._ramp_series)
+
+    def __init__(self, axes=raw._AXES[0][1]):
+        self._plot = pg.PlotWidget()
+        self._axes = axes
+        self._drawn = _event_curve()
+        self._rupture_lines: list = []
+        self._onset_lines: list = []
+        self._plot.plot(self._drawn.piezo_retr.tolist(),
+                        self._drawn.defl_retr.tolist())
+        self._plot.plot(self._drawn.piezo_appr.tolist(),
+                        self._drawn.defl_appr.tolist())
+
+
+_COORDS = [(61.0, 60.5), (76.0, 75.5)]
+
+
+def test_the_contact_ramp_does_not_set_the_raw_curve_scale(qapp):
+    p = _FrameProbe()
+    loose = _y_range(p._plot)
+    p._draw_event_marker_coords(_COORDS)
+    framed = p._plot.getPlotItem().getViewBox().viewRange()[1]
+
+    assert np.ptp(framed) < np.ptp(loose) / 2.0, (
+        f"the ramp still sets the scale: {np.ptp(framed):.2f} nm framed "
+        f"against {np.ptp(loose):.2f} nm loose")
+    assert framed[1] < 5.0, "the contact ramp is still inside the view"
+
+
+def test_a_curve_with_no_events_is_left_alone(qapp):
+    """Most of the catalog has no ROI. Nothing is known about where to look on
+    those curves, so nothing is claimed."""
+    p = _FrameProbe()
+    before = _y_range(p._plot)
+    p._draw_event_marker_coords([])
+    assert _y_range(p._plot) == before
+
+
+def test_framing_is_piezo_only(qapp):
+    """A mark is a piezo position. On a time axis it names a moment that was
+    never measured, which is the guard _draw_persisted_overlays already applies
+    to the marker lines themselves."""
+    p = _FrameProbe(axes=raw._AXES[1][1])
+    before = _y_range(p._plot)
+    p._frame_events([61.0, 76.0])
+    assert _y_range(p._plot) == before
