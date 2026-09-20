@@ -10,7 +10,7 @@
 #
 # DistFitWindow — pop-out histogram fitting window for a single Stats variable.
 #
-# Opened from AnalysisWindow ("Fit…" button on the Raw or Derived tab).
+# Opened from Explore Events and from the single-variable window.
 # Receives the pass-only values directly; no file loading, no column selector.
 # One window per variable; re-opening the same variable raises the existing window.
 #

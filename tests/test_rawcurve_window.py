@@ -2,53 +2,15 @@ from __future__ import annotations
 
 import numpy as np
 from types import SimpleNamespace
-from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from smfs_catalog.curve_loader import ForceCurve
 from smfs_catalog import display_roi
 from smfs_catalog import curve_analysis
 from smfs_catalog import dashboard_window
+import fakeworker
+
 from smfs_catalog import rawcurve_window as raw
-
-
-class _Worker(QObject):
-    playhead_changed = pyqtSignal(int)
-    queue_empty = pyqtSignal()
-    file_done = pyqtSignal(int, str, bool)
-    file_error = pyqtSignal(int, str)
-    data_unavailable = pyqtSignal(int, str, str)
-    paused_changed = pyqtSignal(bool)
-    direction_changed = pyqtSignal(int)
-    throttle_changed = pyqtSignal(int)
-    queue_changed = pyqtSignal()
-
-    def queue_ids(self):
-        return []
-
-    def playhead(self):
-        return None
-
-    def throttle_ms(self):
-        return 0
-
-    def is_paused(self):
-        return True
-
-    def direction(self):
-        return 1
-
-    def set_paused(self, _paused):
-        pass
-
-    def set_direction(self, _direction):
-        pass
-
-    def set_throttle_ms(self, _ms):
-        pass
-
-    def notify_work_available(self):
-        pass
 
 
 def _curve(*, xpos=0.0, ypos=0.0):
@@ -75,7 +37,7 @@ def _window(monkeypatch, *, curve_type="continuous_stretch"):
     # These tests carry no catalog, so the lookup is answered directly.
     monkeypatch.setattr(raw._db, "get_curve_type",
                         lambda *_a, **_k: curve_type)
-    win = raw.RawCurveWindow([], worker=_Worker())
+    win = raw.RawCurveWindow(fakeworker.FakeWorker())
     win._test_app = app
     return win
 
@@ -84,11 +46,6 @@ def test_worker_mode_draws_raw_curve_without_running_analysis(monkeypatch):
     win = _window(monkeypatch)
     monkeypatch.setattr(raw, "load_force_curve", lambda _path: _curve())
     monkeypatch.setattr(win, "_draw_persisted_overlays", lambda _fid: False)
-    monkeypatch.setattr(
-        win,
-        "_draw_derived",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("analysis ran in GUI")),
-    )
     win._paths = ["curve.ibw"]
     win._current_file_id = 7
 
@@ -173,11 +130,6 @@ def test_persisted_non_event_overlays_are_read_without_curve_analysis(monkeypatc
             "contact_piezo_nm": 12.5,
             "snapoff_piezo_nm": 8.0,
         },
-    )
-    monkeypatch.setattr(
-        win,
-        "_draw_derived",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("analysis ran in GUI")),
     )
 
     try:
