@@ -104,25 +104,19 @@ class RawCurveWindow(QWidget):
     """
 
     curve_changed        = pyqtSignal(int)
-    derived_result_ready = pyqtSignal(int, float, float, float, float, float, float, float, float, str, str, str, str)   # index, offset, flatness, contact_z, snapoff_z, rupture_z, onset_z, invols_slope, rupture_force, cd_params_json, bl_params_json, roi_params_json, invols_params_json
 
     def __init__(
         self,
-        paths: list[str],
+        worker,
         db_path: str | None = None,
         session_info: dict | None = None,
         experimentalist: str | None = None,
-        worker=None,
     ) -> None:
         """
         The window follows a running AnalysisWorker: it shows whichever file the
         worker's playhead is on (via playhead_changed), and its NavigatorBar
-        drives that playhead.  `paths` is ignored — the worker owns the timeline;
-        pass [].
-
-        `worker` is required in practice.  It stayed keyword-optional only so the
-        signature doesn't change under existing callers; without one the window
-        draws nothing, having no timeline to follow.
+        drives that playhead.  The worker owns the timeline, so it is the one
+        thing the window cannot be built without.
         """
         super().__init__()
 
@@ -251,7 +245,7 @@ class RawCurveWindow(QWidget):
         self._contact_appr_line = None   # vertical dashed line: contact onset (approach)
         self._contact_retr_line = None   # vertical dashed line: snap-off (retract)
         # Rupture/onset are drawn one pair per outer ROI (a curve can hold more
-        # than one), not a single scalar pair — see _draw_derived.
+        # than one), not a single scalar pair.
         self._rupture_lines: list = []   # vertical dashed lines: one per ROI's rupture
         self._onset_lines:   list = []   # vertical dashed lines: one per ROI's onset
         splitter.addWidget(self._plot)
@@ -371,8 +365,6 @@ class RawCurveWindow(QWidget):
         the worker's playhead with the same transient-enqueue + step_to pattern
         the dashboard uses for double-click navigation.
         """
-        if self._worker is None:
-            return False
         fid = _db.get_file_id(path, self._db_path)
         if fid is None:
             return False
@@ -447,12 +439,8 @@ class RawCurveWindow(QWidget):
             self._roi_win.show()
             self._roi_win.raise_()
             self._roi_win.activateWindow()
-            # Worker mode: the ROI window's showEvent syncs it to the worker's
-            # current playhead, so don't push a RawCurve index it doesn't share.
-            if self._worker is None:
-                idx = self._last_displayed_index if self._last_displayed_index >= 0 else self._index
-                if idx >= 0:
-                    self._roi_win.update_curve(idx)
+            # The ROI window's showEvent syncs it to the worker's current
+            # playhead, so there is no index to push at it from here.
 
     def _on_analysis_params_changed(self) -> None:
         """Redraw current curve when any spectral analysis parameter changes."""
@@ -569,8 +557,6 @@ class RawCurveWindow(QWidget):
         window would go on drawing a curve from the discarded selection —
         beside a navigator already reading — / n against the new one.
         """
-        if self._worker is None:
-            return
         fid = self._current_file_id
         if fid is not None and int(fid) in self._worker.queue_ids():
             return
@@ -633,28 +619,14 @@ class RawCurveWindow(QWidget):
             )
             return
 
-        # Update spectral window if it is open.  Worker mode: the Decomp window
-        # follows the worker itself (its nav bar subscribes to playhead_changed),
-        # so pushing here too would double-load the curve — legacy mode only.
-        if (self._worker is None
-                and self._decomp_win is not None and self._decomp_win.isVisible()):
-            self._decomp_win.update_curve(curve)
-
-        # Update FFT window if it is open
+        # The Decomp and ROI windows follow the worker themselves — their nav
+        # bars subscribe to playhead_changed — so pushing the curve at them
+        # here would load it a second time.  The FFT window has no nav bar of
+        # its own and is fed from here.
         if self._fft_win is not None and self._fft_win.isVisible():
             self._fft_win.update_curve(curve)
 
-        # Update ROI detection window if it is open (legacy mode only — in worker
-        # mode the ROI window follows the worker via its own nav bar).
-        if (self._worker is None
-                and self._roi_win is not None and self._roi_win.isVisible()):
-            self._roi_win.update_curve(index)
-
-        if self._worker is None:
-            # Standalone (no worker).  Worker mode never computes
-            # scientific results on the GUI thread.
-            self._draw_derived(index, path, curve)
-        elif self._current_file_id is not None:
+        if self._current_file_id is not None:
             try:
                 available = self._draw_persisted_overlays(self._current_file_id)
             except Exception as exc:
@@ -803,123 +775,6 @@ class RawCurveWindow(QWidget):
             )
             self._plot.addItem(ons_line)
             self._onset_lines.append(ons_line)
-
-    def _draw_derived(self, index: int, path: str, curve: ForceCurve) -> None:
-        """
-        Run the shared analyse_curve routine, draw the contact/snap-off marker
-        lines from its scalar result plus one rupture/onset marker pair per
-        outer ROI (from the same event_map document the ROI/View Fits windows
-        read), and (in legacy mode) emit derived_result_ready for
-        AnalysisWindow / EventSummaryWindow.
-
-        contact_z/snapoff_z are NaN for a non_event, so those two lines simply
-        don't appear; a non_event likewise has no event_map document, so no
-        rupture/onset lines are drawn — exactly what the DB would store.
-        """
-        from .curve_analysis import analyse_curve, pipeline_params_from
-
-        try:
-            # ONE rule for whose parameters apply: the file at position one of
-            # the analysis queue (db.active_param_owner). Same answer here as
-            # in the ROI window and the worker — there is no second way to
-            # decide it, and no per-curve resolution.
-            param_set = _db.load_analysis_params(self._db_path)
-            p        = pipeline_params_from(param_set)
-            code_ver = cache_version()
-            file_id  = _db.get_file_id(path, self._db_path)
-            result, _stage1 = analyse_curve(
-                curve, p,
-                db_path  = self._db_path,
-                code_ver = code_ver,
-                file_id  = file_id,
-            )
-        except Exception as exc:
-            # Keep this terse and on stderr.  Some numpy/DB errors embed an entire
-            # array in their message; traceback.print_exc() then floods the
-            # terminal with raw bytes.  This path is usually benign — it fires
-            # when a final draw races window teardown.
-            import sys
-            print(
-                f"[rawcurve] derived computation skipped — "
-                f"{type(exc).__name__}: {str(exc)[:160]}",
-                file=sys.stderr,
-            )
-            self._status_label.setText(
-                f"analysis overlays unavailable: {type(exc).__name__}: "
-                f"{str(exc)[:120]}"
-            )
-            return
-
-        # ── Marker lines ──────────────────────────────────────────────────────
-        # Match ROIWindow colours: green rupture, orange onset.
-        _RUPTURE_RGB = (40, 160, 40)
-        _ONSET_RGB   = (220, 130, 0)
-
-        if not np.isnan(result.contact_z):
-            self._contact_appr_line = pg.InfiniteLine(
-                pos=result.contact_z, angle=90, movable=False,
-                pen=style.guide_pen(_COLOR_CONTACT),
-                label='contact', labelOpts={'position': 0.95, 'color': _COLOR_CONTACT},
-            )
-            self._plot.addItem(self._contact_appr_line)
-
-        if not np.isnan(result.snapoff_z):
-            self._contact_retr_line = pg.InfiniteLine(
-                pos=result.snapoff_z, angle=90, movable=False,
-                pen=style.guide_pen(_COLOR_SNAPOFF),
-                label='snap-off', labelOpts={'position': 0.82, 'color': _COLOR_SNAPOFF},
-            )
-            self._plot.addItem(self._contact_retr_line)
-
-        # Rupture/onset: one pair per outer ROI, not result.rupture_z/onset_z's
-        # single scalar — a curve can hold more than one outer ROI, and event_map carries the
-        # full list. Reuses `stage1` from the analyse_curve call above, so this
-        # is the same zero-recompute reuse `_persist_multi_event_roi` does — on
-        # a hit curve the worker has typically already written this exact
-        # document, so this is a cache hit, not fresh work. Only meaningful for
-        # a validated event; a non_event has no event_map row (see
-        # curve_analysis._persist_multi_event_roi / delete_event_map).
-        if result.event:
-            try:
-                from .roi_pipeline import compute_curve_events_coords, event_params_from
-                ep  = event_params_from(param_set)
-                res = compute_curve_events_coords(
-                    curve, ep, db_path=self._db_path, code_ver=code_ver,
-                    file_id=file_id, stage1=_stage1, param_set=param_set,
-                )
-                for roi in res.events.rois:
-                    rup_line = pg.InfiniteLine(
-                        pos=roi.ruptures[-1].piezo_nm, angle=90, movable=False,
-                        pen=style.guide_pen(_RUPTURE_RGB),
-                        label='rupture', labelOpts={'position': 0.70, 'color': _RUPTURE_RGB},
-                    )
-                    self._plot.addItem(rup_line)
-                    self._rupture_lines.append(rup_line)
-
-                    ons_line = pg.InfiniteLine(
-                        pos=roi.onset_piezo_nm, angle=90, movable=False,
-                        pen=style.guide_pen(_ONSET_RGB),
-                        label='onset', labelOpts={'position': 0.58, 'color': _ONSET_RGB},
-                    )
-                    self._plot.addItem(ons_line)
-                    self._onset_lines.append(ons_line)
-            except Exception as exc:
-                import sys
-                print(
-                    f"[rawcurve] multi-ROI markers skipped — "
-                    f"{type(exc).__name__}: {str(exc)[:160]}",
-                    file=sys.stderr,
-                )
-
-        # ── Emit to AnalysisWindow / EventSummaryWindow (legacy mode only) ────
-        if self._worker is None:
-            self.derived_result_ready.emit(
-                index, result.offset, result.flatness,
-                result.contact_z, result.snapoff_z,
-                result.rupture_z, result.onset_z,
-                result.invols_slope, result.rupture_force,
-                p.params_cd, p.params_bl, p.params_roi, p.params_invols,
-            )
 
     # ── Axes ──────────────────────────────────────────────────────────────────
 

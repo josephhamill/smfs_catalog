@@ -1694,9 +1694,8 @@ class DashboardWindow(QMainWindow):
         if viewer is None or not viewer.isVisible():
             self._prune_children()
             self._viewer = RawCurveWindow(
-                paths=[],
+                self._worker,
                 db_path=self._db_path,
-                worker=self._worker,
             )
             self._children.append(self._viewer)
             self._viewer.show()

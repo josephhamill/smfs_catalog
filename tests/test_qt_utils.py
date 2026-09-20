@@ -14,6 +14,8 @@ from PyQt6.QtCore import QRect
 from PyQt6.QtWidgets import QApplication
 
 from smfs_catalog.qt_utils import _make_session_header, fit_on_screen
+import fakeworker
+
 from smfs_catalog.rawcurve_window import RawCurveWindow
 
 
@@ -84,7 +86,7 @@ def test_session_header_handles_nullable_metadata() -> None:
 
 def test_raw_curve_metadata_labels_belong_to_visible_panel() -> None:
     app = QApplication.instance() or QApplication([])
-    win = RawCurveWindow([], worker=None)
+    win = RawCurveWindow(fakeworker.FakeWorker())
     win.show()
     app.processEvents()
 
