@@ -152,7 +152,7 @@ DESCRIPTIONS: dict[str, str] = {
     "seg_l_c_nm": "WLC contour length fitted to the currently selected Ultimate or Penultimate segment.",
     "seg_l_p_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's persistence length; it is a lower bound on total uncertainty.",
     "seg_l_c_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's contour length; it is a lower bound on total uncertainty.",
-    "seg_tau": "Residual correlation time in samples. Larger values mean more neighbouring samples act like repeated observations rather than independent data.",
+    "seg_tau": "Residual correlation time in samples, measured from the segment's own WLC fit residual. Larger values mean neighbouring samples count as repeated observations rather than independent data. Already in the err columns.",
     "seg_z_max": "Maximum fitted extension divided by contour length. Higher values generally mean the WLC fit is better conditioned.",
     "seg_x_max_nm": "Largest extension reached inside the fitted window, in nm. It is Seg z_max's numerator: read the two together to tell a short pull from an overlong contour length.",
     "seg_edge_pinned": "Whether the force peak lies on the fitted window's right edge (1 = edge, 0 = interior), where force may be underestimated.",

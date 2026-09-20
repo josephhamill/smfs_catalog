@@ -120,10 +120,11 @@ def _slider() -> QSlider:
 class _Label:
     def __init__(self):
         self.text = ""
+        self.tooltip = ""
         self.visible = False
 
     def setText(self, t): self.text = t
-    def setToolTip(self, t): pass
+    def setToolTip(self, t): self.tooltip = t
     def setVisible(self, v): self.visible = v
 
 
@@ -264,13 +265,27 @@ def test_cutoff_index_round_trips_every_listed_value():
 # ── (d) The advice half ─────────────────────────────────────────────────────
 
 def test_tau_hint_states_the_filtering_floor():
-    """tau ~ f_s/f_c is what a cutoff costs the error bars, and it
-    is the number the user is actually choosing between."""
+    """tau ~ f_s/f_c is the floor the filter alone puts under the correlation
+    time, and it is the number the user is actually choosing between."""
     p = _Probe(16666.67, cutoff_hz=2000.0)
     p._refresh_tau_hint()
     assert p._tau_label.visible
     assert "8.3" in p._tau_label.text, p._tau_label.text     # 16666.67 / 2000
-    assert "2.9" in p._tau_label.text, p._tau_label.text     # sqrt(8.3)
+    assert "filter" in p._tau_label.text, p._tau_label.text
+
+
+def test_tau_hint_does_not_present_itself_as_the_error_bar_tau():
+    """This tau is an estimate of the filter's contribution and enters nothing.
+    The one that widens an error bar is measured per fit, so the panel must not
+    offer sqrt of this one as the widening factor."""
+    from smfs_catalog import variables as _vars
+
+    p = _Probe(16666.67, cutoff_hz=2000.0)
+    p._refresh_tau_hint()
+    assert "2.9" not in p._tau_label.text, (       # sqrt(8.3), not this tau's
+        f"reads as the error-bar factor: {p._tau_label.text}")
+    assert _vars.label("seg_tau") in p._tau_label.tooltip, (
+        "must name the quantity the error bars actually carry")
 
 
 def test_tau_hint_is_silent_without_a_rate():
