@@ -606,32 +606,70 @@ class RawCurveWindow(QWidget):
     # ── Curve loading and drawing ──────────────────────────────────────────────
 
     def _do_draw(self, index: int) -> None:
-        """Load one curve and update the plot + metadata panel."""
-        path = self._paths[index]
+        """Send one file down the view lane its stored modality names."""
+        path     = self._paths[index]
+        modality = self._modality_of(path)
 
         self._clear_markers()
+        _VIEW_LANES[modality](self, index, path, modality)
 
+    def _modality_of(self, path: str) -> str:
+        """What the file IS, as the scanner read it from the wave at import.
+
+        Every path this window shows comes from a catalogued file, so this is a
+        lookup and nothing is opened to answer it.  A path with no row is one
+        nothing has classified, which is what `unknown` means.
+        """
+        file_id = self._current_file_id
+        if file_id is None:
+            file_id = _db.get_file_id(path, self._db_path)
+        curve_type = (_db.get_curve_type(file_id, self._db_path)
+                      if file_id is not None else None)
+        return curve_type or "unknown"
+
+    def _view_image(self, index: int, path: str, modality: str) -> None:
+        """An image holds no force trace, and saying so is the whole lane."""
+        self._blank_display(path)
+        self._status_label.setText(
+            f"{modality.replace('_', ' ')} — no force trace to draw"
+        )
+
+    def _view_trace_only(self, index: int, path: str, modality: str) -> None:
+        """Draw the recording and claim nothing about it: these modalities have
+        no analysis lane, so there are no overlays to offer."""
         try:
-            curve = load_force_curve(path)
-        except UnusableCurveError:
-            # Not a ramp — held, indented, or something not yet named.  It is
-            # still a recording, so it is still viewable; only the analysis
-            # overlays below have nothing to say about it.
-            try:
-                curve = load_raw_trace(path)
-            except LoadError:
-                self._show_load_failure(path)
-                return
+            curve = load_raw_trace(path)
+        except UnusableCurveError as exc:
+            # The wave carries no deflection channel, so there is no trace to
+            # draw.  That is a fact about the file, not a fault in it.
+            self._blank_display(path)
+            self._status_label.setText(str(exc))
+            return
         except LoadError:
             self._show_load_failure(path)
             return
 
         self._draw(curve)
-        if not isinstance(curve, ForceCurve):
-            self._status_label.setText(
-                f"{curve.curve_type.replace('_', ' ')} — viewing only"
-            )
+        self._status_label.setText(
+            f"{curve.curve_type.replace('_', ' ')} — viewing only"
+        )
+
+    def _view_force_extension(self, index: int, path: str, modality: str) -> None:
+        """A ramp: draw it, then everything analysis has to say about it."""
+        try:
+            curve = load_force_curve(path)
+        except UnusableCurveError:
+            # Damage, not a different experiment: the modality is already
+            # settled.  A ramp whose data cannot carry a fit is still a
+            # recording somebody needs to look at, so it is drawn as a bare
+            # trace and the overlays below are simply not offered.
+            self._view_trace_only(index, path, modality)
             return
+        except LoadError:
+            self._show_load_failure(path)
+            return
+
+        self._draw(curve)
 
         # Update spectral window if it is open.  Worker mode: the Decomp window
         # follows the worker itself (its nav bar subscribes to playhead_changed),
@@ -665,17 +703,21 @@ class RawCurveWindow(QWidget):
             else:
                 self._status_label.setText("analysis in progress…")
 
-    def _show_load_failure(self, path: str) -> None:
-        self._n_errors += 1
+    def _blank_display(self, path: str, mark: str = "") -> None:
+        """Nothing on the plot, and the panel naming which file that is about."""
         for item in (self._curve_appr, self._curve_retr, self._curve_raw):
             item.setData([], [])
-        self._meta_vals["filename"].setText(f"✗ {Path(path).name}")
+        self._meta_vals["filename"].setText(f"{mark}{Path(path).name}")
         self._meta_vals["directory"].setText(str(Path(path).parent))
         for key in (
             "date", "spring_k", "velocity", "trigger", "force_dist",
             "inv_ols", "xy", "sample_rate",
         ):
             self._meta_vals[key].setText("—")
+
+    def _show_load_failure(self, path: str) -> None:
+        self._n_errors += 1
+        self._blank_display(path, "✗ ")
 
     def _show_overlay_error(self, exc: Exception) -> None:
         self._status_label.setText(
@@ -1030,3 +1072,19 @@ class RawCurveWindow(QWidget):
             _quant.format_value("sample_rate_hz", curve.sample_rate_hz,
                                 with_unit=True) or "\N{EM DASH}"
         )
+
+
+# One lane per acquisition modality, covering every value curve_loader._modality
+# can return — the viewer's counterpart to curve_analysis.MODALITY_PIPELINES.
+# Indexed, not searched: what a file IS settles how it is drawn, so a file that
+# holds no force trace says so instead of being reported as a file that failed
+# to load.  A modality with no lane raises here rather than being guessed at.
+_VIEW_LANES = {
+    "continuous_stretch": RawCurveWindow._view_force_extension,
+    "stretch_hold":       RawCurveWindow._view_trace_only,
+    "force_clamp":        RawCurveWindow._view_trace_only,
+    "indentation":        RawCurveWindow._view_trace_only,
+    "image_contact":      RawCurveWindow._view_image,
+    "image_ac":           RawCurveWindow._view_image,
+    "unknown":            RawCurveWindow._view_trace_only,
+}

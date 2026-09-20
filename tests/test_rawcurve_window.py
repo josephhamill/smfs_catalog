@@ -64,13 +64,17 @@ def _curve(*, xpos=0.0, ypos=0.0):
     )
 
 
-def _window(monkeypatch):
+def _window(monkeypatch, *, curve_type="continuous_stretch"):
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(
         display_roi,
         "ROIWindow",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("disabled")),
     )
+    # The viewer draws a file by the modality the scanner recorded for it.
+    # These tests carry no catalog, so the lookup is answered directly.
+    monkeypatch.setattr(raw._db, "get_curve_type",
+                        lambda *_a, **_k: curve_type)
     win = raw.RawCurveWindow([], worker=_Worker())
     win._test_app = app
     return win
