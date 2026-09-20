@@ -547,13 +547,12 @@ def test_a_modality_with_no_pipeline_is_not_recorded_as_damage(tmp_path):
     assert row["curve_type"] == "force_clamp", "what the file IS is untouched"
 
 
-def test_every_modality_has_a_lane():
-    """A file is sent down the lane its modality names, so every modality the
-    classifier can report must have one.  Read from _modality's own source: a
-    new experiment type added there fails here until it is given a lane."""
+def _reported_modalities() -> set[str]:
+    """Every modality the classifier can report, read from its own source, so a
+    new experiment type added there fails the guards below until it is given a
+    lane."""
     import ast
     import inspect
-    from smfs_catalog import curve_analysis as _ca
 
     tree = ast.parse(inspect.getsource(cl._modality))
     reported = {
@@ -563,7 +562,40 @@ def test_every_modality_has_a_lane():
         if isinstance(lit, ast.Constant) and isinstance(lit.value, str)
     }
     assert reported, "no modality literals found — did _modality stop returning them?"
+    return reported
+
+
+def test_every_modality_has_a_lane():
+    """A file is sent down the lane its modality names, so every modality the
+    classifier can report must have one."""
+    from smfs_catalog import curve_analysis as _ca
+
+    reported = _reported_modalities()
     assert reported == set(_ca.MODALITY_PIPELINES), (
         f"classifier reports {sorted(reported)}, "
         f"lanes exist for {sorted(_ca.MODALITY_PIPELINES)}"
     )
+
+
+def test_every_modality_has_a_view_lane():
+    """The viewer draws a file by the same rule analysis runs it by, so it needs
+    the same coverage: a modality with no view lane would be a file the viewer
+    cannot decide how to draw."""
+    pytest.importorskip("PyQt6")
+    from smfs_catalog import rawcurve_window as _rw
+
+    reported = _reported_modalities()
+    assert reported == set(_rw._VIEW_LANES), (
+        f"classifier reports {sorted(reported)}, "
+        f"view lanes exist for {sorted(_rw._VIEW_LANES)}"
+    )
+
+
+def test_an_image_is_not_a_load_failure():
+    """An image holds no force trace.  Reporting that as a failed load is the
+    app claiming a fault in a healthy file."""
+    pytest.importorskip("PyQt6")
+    from smfs_catalog import rawcurve_window as _rw
+
+    for modality in ("image_contact", "image_ac"):
+        assert _rw._VIEW_LANES[modality] is _rw.RawCurveWindow._view_image
