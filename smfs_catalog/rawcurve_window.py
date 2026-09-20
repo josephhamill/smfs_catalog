@@ -86,6 +86,10 @@ _AXIS_LABEL = {"piezo": ("Piezo", _quant.NM),
                "defl":  ("Deflection", _quant.NM),
                "time":  ("Time", _quant.S)}
 
+# Fraction of the marked span added on each side before the plot is framed on
+# it, so a marker at the edge is not drawn on the frame.
+_EVENT_FRAME_PAD = 0.25
+
 
 # ── Raw curve window ───────────────────────────────────────────────────────────
 
@@ -798,6 +802,9 @@ class RawCurveWindow(QWidget):
         for line in self._onset_lines:
             self._plot.removeItem(line)
         self._onset_lines = []
+        # The framing belongs to the curve whose markers set it.  Without this
+        # the next curve is drawn inside the previous one's range.
+        self._plot.enableAutoRange(axis="y")
 
     def _draw_contact_markers(
         self, contact_z: float | None, snapoff_z: float | None,
@@ -828,7 +835,9 @@ class RawCurveWindow(QWidget):
     def _draw_event_marker_coords(self, coords) -> None:
         rupture_rgb = (40, 160, 40)
         onset_rgb = (220, 130, 0)
+        marks: list[float] = []
         for rupture_z, onset_z in coords:
+            marks += [rupture_z, onset_z]
             rup_line = pg.InfiniteLine(
                 pos=rupture_z, angle=90, movable=False,
                 pen=style.guide_pen(rupture_rgb),
@@ -845,6 +854,37 @@ class RawCurveWindow(QWidget):
             )
             self._plot.addItem(ons_line)
             self._onset_lines.append(ons_line)
+        self._frame_events(marks)
+
+    def _frame_events(self, marks: list[float]) -> None:
+        """Range the plot on the region the event markers enclose.
+
+        Autorange fits the contact ramp, which is the largest excursion on the
+        trace by a wide margin, so the ruptures these markers were drawn for
+        are pressed against the baseline.  The markers say where the content
+        is.  Only the y axis moves, so the whole curve stays on screen with the
+        ramp running off the top, and the autoscale button reaches it again.
+
+        Piezo axis only: a mark is a piezo position, and on a time axis it
+        names a moment that was never measured.
+        """
+        curve = self._drawn
+        if (not marks or self._axes != _AXES[0][1]
+                or not isinstance(curve, ForceCurve)):
+            return
+        lo, hi = min(marks), max(marks)
+        pad    = _EVENT_FRAME_PAD * max(hi - lo, 1.0)
+        lo, hi = lo - pad, hi + pad
+
+        x_appr, x_retr = self._ramp_series(curve, "piezo")
+        y_appr, y_retr = self._ramp_series(curve, "defl")
+        inside = [y[(x >= lo) & (x <= hi)]
+                  for x, y in ((x_appr, y_appr), (x_retr, y_retr))]
+        inside = [a for a in inside if a.size]
+        if not inside:
+            return
+        y = np.concatenate(inside)
+        self._plot.setYRange(float(y.min()), float(y.max()))
 
     def _draw_derived(self, index: int, path: str, curve: ForceCurve) -> None:
         """
