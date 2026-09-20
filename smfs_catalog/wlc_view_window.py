@@ -728,7 +728,12 @@ class WlcViewWindow(QMainWindow):
         up = pg.PlotDataItem(xm.tolist(), stack.max(axis=0).tolist())
         lo = pg.PlotDataItem(xm.tolist(), stack.min(axis=0).tolist())
         band = pg.FillBetweenItem(up, lo, brush=style.band_brush(col, alpha=55))
-        self._top.addItem(band)
+        # ignoreBounds: the envelope is drawn, not measured against.  Its
+        # l_c - sigma corner puts the WLC pole at a shorter extension, so it
+        # diverges inside the data range; letting it into the autorange sets
+        # the scale from a quantity nothing gates on and shrinks the fit and
+        # the data it was fitted to.  Autoscale still reaches it on request.
+        self._top.addItem(band, ignoreBounds=True)
         return [band]
 
     # ── Total-2DH inclusion indicator ─────────────────────────────────────────
