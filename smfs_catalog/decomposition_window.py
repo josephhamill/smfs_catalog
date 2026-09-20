@@ -36,6 +36,7 @@ from .widgets import FlowLayout, LabeledControl, SampleMarksToggle
 from .navigator_bar import WorkerNavBar
 from .provenance import cache_version
 from . import sample_marks
+from . import variables as _vars
 from . import style
 from .qt_utils import (
     _make_session_header,
@@ -216,10 +217,11 @@ class DecompositionWindow(QWidget):
         ctrl_layout.addWidget(
             LabeledControl("Cutoff:", self._cutoff_slider, self._cutoff_label))
 
-        # What this cutoff costs the error bars, for the curve on screen.  Next
-        # to the control that decides it, because a cutoff chosen without knowing
-        # its sqrt(tau) is chosen blind — the same reasoning that put seg_tau
-        # beside seg_l_p_err in the queue rather than in a diagnostics block.
+        # What the filter alone contributes to the correlation time, for the
+        # curve on screen.  Next to the control that decides it, because a
+        # cutoff chosen without knowing its sqrt(tau) is chosen blind — the same
+        # reasoning that put seg_tau beside seg_l_p_err in the queue rather than
+        # in a diagnostics block.
         self._tau_label = QLabel("")
         self._tau_label.setStyleSheet(style.qss_text(style.UI_MUTED))
         self._tau_label.setVisible(False)
@@ -602,16 +604,21 @@ class DecompositionWindow(QWidget):
         self._cutoff_limit_label.setVisible(clipped)
 
     def _refresh_tau_hint(self) -> None:
-        """What this cutoff costs the error bars, for the curve on screen.
+        """What the filter alone contributes to the correlation time, for the
+        curve on screen.
 
         tau ~ sample_rate / cutoff estimates the part of the integrated
-        autocorrelation time contributed by filtering, and error bars carry
-        sqrt(tau). Both numbers are already in hand, so
-        this turns an abstract choice into the thing it actually decides.
+        autocorrelation time contributed by filtering.  Both numbers are
+        already in hand, so this turns an abstract choice into a quantity.
+
+        Display only: it enters no calculation, no fit and no export.  The tau
+        that widens an error bar is seg_tau, measured from each fit's own
+        residual, and this is not a preview of it — the two are measured on
+        different series over different lengths.
 
         Stated as "at least", because it is a floor: the acquisition filter and
         WLC model error both add to the measured tau and neither is separable
-        from a residual (§3).  The real tau is measured per fit, never this.
+        from a residual (§3).
         """
         curve = self._current_curve
         rate = float(getattr(curve, "sample_rate_hz", 0.0) or 0.0) if curve is not None else 0.0
@@ -619,15 +626,21 @@ class DecompositionWindow(QWidget):
             self._tau_label.setVisible(False)
             return
         tau = rate / self._cutoff_hz
-        self._tau_label.setText(f"τ ≳ {tau:,.1f}  (error bars ×{tau ** 0.5:,.1f})")
+        self._tau_label.setText(f"filter τ ≳ {tau:,.1f} samples")
         self._tau_label.setToolTip(
             f"Filtering {rate:,.0f} Hz data at {self._cutoff_hz:,.0f} Hz leaves "
-            f"neighbouring samples correlated over about {tau:,.1f} of them, so a "
-            f"fit's error bars are widened by √τ ≈ {tau ** 0.5:,.1f}.\n\n"
+            f"neighbouring samples correlated over about {tau:,.1f} of them.\n\n"
+            "An estimate of the filter's own contribution, read off the two "
+            "settings in effect. It is shown here and nowhere else: it enters "
+            "no calculation, no fit and no export.\n\n"
+            "The error bars carry √τ measured from each fit's own residual, "
+            f"reported as {_vars.label('seg_tau')}. This does not preview that "
+            "number — the two are measured on different series over "
+            "different lengths.\n\n"
             "A floor, not the answer: the acquisition filter and any model "
-            "misfit add to the τ each fit actually measures from its own "
-            "residual. Filtering harder does not shrink a reported error bar — "
-            "σ falls and τ rises by the same factor."
+            "misfit add to the τ a fit measures. Filtering harder does not "
+            "shrink a reported error bar — σ falls and τ rises by the same "
+            "factor."
         )
         self._tau_label.setVisible(True)
 
