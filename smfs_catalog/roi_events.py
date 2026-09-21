@@ -233,28 +233,25 @@ class ROI:
     @property
     def dX_ext_pairs(self) -> list[Optional[float]]:
         """
-        Plain extension gap between consecutive ruptures' own points — X1 - X2,
-        i.e. ruptures[i].extension_nm - ruptures[i+1].extension_nm — on the
+        Plain extension gap between consecutive ruptures' own points — X2 - X1,
+        i.e. ruptures[i+1].extension_nm - ruptures[i].extension_nm — on the
         WLC-fit extension_nm coordinate (NOT piezo_nm; see dX_pairs for that
-        raw-piezo version). No crossing search, no force-matching: just the two
-        already-known (extension_nm, force_pN) points, same shape as dF_pairs
-        (a plain subtraction of two already-known scalars). None entries where
+        raw-piezo version). Later minus earlier, the same order as dX_pairs and
+        dF_pairs. No crossing search, no force-matching: just the two
+        already-known (extension_nm, force_pN) points. None entries where
         either extension is not yet filled — never fabricates a delta.
 
         Unlike dF_pairs, this is NOT expected to be a mixed-sign, roughly-
         symmetric-about-zero quantity: extension increases through a pull
         essentially regardless of which rupture is stronger, so this comes out
-        one sign almost always (negative, under the X1-X2 convention above).
-        That is not a defect to fix — it is simply reporting that "later
-        ruptures are further along" is a geometric near-certainty, unlike force
-        ordering, which isn't. Deliberately distinct from isoforce_dX_pairs
+        positive almost always. Deliberately distinct from isoforce_dX_pairs
         below: this makes no claim about equal-force reloading, and unlike
         that quantity, is defined regardless of which rupture is stronger.
         """
         out: list[Optional[float]] = []
         for i in range(len(self.ruptures) - 1):
             a, b = self.ruptures[i].extension_nm, self.ruptures[i + 1].extension_nm
-            out.append(None if a is None or b is None else a - b)
+            out.append(None if a is None or b is None else b - a)
         return out
 
     @property
@@ -264,8 +261,8 @@ class ROI:
         between ruptures[i]'s own extension and the extension where segment
         i+1's rising force first climbs back through ruptures[i]'s force — NOT
         the raw ruptures[i+1].piezo_nm - ruptures[i].piezo_nm gap dX_pairs
-        gives, and NOT the plain ruptures[i].extension_nm -
-        ruptures[i+1].extension_nm gap dX_ext_pairs gives either (both mix two
+        gives, and NOT the plain ruptures[i+1].extension_nm -
+        ruptures[i].extension_nm gap dX_ext_pairs gives either (both mix two
         different forces into one number; this is the one FORCE-MATCHED
         comparison of the three).
 
