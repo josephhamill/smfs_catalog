@@ -645,8 +645,8 @@ def segment_summary_bulk(
     penultimate, by definition), so they don't change when `select` is
     flipped; only l_p_nm/l_c_nm/force_pN do.
 
-    dX_ext_nm is the plain ruptures[lo].extension_nm -
-    ruptures[hi].extension_nm gap — no crossing search, defined regardless of
+    dX_ext_nm is the plain ruptures[hi].extension_nm -
+    ruptures[lo].extension_nm gap — no crossing search, defined regardless of
     which rupture is stronger, unlike dX_iso_nm (see roi_events.ROI.
     dX_ext_pairs). It exists so dF_pN has an order-independent extension-side
     counterpart to compare against; dX_iso_nm remains the deliberately
@@ -759,7 +759,7 @@ def segment_summary_bulk(
             # dX_ext_nm is a plain extension-point subtraction — needs no
             # adjacency, same as dF_pN, unlike dX_iso_nm below.
             x_lo, x_hi = roi.ruptures[lo].extension_nm, roi.ruptures[hi].extension_nm
-            row["dX_ext_nm"] = None if x_lo is None or x_hi is None else x_lo - x_hi
+            row["dX_ext_nm"] = None if x_lo is None or x_hi is None else x_hi - x_lo
             # isoforce_x_nm is only ever stored relative to the IMMEDIATELY
             # PRECEDING rupture (roi_events.Segment docstring) — a non-
             # adjacent pair legitimately has no such value to read; None,
