@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
+from scipy import sparse
 
 from . import style
 from . import clustering as _clustering
@@ -92,6 +93,11 @@ def _layout_driven(plot):
     plot.setMinimumSize(0, 0)
     plot.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
     return plot
+
+
+def _dense_row(H) -> np.ndarray:
+    """One event's grid (dense or sparse) as a flat float32 row."""
+    return (H.toarray() if sparse.issparse(H) else np.asarray(H)).ravel().astype(np.float32)
 
 
 def _relative_frequency_rows(counts: np.ndarray) -> np.ndarray:
@@ -183,7 +189,7 @@ class PCAWindow(QMainWindow):
         n = len(self._paths)
 
         X_raw = np.stack(
-            [histograms[p].ravel().astype(np.float32) for p in self._paths]
+            [_dense_row(histograms[p]) for p in self._paths]
         )                                           # (n, x_bins * f_bins)
 
         # Display matrix for cluster visualisation — full 2DHs when a selection
@@ -194,7 +200,7 @@ class PCAWindow(QMainWindow):
             self._display_x_bins  = sample.shape[0]
             self._display_f_bins  = sample.shape[1]
             self._X_display = np.stack(
-                [display_histograms[p].ravel().astype(np.float32) for p in self._paths]
+                [_dense_row(display_histograms[p]) for p in self._paths]
             )
             self._display_x_range = display_x_range if display_x_range is not None else x_range
             self._display_f_range = display_f_range if display_f_range is not None else f_range
