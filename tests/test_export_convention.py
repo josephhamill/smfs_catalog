@@ -127,6 +127,8 @@ check(
 tmp = tmpdirs.mkdtemp()
 DB = str(Path(tmp) / "t.db")
 _db.initialise(DB)
+# One criterion in force, so the manifest has a bound to carry.
+_db.set_threshold("seg_force_pN", 10.0, None, db_path=DB)
 _export.set_export_dir_override(tmp, DB)
 
 with _export.export_group(DB, "guard", [".csv", "_m.csv"], kind="guard_test") as g:
@@ -165,6 +167,12 @@ check("(c) live parameters are honestly labelled as export-time context",
       "not necessarily" in man.get("active_param_scope", "") and
       "param_set" not in man and "param_owner" not in man)
 check("(c) manifest records when it was generated", bool(man.get("generated_at")))
+check("(c) manifest names the criteria that defined the hit, with bounds and unit",
+      man.get("criteria_owner") == _db.active_param_owner(DB) and
+      man.get("criteria") == [{"key": "seg_force_pN", "label": man["criteria"][0]["label"],
+                               "lower": 10.0, "upper": None, "unit": "pN"}] and
+      bool(man.get("criteria_rule")) and bool(man.get("criteria_scope")),
+      str(man.get("criteria")))
 check("(c) manifest lists the data files it describes",
       sorted(man.get("data_files", [])) == sorted(
           [f"{g.base}.csv", f"{g.base}_m.csv"]),
