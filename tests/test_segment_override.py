@@ -146,8 +146,8 @@ check("(a) no override: dF_pN defaults to last-two ruptures (120-80=40)",
       summ["dF_pN"] == 40.0)
 check("(a) no override: seg_dX_iso_nm defaults to last-two (segments[2].isoforce_x_nm(30.7) - ruptures[1].extension_nm(20.0) = 10.7)",
       abs(summ["dX_iso_nm"] - 10.7) < 1e-9)
-check("(a) no override: seg_dX_ext_nm defaults to last-two, X1-X2 (ruptures[1].extension_nm(20.0) - ruptures[2].extension_nm(30.0) = -10.0)",
-      abs(summ["dX_ext_nm"] - (-10.0)) < 1e-9)
+check("(a) no override: seg_dX_ext_nm defaults to last-two, X2-X1 (ruptures[2].extension_nm(30.0) - ruptures[1].extension_nm(20.0) = 10.0)",
+      abs(summ["dX_ext_nm"] - 10.0) < 1e-9)
 
 summ_pen = _rp.segment_summary_bulk([FILE_PATH], "penultimate", DB)[_db.normalize_path(FILE_PATH)]
 check("(a) no override, penultimate: force_pN is the SECOND-TO-LAST rupture (80)",
@@ -197,9 +197,9 @@ check("(d) non-adjacent pair (0,2): seg_dX_iso_nm is None — isoforce_x_nm has 
       summ_pair["dX_iso_nm"] is None)
 check("(d) the shared display/summary resolver rejects the same non-adjacent pair",
       _rp.resolve_isoforce_pair(3, 0, 2) is None)
-check("(d) non-adjacent pair (0,2): seg_dX_ext_nm IS computed (10.0-30.0=-20.0) — plain "
+check("(d) non-adjacent pair (0,2): seg_dX_ext_nm IS computed (30.0-10.0=20.0) — plain "
       "subtraction needs no adjacency, unlike seg_dX_iso_nm",
-      summ_pair["dX_ext_nm"] is not None and abs(summ_pair["dX_ext_nm"] - (-20.0)) < 1e-9)
+      summ_pair["dX_ext_nm"] is not None and abs(summ_pair["dX_ext_nm"] - 20.0) < 1e-9)
 
 # ── (e) click-order independence: swap which one is tagged Primary/Secondary ─
 _db.set_primary_segment_idx(fid, 2, PARAMS_V1, DB)     # now primary=2, secondary=0 (reversed)
@@ -209,9 +209,9 @@ check("(e) swapping which segment is tagged Primary vs Secondary gives the SAME 
       summ_swapped["dF_pN"] == 70.0)
 check("(e) swapped pair: seg_dX_iso_nm is still None (still non-adjacent, order doesn't matter)",
       summ_swapped["dX_iso_nm"] is None)
-check("(e) swapping Primary/Secondary gives the SAME seg_dX_ext_nm (-20.0, not +20.0) — "
+check("(e) swapping Primary/Secondary gives the SAME seg_dX_ext_nm (20.0, not -20.0) — "
       "resolved by rupture index, not by which one was clicked",
-      abs(summ_swapped["dX_ext_nm"] - (-20.0)) < 1e-9)
+      abs(summ_swapped["dX_ext_nm"] - 20.0) < 1e-9)
 
 # ── adjacent pair sanity check: (1,2) matches the (a) default exactly ──────
 _db.set_primary_segment_idx(fid, 1, PARAMS_V1, DB)
@@ -227,8 +227,8 @@ check("adjacent pair roles are order-independent in the shared resolver",
       _rp.resolve_isoforce_pair(3, 2, 1) == (1, 2))
 check("an incomplete manual pair preserves the last-two default",
       _rp.resolve_isoforce_pair(3, 0, None) == (1, 2))
-check("adjacent pair (1,2): seg_dX_ext_nm matches the (a) default exactly (20.0-30.0=-10.0)",
-      abs(summ_adj["dX_ext_nm"] - (-10.0)) < 1e-9)
+check("adjacent pair (1,2): seg_dX_ext_nm matches the (a) default exactly (30.0-20.0=10.0)",
+      abs(summ_adj["dX_ext_nm"] - 10.0) < 1e-9)
 
 # ── (f) staleness: reanalysis under new params invalidates the old override ─
 PARAMS_V2 = json.dumps({"tag": "v2"})
