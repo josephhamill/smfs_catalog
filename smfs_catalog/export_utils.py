@@ -30,6 +30,7 @@ from typing import Any, Iterable, Iterator, Sequence
 
 import numpy as np
 
+from . import criteria_gate as _criteria_gate
 from . import db as _db
 from . import quantities as _quant
 from .provenance import app_version, code_version
@@ -277,6 +278,11 @@ class ExportGroup:
             # Stored units for exactly the values above. An empty string means
             # deliberately dimensionless; an absent key means undeclared.
             "active_param_units": _quant.units_for(param_set),
+            # The criteria that define "hit", with their bounds and units, so a
+            # reader can re-derive the population without the app. Same
+            # export-time caveat as the parameters above.
+            **_criteria_gate.gate(db_path=self._db_path).manifest(),
+            "criteria_scope": "criteria in force when the export was made",
         }
         # Window provenance last: a window may legitimately override
         # n_files/files semantics for its own export (e.g. an export whose
