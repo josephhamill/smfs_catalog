@@ -40,7 +40,7 @@ def _window() -> PCAWindow:
     )
 
 
-def test_pca_uses_documented_randomized_solver(qapp):
+def test_pca_records_the_solver_it_used(qapp):
     window = _window()
     assert window.export_provenance()["pca_svd_solver"] == _PCA_SVD_SOLVER
     window.close()
@@ -129,7 +129,7 @@ def test_pca_component_count_is_bounded_by_live_features(qapp):
         for i in range(4)
     }
     window = PCAWindow(histograms, 2, 2, (0.0, 2.0), (0.0, 2.0))
-    assert window._scores.shape == (4, 2)
+    assert window._scores.shape == (4, 1)
     window.close()
 
 
@@ -144,13 +144,34 @@ def test_pca_rejects_an_empty_feature_space(qapp):
 
 def test_pca_profiles_give_each_trace_equal_total_weight():
     counts = np.array([[1, 3], [10, 30], [0, 0]], dtype=np.uint32)
-    profiles = _relative_frequency_rows(counts)
+    profiles = _relative_frequency_rows(counts).toarray()
     np.testing.assert_allclose(profiles[:2], [[0.25, 0.75], [0.25, 0.75]])
     np.testing.assert_array_equal(profiles[2], [0.0, 0.0])
 
 
 def test_duplicating_a_cohort_does_not_change_pca_profiles():
     counts = np.array([[1, 3], [3, 1]], dtype=np.uint32)
-    original = _relative_frequency_rows(counts)
-    duplicated = _relative_frequency_rows(np.vstack([counts, counts]))
+    original = _relative_frequency_rows(counts).toarray()
+    duplicated = _relative_frequency_rows(np.vstack([counts, counts])).toarray()
     np.testing.assert_allclose(duplicated, np.vstack([original, original]))
+
+
+def test_sparse_pca_matches_dense_standardised_pca(qapp):
+    rng = np.random.default_rng(3)
+    histograms = {
+        f"trace-{i}": rng.poisson(0.3, size=(8, 6)).astype(np.float32)
+        for i in range(12)
+    }
+    window = PCAWindow(histograms, 8, 6, (0.0, 1.0), (0.0, 1.0))
+
+    X = np.stack([H.ravel() for H in histograms.values()]).astype(np.float64)
+    X = X / X.sum(axis=1, keepdims=True)
+    X = X[:, X.any(axis=0)]
+    X = (X - X.mean(axis=0)) / X.std(axis=0)
+    U, s, _ = np.linalg.svd(X, full_matrices=False)
+    k = window._scores.shape[1]
+    expected = U[:, :k] * s[:k]
+
+    np.testing.assert_allclose(
+        np.abs(window._scores), np.abs(expected), rtol=1e-3, atol=1e-4)
+    window.close()

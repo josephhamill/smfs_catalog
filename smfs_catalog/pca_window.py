@@ -11,10 +11,10 @@
 # PCAWindow — PCA + k-means analysis of per-curve 2D histogram profiles.
 #
 # Pipeline (runs at open time):
-#   1. Stack and row-normalize event histograms → X (n_events × n_bins)
+#   1. Stack and row-normalize event histograms → sparse X (n_events × n_bins)
 #   2. Drop always-zero bin features
-#   3. Standardise: zero mean, unit variance per feature
-#   4. PCA — top min(n_events-1, 20) components via randomised SVD
+#   3. Standardise: unit variance per feature; PCA centres implicitly
+#   4. PCA — top min(n_events-1, n_features-1, 20) components via ARPACK
 #
 # K-means runs on button click in PC1–3 score space.
 #
@@ -50,7 +50,7 @@ from PyQt6.QtWidgets import (
 )
 
 _N_COMPONENTS = 20   # max PCs to compute (scree up to this)
-_PCA_SVD_SOLVER = "randomized"
+_PCA_SVD_SOLVER = "arpack"   # the solver that accepts sparse input
 _PCA_SEED = 0
 
 # K-means is seeded so a re-run on the same data reproduces the same labels.
@@ -95,16 +95,20 @@ def _layout_driven(plot):
     return plot
 
 
-def _dense_row(H) -> np.ndarray:
-    """One event's grid (dense or sparse) as a flat float32 row."""
-    return (H.toarray() if sparse.issparse(H) else np.asarray(H)).ravel().astype(np.float32)
+def _sparse_rows(grids) -> sparse.csr_array:
+    """Event grids (dense or sparse) as one float32 sparse row per event."""
+    return sparse.vstack(
+        [sparse.csr_array(H, dtype=np.float32).reshape(1, -1) for H in grids],
+        format="csr",
+    )
 
 
-def _relative_frequency_rows(counts: np.ndarray) -> np.ndarray:
+def _relative_frequency_rows(counts) -> sparse.csr_array:
     """Convert raw per-trace bin counts to equal-weight PCA profiles."""
-    X = np.asarray(counts, dtype=np.float32)
-    totals = X.sum(axis=1, keepdims=True)
-    return np.divide(X, totals, out=np.zeros_like(X), where=totals > 0)
+    X = sparse.csr_array(counts, dtype=np.float32)
+    totals = np.asarray(X.sum(axis=1)).ravel()
+    inv = np.divide(1.0, totals, out=np.zeros_like(totals), where=totals > 0)
+    return sparse.csr_array(sparse.diags_array(inv.astype(np.float32)) @ X)
 
 
 class PCAWindow(QMainWindow):
@@ -188,9 +192,8 @@ class PCAWindow(QMainWindow):
         self._paths = list(histograms.keys())
         n = len(self._paths)
 
-        X_raw = np.stack(
-            [_dense_row(histograms[p]) for p in self._paths]
-        )                                           # (n, x_bins * f_bins)
+        X_raw = _sparse_rows(histograms[p] for p in self._paths)
+        # (n, x_bins * f_bins), sparse: most bins of every grid are zero
 
         # Display matrix for cluster visualisation — full 2DHs when a selection
         # window is active,
@@ -199,8 +202,8 @@ class PCAWindow(QMainWindow):
             sample = next(iter(display_histograms.values()))
             self._display_x_bins  = sample.shape[0]
             self._display_f_bins  = sample.shape[1]
-            self._X_display = np.stack(
-                [_dense_row(display_histograms[p]) for p in self._paths]
+            self._X_display = _sparse_rows(
+                display_histograms[p] for p in self._paths
             )
             self._display_x_range = display_x_range if display_x_range is not None else x_range
             self._display_f_range = display_f_range if display_f_range is not None else f_range
@@ -217,24 +220,30 @@ class PCAWindow(QMainWindow):
         X_profiles = _relative_frequency_rows(X_raw)
 
         # Drop bins that are zero in every sample
-        live         = X_raw.any(axis=0)
+        live         = np.asarray(X_raw.sum(axis=0)).ravel() > 0
         X            = X_profiles[:, live]
         self._live   = live
         n_features   = int(live.sum())
-
-        # ── Standardise (float32 throughout — avoids sklearn float64 promotion) ─
-        mean = X.mean(axis=0)
-        std  = X.std(axis=0)
-        std[std == 0] = 1.0
-        X_scaled = (X - mean) / std                 # float32
-
-        # ── PCA ───────────────────────────────────────────────────────────────
-        from sklearn.decomposition import PCA
         if n < 2:
             raise ValueError("PCA requires at least two event histograms.")
         if n_features == 0:
             raise ValueError("PCA feature space contains no non-zero bins.")
-        n_comp = min(n - 1, n_features, _N_COMPONENTS)
+        if n_features < 2:
+            raise ValueError("PCA requires at least two non-zero bins.")
+
+        # ── Standardise ──────────────────────────────────────────────────────
+        # Unit variance only: centring would fill in every zero. PCA centres
+        # implicitly, so the fit is the same as on (X - mean) / std.
+        from sklearn.utils.sparsefuncs import mean_variance_axis
+        _, var = mean_variance_axis(X, axis=0)
+        std = np.sqrt(var).astype(np.float32)
+        std[std == 0] = 1.0
+        X_scaled = sparse.csr_array(X @ sparse.diags_array(1.0 / std))
+
+        # ── PCA ───────────────────────────────────────────────────────────────
+        from sklearn.decomposition import PCA
+        # ARPACK needs n_components < min(n_samples, n_features).
+        n_comp = min(n - 1, n_features - 1, _N_COMPONENTS)
         pca    = PCA(
             n_components=n_comp,
             svd_solver=_PCA_SVD_SOLVER,
@@ -539,8 +548,7 @@ class PCAWindow(QMainWindow):
 
         for c in range(k):
             mask    = labels == c
-            hist    = (self._X_display[mask]
-                       .mean(axis=0)
+            hist    = (np.asarray(self._X_display[mask].mean(axis=0))
                        .reshape(self._display_x_bins, self._display_f_bins)
                        .astype(np.float32))
             display = np.sqrt(hist)
@@ -663,8 +671,7 @@ class PCAWindow(QMainWindow):
 
     def _open_total_popout(self) -> None:
         """Gaussian-ridge view of the total counts/trace 2DH."""
-        hist = (self._X_display
-                .mean(axis=0)
+        hist = (np.asarray(self._X_display.mean(axis=0))
                 .reshape(self._display_x_bins, self._display_f_bins)
                 .astype(np.float32))
         display = np.sqrt(hist)

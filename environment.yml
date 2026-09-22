@@ -70,7 +70,7 @@ dependencies:
       - scipy >=1.11
       - pyqtgraph >=0.13     # the ONLY plotting library — see CLAUDE.md §4's
                              # style entry; there is no matplotlib in the app
-      - scikit-learn >=1.3   # PCA, KMeans and GaussianMixture only; scipy
+      - scikit-learn >=1.4   # PCA, KMeans and GaussianMixture only; scipy
                              # covers everything else and the two do not overlap
       - igor2 >=0.5.6        # the .ibw reader — the only way curves get in
 
