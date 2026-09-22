@@ -53,7 +53,7 @@ from . import db as _db
 from . import quantities as _quant
 from . import style
 from . import variables as _vars
-from .qt_utils import fit_on_screen
+from .qt_utils import fit_on_screen, set_si_label
 
 # Three columns.  Wide enough that a histogram reads as a shape rather than a
 # smear, narrow enough that three fit inside test_window_sizing's laptop width.
@@ -139,7 +139,8 @@ class _CardWidget(QWidget):
         self._plot.setMouseEnabled(x=False, y=False)
         self._plot.getPlotItem().hideAxis("left")
         self._plot.getPlotItem().showAxis("bottom")
-        self._plot.setLabel("bottom", "", units=_quant.unit_of(card.key))
+        # Pinned: the bound spin boxes beside it cannot carry an SI prefix.
+        set_si_label(self._plot, "bottom", "", key=card.key, si=False)
         root.addWidget(self._plot)
         self._draw_histogram()
 
@@ -635,7 +636,7 @@ class CriteriaDialog(QMainWindow):
     def _open_detail(self, key: str, label: str) -> None:
         from .variable_window import VariableStatsWindow
         win = VariableStatsWindow(
-            key, label, self._event_paths, self._db_path, session_info=None,
+            key, self._event_paths, self._db_path, session_info=None,
             experimentalist=self._experimentalist)
         win.thresholds_changed.connect(self.refresh)
         win.thresholds_changed.connect(self.criteria_changed)

@@ -208,7 +208,7 @@ def test_a_queue_cell_holds_what_the_accessor_returned():
 # ── (g) the window plots them, with no mode to set ────────────────────────────
 
 def test_the_variable_window_plots_referenced_values_with_no_mode():
-    win = VariableStatsWindow("rupture_dx_nm", "Rupture from snap-off (nm)", PATHS, DB)
+    win = VariableStatsWindow("rupture_dx_nm", PATHS, DB)
     assert len(win._plot_vals) == 2          # FILE_C has no zero
     assert sorted(win._plot_vals.tolist()) == [5000.0, 5000.0]
     assert not hasattr(win, "_chk_relative")
@@ -218,5 +218,5 @@ def test_the_variable_window_plots_referenced_values_with_no_mode():
 
 
 def test_the_drift_variable_still_plots_raw_stage_positions():
-    win = VariableStatsWindow("snapoff_piezo_nm", "Snap-off, abs. piezo (nm)", PATHS, DB)
+    win = VariableStatsWindow("snapoff_piezo_nm", PATHS, DB)
     assert sorted(win._plot_vals.tolist()) == [1000.0, 4000.0]
