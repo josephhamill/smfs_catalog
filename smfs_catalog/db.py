@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Optional
 
 import numpy as np
+from scipy import sparse
 
 from .analysis_params import (
     ANALYSIS_PARAM_DEFAULTS,
@@ -1783,15 +1784,36 @@ def set_app_setting(
     conn.close()
 
 
+def _encode_event_histogram(histogram) -> bytes:
+    """uint32 nnz, then the non-zero bins' flat indices, then their counts."""
+    coo = sparse.coo_array(histogram)
+    flat = np.ravel_multi_index(coo.coords, coo.shape).astype(np.uint32)
+    counts = coo.data.astype(np.uint32)
+    return np.uint32(flat.size).tobytes() + flat.tobytes() + counts.tobytes()
+
+
+def _decode_event_histogram(blob: bytes, x_bins: int, f_bins: int) -> sparse.csr_array:
+    # A dense blob is 4·x·f bytes and a sparse one 4 + 8·nnz; x·f is even
+    # for every grid the dialog offers, so the two lengths never coincide.
+    if len(blob) == 4 * x_bins * f_bins:
+        return sparse.csr_array(
+            np.frombuffer(blob, dtype=np.uint32).reshape(x_bins, f_bins))
+    n = int(np.frombuffer(blob, dtype=np.uint32, count=1)[0])
+    flat = np.frombuffer(blob, dtype=np.uint32, count=n, offset=4)
+    counts = np.frombuffer(blob, dtype=np.uint32, count=n, offset=4 + 4 * n)
+    rows, cols = np.divmod(flat, f_bins)
+    return sparse.csr_array((counts, (rows, cols)), shape=(x_bins, f_bins))
+
+
 def write_event_histogram(
     file_id:     int,
-    histogram:   np.ndarray,
+    histogram,
     params_json: str,
     db_path:     str = DEFAULT_DB_PATH,
 ) -> None:
-    """Cache one event's raw uint32 2DH bin counts as a binary blob."""
+    """Cache one event's uint32 2DH bin counts (dense or sparse) as a sparse blob."""
     x_bins, f_bins = histogram.shape
-    blob = histogram.astype(np.uint32).tobytes()
+    blob = _encode_event_histogram(histogram)
     conn = get_connection(db_path)
     with conn:
         conn.execute("""
@@ -1811,7 +1833,7 @@ def write_event_histograms_bulk(
     rows = []
     for file_id, histogram, params_json in items:
         x_bins, f_bins = histogram.shape
-        blob = histogram.astype(np.uint32).tobytes()
+        blob = _encode_event_histogram(histogram)
         rows.append((file_id, blob, x_bins, f_bins, params_json, now))
     conn = get_connection(db_path)
     with conn:
@@ -1828,8 +1850,8 @@ def get_event_histogram(
     params_json: str,
     db_path:     str = DEFAULT_DB_PATH,
     conn:        Optional[sqlite3.Connection] = None,
-) -> Optional[np.ndarray]:
-    """Return cached histogram array, or None if not yet computed."""
+) -> Optional[sparse.csr_array]:
+    """Return the cached histogram, or None if not yet computed."""
     c = conn or get_connection(db_path)
     try:
         row = c.execute(
@@ -1842,9 +1864,32 @@ def get_event_histogram(
             c.close()
     if row is None:
         return None
-    return np.frombuffer(row["histogram"], dtype=np.uint32).reshape(
-        row["x_bins"], row["f_bins"]
-    ).copy()
+    return _decode_event_histogram(row["histogram"], row["x_bins"], row["f_bins"])
+
+
+def get_event_histograms_bulk(
+    file_ids:    list[int],
+    params_json: str,
+    db_path:     str = DEFAULT_DB_PATH,
+    conn:        Optional[sqlite3.Connection] = None,
+) -> dict[int, sparse.csr_array]:
+    """file_id → cached histogram, for those of `file_ids` that have one."""
+    out: dict[int, sparse.csr_array] = {}
+    c = conn or get_connection(db_path)
+    try:
+        for chunk in _sql_chunks(list(file_ids)):
+            ph = ",".join("?" * len(chunk))
+            for row in c.execute(
+                f"SELECT file_id, histogram, x_bins, f_bins FROM event_histograms "
+                f"WHERE params_json = ? AND file_id IN ({ph})",
+                (params_json, *chunk),
+            ):
+                out[row["file_id"]] = _decode_event_histogram(
+                    row["histogram"], row["x_bins"], row["f_bins"])
+    finally:
+        if conn is None:
+            c.close()
+    return out
 
 
 def write_deflection_histogram(
@@ -2070,6 +2115,32 @@ def get_latest_event_map(
         if conn is None:
             c.close()
     return row["payload_json"] if row is not None else None
+
+
+def get_latest_event_maps_bulk(
+    paths:   list[str],
+    db_path: str = DEFAULT_DB_PATH,
+    conn:    Optional[sqlite3.Connection] = None,
+) -> dict[str, tuple[int, str, str]]:
+    """Normalized path → (file_id, computed_at, payload_json) of the file's most
+    recent event_map document, as get_latest_event_map; paths with none are absent."""
+    keys = [normalize_path(p) for p in paths]
+    out: dict[str, tuple[int, str, str]] = {}
+    c = conn or get_connection(db_path)
+    try:
+        for chunk in _sql_chunks(keys):
+            ph = ",".join("?" * len(chunk))
+            for row in c.execute(
+                f"SELECT f.path, m.file_id, m.computed_at, m.payload_json "
+                f"FROM event_map m JOIN files f ON f.id = m.file_id "
+                f"WHERE f.path IN ({ph}) ORDER BY m.computed_at",
+                chunk,
+            ):
+                out[row["path"]] = (row["file_id"], row["computed_at"], row["payload_json"])
+    finally:
+        if conn is None:
+            c.close()
+    return out
 
 
 def get_latest_event_map_params(

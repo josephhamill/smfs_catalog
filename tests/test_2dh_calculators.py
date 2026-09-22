@@ -100,6 +100,17 @@ def test_counts_per_trace_is_unchanged_when_the_cohort_is_duplicated():
         _counts_per_trace(histograms + histograms), expected)
 
 
+def test_counts_per_trace_is_the_same_for_sparse_grids():
+    from scipy import sparse
+    histograms = [
+        np.array([[1, 2], [0, 1]], dtype=np.uint32),
+        np.array([[3, 0], [2, 1]], dtype=np.uint32),
+    ]
+    np.testing.assert_array_equal(
+        _counts_per_trace([sparse.csr_array(H) for H in histograms]),
+        np.stack(histograms).mean(axis=0, dtype=np.float64))
+
+
 def test_each_2dh_export_provenance_preserves_its_own_cohort_tally():
     def provenance(physical, kept, dropped):
         win = _TwoDHWindowBase.__new__(_TwoDHWindowBase)

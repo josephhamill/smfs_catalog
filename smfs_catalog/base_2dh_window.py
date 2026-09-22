@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
+from scipy import sparse
 from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtWidgets import (
     QApplication,
@@ -66,11 +67,13 @@ from .trace_overlay_panel import TraceOverlayPanel
 
 
 def _counts_per_trace(histograms) -> np.ndarray:
-    """Mean raw bin count over contributing traces."""
-    values = list(histograms)
+    """Mean raw bin count over contributing traces (dense or sparse grids)."""
+    values = [sparse.csr_array(H) for H in histograms]
     if not values:
         raise ValueError("counts/trace requires at least one histogram")
-    return np.stack(values).mean(axis=0, dtype=np.float64)
+    rows = sparse.vstack([H.reshape(1, -1) for H in values])
+    total = rows.sum(axis=0, dtype=np.float64)
+    return (np.asarray(total).reshape(values[0].shape) / len(values))
 
 _BINS_CHOICES = ["32", "64", "128", "256", "512"]
 
@@ -269,7 +272,10 @@ class _TwoDHWindowBase(QMainWindow):
         self._results          = prepass_results
         self._db_path          = db_path
         self._experimentalist     = experimentalist
-        self._event_histograms: dict[str, np.ndarray] = {}
+        self._event_histograms: dict[str, sparse.csr_array] = {}
+        # path → (event_map computed_at, chosen-segment fit) its held grid was
+        # built from; a sync reuses the grid only while both still match.
+        self._event_stamps: dict[str, tuple] = {}
         self._event_summary_win  = None
         # Describes the inputs and exclusions for the current histogram build.
         self._ledger = _ledger.Ledger("2DH build", [])
@@ -576,6 +582,7 @@ class _TwoDHWindowBase(QMainWindow):
 
     def _on_rebuild(self) -> None:
         self._event_histograms.clear()
+        self._event_stamps.clear()
         if self._event_summary_win is not None:
             self.sync_from_event_summary(self._event_summary_win)
         else:
@@ -613,6 +620,7 @@ class _TwoDHWindowBase(QMainWindow):
 
         if not valid_paths:
             self._event_histograms.clear()
+            self._event_stamps.clear()
             led.absorb(upstream)
             self._ledger = led
             self._rebuild_btn.setEnabled(True)
@@ -621,24 +629,41 @@ class _TwoDHWindowBase(QMainWindow):
 
         prog_dlg = CancelableProgress(self, "Building 2D histogram…", len(valid_paths))
 
-        # Landmark bulk query — eliminates per-curve DB round-trips for offset/
-        # invols/snap-off. The WLC fit itself is looked up per-curve below via
-        # _stored_segment_fit, which reads the chosen segment from event_map.
-        landmark_cached = _db.get_derived_results_bulk_latest(
-            valid_paths, ["snapoff_piezo_nm", "offset_retr", "invols_slope"], self._db_path
-        )
-
-        new_histograms: dict[str, np.ndarray] = {}
+        held, held_stamps = self._event_histograms, self._event_stamps
+        new_histograms: dict[str, sparse.csr_array] = {}
+        new_stamps: dict[str, tuple] = {}
         pending_writes: list = []   # (file_id, H, grid_key) — flushed in one transaction
         n = len(valid_paths)
 
         # Share one connection across the rebuild's repeated database reads.
         conn = _db.get_connection(self._db_path)
         try:
+            # Every per-curve read is done in bulk up front. A held grid is
+            # reused while its event_map document and chosen-segment fit are
+            # unchanged, so a live refresh reads grids only for new curves.
+            maps = _db.get_latest_event_maps_bulk(valid_paths, self._db_path, conn=conn)
+            file_ids, fits, stamps = {}, {}, {}
+            for path in valid_paths:
+                m = maps.get(_db.normalize_path(path))
+                if m is None:
+                    continue
+                file_ids[path] = m[0]
+                fits[path] = self._segment_fit_from_doc(m[0], m[2], conn=conn)
+                stamps[path] = (m[1], fits[path])
+            reusable = {p for p, s in stamps.items()
+                        if p in held and held_stamps.get(p) == s}
+            cached = _db.get_event_histograms_bulk(
+                [file_ids[p] for p in file_ids if p not in reusable],
+                self._grid_key, self._db_path, conn=conn)
+            # Offset/invols/snap-off, only for curves whose grid must be computed.
+            landmark_cached = _db.get_derived_results_bulk_latest(
+                [p for p in file_ids if p not in reusable and file_ids[p] not in cached],
+                ["snapoff_piezo_nm", "offset_retr", "invols_slope"], self._db_path)
+
             needs_fit = self._requires_wlc_fit()
             for i, path in enumerate(valid_paths):
                 key = _db.normalize_path(path)
-                fit = self._stored_segment_fit(path, conn=conn)
+                fit = fits.get(path)
                 if fit is None:
                     led.drop(path, "no_segment_chosen", f"segment: {self._align_segment}")
                     continue
@@ -653,20 +678,21 @@ class _TwoDHWindowBase(QMainWindow):
                              f"l_c={'ok' if l_c is not None else 'None'}")
                     continue
 
-                file_id = _db.get_file_id(path, self._db_path, conn=conn)
-                if file_id is None:
-                    led.drop(path, "not_in_catalog")
-                    continue
-
-                H = _db.get_event_histogram(file_id, self._grid_key, self._db_path, conn=conn)
+                file_id = file_ids[path]
+                if path in reusable:
+                    H = held[path]
+                else:
+                    H = cached.get(file_id)
                 if H is None:
                     ld = landmark_cached.get(key, {})
                     H = self._compute_from_curve(path, pre_fetched=ld, conn=conn)
                     if H is not None:
+                        H = sparse.csr_array(H)
                         pending_writes.append((file_id, H, self._grid_key))
 
                 if H is not None:
                     new_histograms[path] = H
+                    new_stamps[path] = stamps[path]
                 else:
                     led.drop(path, "no_histogram")
 
@@ -689,12 +715,13 @@ class _TwoDHWindowBase(QMainWindow):
         led.absorb(upstream)
         self._ledger = led
         self._event_histograms = new_histograms
+        self._event_stamps = new_stamps
         self._rebuild_btn.setEnabled(True)
         self._refresh()
 
     # ── Per-event histogram: DB-first, curve fallback ───────────────────────────
 
-    def _load_or_compute(self, file_path: str) -> np.ndarray | None:
+    def _load_or_compute(self, file_path: str) -> sparse.csr_array | None:
         file_id = _db.get_file_id(file_path, self._db_path)
         if file_id is None:
             return None
@@ -703,6 +730,7 @@ class _TwoDHWindowBase(QMainWindow):
             return H
         H = self._compute_from_curve(file_path)
         if H is not None:
+            H = sparse.csr_array(H)
             _db.write_event_histogram(file_id, H, self._grid_key, self._db_path)
         return H
 
@@ -792,9 +820,13 @@ class _TwoDHWindowBase(QMainWindow):
         fid = _db.get_file_id(file_path, self._db_path, conn=conn)
         if fid is None:
             return None
+        doc = _db.get_latest_event_map(fid, self._db_path, conn=conn)
+        return self._segment_fit_from_doc(fid, doc, conn=conn)
+
+    def _segment_fit_from_doc(self, fid: int, doc, conn=None):
+        """_stored_segment_fit for an event_map document already read."""
         from .roi_events import payload_to_events
         import json as _json
-        doc = _db.get_latest_event_map(fid, self._db_path, conn=conn)
         if doc is None:
             return None
         events = payload_to_events(_json.loads(doc) if isinstance(doc, str) else doc)

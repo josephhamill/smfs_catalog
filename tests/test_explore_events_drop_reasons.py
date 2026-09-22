@@ -464,6 +464,30 @@ def test_downstream_windows_take_the_population_and_apply_their_own_needs(
         w.close()
 
 
+def test_a_live_refresh_reuses_held_2dh_grids(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QApplication
+    from smfs_catalog import db as _db
+    from smfs_catalog.physical_2dh_window import Physical2DHWindow
+    _app = QApplication.instance() or QApplication([])
+    db, path = _catalog_with_one_curve(tmp_path)
+    win = EventSummaryWindow([{"path": path}], db)
+    monkeypatch.setattr(Physical2DHWindow, "_compute_from_curve",
+                        lambda self, *a, **k: np.ones((2, 2), dtype=np.uint32))
+    physical = Physical2DHWindow([{"path": path}], db, population="hit")
+    physical.sync_from_event_summary(win)
+
+    requested = []
+    real_bulk = _db.get_event_histograms_bulk
+    monkeypatch.setattr(_db, "get_event_histograms_bulk",
+                        lambda ids, *a, **k: requested.extend(ids) or real_bulk(ids, *a, **k))
+    physical.sync_from_event_summary(win)
+
+    assert list(physical._event_histograms) == [path]
+    assert requested == []
+    for w in (physical, win):
+        w.close()
+
+
 def test_fit_x_uses_exactly_the_plotted_curves(tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QApplication
     _app = QApplication.instance() or QApplication([])
