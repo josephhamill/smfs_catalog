@@ -297,6 +297,15 @@ def units_for(keys) -> dict[str, str]:
 
 # ── Formatting text ───────────────────────────────────────────────────────────
 
+def with_unit(name: str, unit: str) -> str:
+    """`name (unit)`, or the name alone for a unitless quantity.
+
+    The one place a name and a unit are joined into text. Names carry no unit
+    of their own, so this is also what keeps a unit from being shown twice.
+    """
+    return f"{name} ({unit})" if unit else name
+
+
 def format_value(key: str, value, *, with_unit: bool = False) -> str:
     """Render a stored value as text, at its quantity's declared precision.
 

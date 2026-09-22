@@ -65,11 +65,6 @@ _CUTOFF_VALUES: list[int] = [100, 200, 500, 1000, 1500, 2000, 3000, 4000, 5000]
 _THRESH_KEYS = ("detection_threshold_appr", "detection_threshold_retr")
 
 
-def _thresh_unit() -> str:
-    """The unit these thresholds are SHOWN in — the boxes and the axis agree."""
-    return _quant.get(_THRESH_KEYS[0]).shown_unit
-
-
 def _to_shown(stored: float) -> float:
     return _quant.get(_THRESH_KEYS[0]).to_display(stored)
 
@@ -90,8 +85,7 @@ def _seed_threshold_box(spin, key: str, stored_nm2: float) -> None:
     without changing it through display rounding.
     """
     shown = _to_shown(stored_nm2)
-    _quant.configure_spinbox(spin, key, decimals=_quant.decimals_for(key, shown),
-                             suffix=False)
+    _quant.configure_spinbox(spin, key, decimals=_quant.decimals_for(key, shown))
     spin.blockSignals(True)
     spin.setValue(shown)
     spin.blockSignals(False)
@@ -247,7 +241,7 @@ class DecompositionWindow(QWidget):
 
         self._trim_spinbox = QSpinBox()
         self._trim_spinbox.setRange(0, 9999)   # upper bound set dynamically per curve
-        _quant.configure_spinbox(self._trim_spinbox, "turnaround_trim_pts", suffix=False)
+        _quant.configure_spinbox(self._trim_spinbox, "turnaround_trim_pts")
         self._trim_spinbox.setValue(self._trim_pts)
         self._trim_spinbox.setToolTip(
             "Samples skipped either side of the piezo turnaround before contact "
@@ -256,11 +250,11 @@ class DecompositionWindow(QWidget):
             "real snap-off. Raise this if snap-off is being found right at the "
             "turnaround.")
         self._trim_spinbox.valueChanged.connect(self._on_trim_spinbox)
-        ctrl_layout.addWidget(LabeledControl("Trim pts:", self._trim_spinbox))
+        ctrl_layout.addWidget(LabeledControl("Trim:", self._trim_spinbox))
 
         self._var_win_spinbox = QDoubleSpinBox()
         self._var_win_spinbox.setRange(0.1, 50.0)
-        _quant.configure_spinbox(self._var_win_spinbox, "var_window_ms", suffix=False)
+        _quant.configure_spinbox(self._var_win_spinbox, "var_window_ms")
         self._var_win_spinbox.setValue(self._var_window_ms)
         self._var_win_spinbox.setToolTip(
             "Length of the moving-variance window that finds contact and "
@@ -271,7 +265,7 @@ class DecompositionWindow(QWidget):
             "checking on your own curves rather than assuming.")
         self._var_win_spinbox.valueChanged.connect(self._on_var_win_spinbox)
         ctrl_layout.addWidget(
-            LabeledControl("Var. win (ms):", self._var_win_spinbox))
+            LabeledControl("Var. win:", self._var_win_spinbox))
 
         self._thresh_appr_spinbox = QDoubleSpinBox()
         self._thresh_appr_spinbox.setRange(_to_shown(1e-4), _to_shown(1e3))
@@ -289,7 +283,7 @@ class DecompositionWindow(QWidget):
             "either way the box and the stored value are the same number.")
         self._thresh_appr_spinbox.valueChanged.connect(self._on_thresh_appr_spinbox)
         ctrl_layout.addWidget(LabeledControl(
-            f"Thr. appr ({_thresh_unit()}):", self._thresh_appr_spinbox))
+            "Thr. appr:", self._thresh_appr_spinbox))
 
         self._thresh_retr_spinbox = QDoubleSpinBox()
         self._thresh_retr_spinbox.setRange(_to_shown(1e-4), _to_shown(1e3))
@@ -304,11 +298,11 @@ class DecompositionWindow(QWidget):
             "numbers than anything else in this window.")
         self._thresh_retr_spinbox.valueChanged.connect(self._on_thresh_retr_spinbox)
         ctrl_layout.addWidget(LabeledControl(
-            f"Thr. retr ({_thresh_unit()}):", self._thresh_retr_spinbox))
+            "Thr. retr:", self._thresh_retr_spinbox))
 
         self._anchor_spinbox = QSpinBox()
         self._anchor_spinbox.setRange(10, 2000)
-        _quant.configure_spinbox(self._anchor_spinbox, "baseline_anchor_nm", suffix=False)
+        _quant.configure_spinbox(self._anchor_spinbox, "baseline_anchor_nm")
         self._anchor_spinbox.setValue(int(round(self._anchor_nm)))
         self._anchor_spinbox.setToolTip(
             "Width of the far-retract region used to characterize the "
@@ -327,11 +321,11 @@ class DecompositionWindow(QWidget):
         self._baseline_label.setStyleSheet(f"color: {_COLOR_MUTED};")
         self._baseline_label.setMinimumWidth(170)
         ctrl_layout.addWidget(LabeledControl(
-            "Baseline width (nm):", self._anchor_spinbox, self._baseline_label))
+            "Baseline width:", self._anchor_spinbox, self._baseline_label))
 
         self._invols_offset_spinbox = QSpinBox()
         self._invols_offset_spinbox.setRange(0, 9999)
-        _quant.configure_spinbox(self._invols_offset_spinbox, "invols_offset_pts", suffix=False)
+        _quant.configure_spinbox(self._invols_offset_spinbox, "invols_offset_pts")
         self._invols_offset_spinbox.setValue(self._invols_offset_pts)
         self._invols_offset_spinbox.setToolTip(
             "Samples skipped back from the turnaround before the invOLS fit "
@@ -340,11 +334,11 @@ class DecompositionWindow(QWidget):
             "that converts deflection into force.")
         self._invols_offset_spinbox.valueChanged.connect(self._on_invols_offset_spinbox)
         ctrl_layout.addWidget(LabeledControl(
-            "invOLS off (pts):", self._invols_offset_spinbox))
+            "invOLS off:", self._invols_offset_spinbox))
 
         self._invols_window_spinbox = QSpinBox()
         self._invols_window_spinbox.setRange(10, 9999)
-        _quant.configure_spinbox(self._invols_window_spinbox, "invols_window_pts", suffix=False)
+        _quant.configure_spinbox(self._invols_window_spinbox, "invols_window_pts")
         self._invols_window_spinbox.setValue(self._invols_window_pts)
         self._invols_window_spinbox.setToolTip(
             "Number of samples in the invOLS straight-line fit, counted back "
@@ -361,7 +355,7 @@ class DecompositionWindow(QWidget):
         self._invols_label.setStyleSheet(f"color: {_COLOR_MUTED};")
         self._invols_label.setMinimumWidth(170)
         ctrl_layout.addWidget(LabeledControl(
-            "invOLS win (pts):", self._invols_window_spinbox,
+            "invOLS win:", self._invols_window_spinbox,
             self._invols_label))
 
         ctrl_layout.addWidget(SampleMarksToggle())

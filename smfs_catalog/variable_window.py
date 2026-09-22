@@ -117,7 +117,6 @@ class VariableStatsWindow(QMainWindow):
     def __init__(
         self,
         variable_key: str,
-        label:        str,
         paths:        list[str],
         db_path:      str,
         session_info: dict | None = None,
@@ -126,7 +125,7 @@ class VariableStatsWindow(QMainWindow):
         super().__init__()
         self.setWindowFlag(Qt.WindowType.Window)
         self._variable_key = variable_key
-        self._label        = label
+        self._label        = _vars.label(variable_key)
         self._db_path      = db_path
         # Thresholds are per-experimentalist. Because `paths` can span owners,
         # resolve whose bounds Apply will write and state that owner in the UI.
@@ -137,7 +136,7 @@ class VariableStatsWindow(QMainWindow):
         )
         self._owner_label = (self._experimentalist
                              or "shared default — mixed/unknown owners")
-        self.setWindowTitle(f"SMFS — variable — {label}")
+        self.setWindowTitle(f"SMFS — variable — {self._label}")
         fit_on_screen(self, 1100, 600)
         # Per-plotted-point state — one entry per scatter point (≡ one file with
         # both a value and a timestamp).  Index space is shared by the timeseries
@@ -266,7 +265,7 @@ class VariableStatsWindow(QMainWindow):
         # being baked into `label` by the caller.  si=False: the two bound
         # lines on this axis are dragged and typed into the bounds spin
         # boxes, which show plain units and cannot carry an SI prefix.
-        set_si_label(self._drift, "left", style.mathify(label),
+        set_si_label(self._drift, "left", style.mathify(self._label),
                      key=variable_key, si=False)
         self._drift.setLabel("bottom", "Acquisition time")   # no math to typeset
         self._drift.showGrid(x=True, y=True, alpha=0.2)
@@ -504,7 +503,7 @@ class VariableStatsWindow(QMainWindow):
             )
             return
         self._lo, self._hi = lo, hi
-        _db.set_threshold(self._variable_key, self._lo, self._hi, self._label,
+        _db.set_threshold(self._variable_key, self._lo, self._hi, "",
                           self._experimentalist, self._db_path)
         self._refresh_applied_label()
         self._render()

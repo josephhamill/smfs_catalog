@@ -197,6 +197,8 @@ class _ModelPane(QWidget):
         x_variable:   str,
         y_variable:   str,
         db_path:      str,
+        x_unit:       str = "",
+        y_unit:       str = "",
         parent        = None,
         paths:        list[str] | None = None,
         caption:      str = "",
@@ -206,6 +208,7 @@ class _ModelPane(QWidget):
         self._xy          = xy
         self._x_variable  = x_variable
         self._y_variable  = y_variable
+        self._x_unit, self._y_unit = x_unit, y_unit
         self._db_path     = db_path
         self._paths       = list(paths) if paths else []
         self._caption     = caption
@@ -259,8 +262,9 @@ class _ModelPane(QWidget):
 
         self._params_tbl = QTableWidget(0, 7)
         self._params_tbl.setHorizontalHeaderLabels(
-            ["Component", "Weight", "μ_x  (nm)", "μ_y  (pN)",
-             "σ_x  (nm)", "σ_y  (pN)", "ρ"]
+            ["Component", "Weight",
+             _quant.with_unit("μ_x", x_unit), _quant.with_unit("μ_y", y_unit),
+             _quant.with_unit("σ_x", x_unit), _quant.with_unit("σ_y", y_unit), "ρ"]
         )
         self._params_tbl.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
@@ -727,6 +731,8 @@ class GmmFitWindow(QMainWindow):
             self._X_VARIABLE,
             self._Y_VARIABLE,
             db_path,
+            x_unit=self._X_UNIT,
+            y_unit=self._Y_UNIT,
             paths=self._paths,
             caption=caption,
         )

@@ -58,12 +58,13 @@ class Criterion:
     key:   str
     lower: "float | None"
     upper: "float | None"
-    label: str = ""
 
     @property
     def name(self) -> str:
-        """What to call this criterion on screen."""
-        return self.label or self.key
+        """What to call this criterion on screen: the variable's own name."""
+        from . import variables as _vars
+
+        return _vars.label(self.key)
 
     def text(self) -> str:
         """The criterion as a sentence — `WLC R² ≥ 0.95`.
@@ -196,8 +197,7 @@ def gate(
     """
     owner = experimentalist or active_owner(db_path)
     criteria = tuple(
-        Criterion(row["analysis_type"], row["lower_bound"], row["upper_bound"],
-                  row["label"] or "")
+        Criterion(row["analysis_type"], row["lower_bound"], row["upper_bound"])
         for row in _db.get_thresholds(owner, db_path)
         if row["lower_bound"] is not None or row["upper_bound"] is not None
     )

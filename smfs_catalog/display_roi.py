@@ -222,10 +222,10 @@ class ROIWindow(QWidget):
 
         self._spin_window = QSpinBox()
         self._spin_window.setRange(11, 501)
-        _quant.configure_spinbox(self._spin_window, "roi_window_pts", suffix=False)
+        _quant.configure_spinbox(self._spin_window, "roi_window_pts")
         self._spin_window.setValue(self._window_pts)
         self._spin_window.editingFinished.connect(self._commit_window)
-        ctrl.addWidget(LabeledControl("Window (pts):", self._spin_window))
+        ctrl.addWidget(LabeledControl("Window:", self._spin_window))
 
         self._spin_threshold = QDoubleSpinBox()
         # No policy ceiling on a detection threshold: mathematical necessity is
@@ -234,26 +234,26 @@ class ROIWindow(QWidget):
         # nothing on screen saying why.  +-1e6 is a spin-box necessity (a
         # QDoubleSpinBox must have SOME range), not a claim about the science.
         self._spin_threshold.setRange(-1e6, 1e6)
-        _quant.configure_spinbox(self._spin_threshold, "roi_threshold_nm_per_nm", suffix=False)
+        _quant.configure_spinbox(self._spin_threshold, "roi_threshold_nm_per_nm")
         self._spin_threshold.setValue(self._threshold_nm_per_nm)
         self._spin_threshold.setMinimumWidth(88)
         self._spin_threshold.editingFinished.connect(self._commit_threshold)
-        ctrl.addWidget(LabeledControl("d¹ outer thr (nm/nm):", self._spin_threshold))
+        ctrl.addWidget(LabeledControl("d¹ outer thr:", self._spin_threshold))
 
         self._spin_mask = QDoubleSpinBox()
         self._spin_mask.setRange(0.0, 2000.0)
-        _quant.configure_spinbox(self._spin_mask, "roi_post_snapoff_mask_nm", suffix=False)
+        _quant.configure_spinbox(self._spin_mask, "roi_post_snapoff_mask_nm")
         self._spin_mask.setValue(self._post_snapoff_mask_nm)
         self._spin_mask.editingFinished.connect(self._commit_mask)
-        ctrl.addWidget(LabeledControl("Post-snap mask (nm):", self._spin_mask))
+        ctrl.addWidget(LabeledControl("Post-snap mask:", self._spin_mask))
 
         self._spin_onset = QDoubleSpinBox()
         self._spin_onset.setRange(-1e6, 1e6)
-        _quant.configure_spinbox(self._spin_onset, "roi_onset_threshold_nm", suffix=False)
+        _quant.configure_spinbox(self._spin_onset, "roi_onset_threshold_nm")
         self._spin_onset.setValue(self._onset_threshold_nm)
         self._spin_onset.setMinimumWidth(88)
         self._spin_onset.editingFinished.connect(self._commit_onset)
-        ctrl.addWidget(LabeledControl("Onset threshold (nm):", self._spin_onset))
+        ctrl.addWidget(LabeledControl("Onset threshold:", self._spin_onset))
 
         _ctrl_bar = QWidget()
         _ctrl_bar.setLayout(ctrl)
@@ -267,7 +267,7 @@ class ROIWindow(QWidget):
 
         self._spin_inner = QDoubleSpinBox()
         self._spin_inner.setRange(-1e6, 1e6)
-        _quant.configure_spinbox(self._spin_inner, "roi_inner_threshold_nm_per_nm", suffix=False)
+        _quant.configure_spinbox(self._spin_inner, "roi_inner_threshold_nm_per_nm")
         self._spin_inner.setValue(self._inner_threshold_nm_per_nm)
         self._spin_inner.setMinimumWidth(88)
         self._spin_inner.setToolTip("Smaller d¹ threshold for inner sub-events; "
@@ -287,17 +287,17 @@ class ROIWindow(QWidget):
 
         self._spin_prom = QDoubleSpinBox()
         self._spin_prom.setRange(0.0, 10.0)
-        _quant.configure_spinbox(self._spin_prom, "roi_prominence", suffix=False)
+        _quant.configure_spinbox(self._spin_prom, "roi_prominence")
         self._spin_prom.setValue(self._prominence)
         self._spin_prom.editingFinished.connect(self._commit_prominence)
         ctrl2.addWidget(LabeledControl("Prominence:", self._spin_prom))
 
         self._spin_dist = QSpinBox()
         self._spin_dist.setRange(1, 2000)
-        _quant.configure_spinbox(self._spin_dist, "roi_min_distance_pts", suffix=False)
+        _quant.configure_spinbox(self._spin_dist, "roi_min_distance_pts")
         self._spin_dist.setValue(self._distance_pts)
         self._spin_dist.editingFinished.connect(self._commit_distance)
-        ctrl2.addWidget(LabeledControl("Min dist (pts):", self._spin_dist))
+        ctrl2.addWidget(LabeledControl("Min dist:", self._spin_dist))
 
         # Word-wrapped: this carries runtime text ("detector: threshold | no
         # ROI found"), and an unwrapped label reports a minimum width equal to

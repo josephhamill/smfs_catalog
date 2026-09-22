@@ -147,7 +147,7 @@ class VariableCombo(QComboBox):
     def __init__(self, variables, default_key: str, parent=None) -> None:
         super().__init__(parent)
         for i, v in enumerate(variables):
-            self.addItem(v.label, v.key)
+            self.addItem(v.labelled, v.key)
             # Per-ITEM hover, so the description is readable while choosing
             # rather than only after committing to an axis.
             if v.description:

@@ -90,15 +90,15 @@ _DB_COLUMNS: list[tuple[str, str]] = [
     ("microscope_model",      "Model"),
     ("cantilever",            "Cantilever"),
     ("technique",             "Technique"),
-    ("spring_constant_pn_nm", "k (pN/nm)"),
-    ("velocity_nm_s",         "Vel (nm/s)"),
-    ("force_dist_nm",         "Force dist (nm)"),
-    ("trigger_point_nn",      "Trigger"),
-    ("inv_ols_nm_v",          "InvOLS (nm/V)"),
-    ("sample_rate_hz",        "Sample (Hz)"),
-    ("force_filter_bw_hz",    "Acq filter (Hz)"),
-    ("xpos_um",               "X (µm)"),
-    ("ypos_um",               "Y (µm)"),
+    ("spring_constant_pn_nm", _vars.labelled("spring_constant_pn_nm")),
+    ("velocity_nm_s",         _vars.labelled("velocity_nm_s")),
+    ("force_dist_nm",         _vars.labelled("force_dist_nm")),
+    ("trigger_point_nn",      _vars.labelled("trigger_point_nn")),
+    ("inv_ols_nm_v",          _vars.labelled("inv_ols_nm_v")),
+    ("sample_rate_hz",        _vars.labelled("sample_rate_hz")),
+    ("force_filter_bw_hz",    _vars.labelled("force_filter_bw_hz")),
+    ("xpos_um",               _vars.labelled("xpos_um")),
+    ("ypos_um",               _vars.labelled("ypos_um")),
     ("size_bytes",            "Size"),
     ("modified_at",           "Modified"),
     ("first_seen",            "First seen"),
@@ -109,11 +109,8 @@ _DB_COLUMNS: list[tuple[str, str]] = [
     ("indent_mode",           "Indent"),
 ]
 
-# The queue's derived columns, in display order.  KEYS ONLY: the label comes
-# from variables.label, which is the one register the scatter and the
-# variable window already ask.  This list used to carry its own labels and six
-# of them had drifted from it — seg_dX_ext_nm was "Ext ΔX (nm)" here and
-# "Rupture separation (nm)" in the scatter, one number under two names.
+# The queue's derived columns, in display order.  KEYS ONLY: names and units
+# come from variables.py and quantities.py, like every other column header.
 _QUEUE_DERIVED_KEYS = (
     "snapoff_piezo_nm",
     "contact_dx_nm",
@@ -143,7 +140,7 @@ _QUEUE_DERIVED_KEYS = (
     "seg_dX_ext_nm",
 )
 
-_QUEUE_DERIVED = [(k, _vars.label(k)) for k in _QUEUE_DERIVED_KEYS]
+_QUEUE_DERIVED = [(k, _vars.labelled(k)) for k in _QUEUE_DERIVED_KEYS]
 
 
 _ETA_COST_SAMPLES = 200
@@ -223,14 +220,15 @@ _QUEUE_DERIVED_ORDER = _QUEUE_BASE_KEYS
 
 
 def _prettify_key(key: str) -> str:
-    """The register's name for a column, or a readable form of the raw key.
+    """The register's `Name (unit)` for a column, or a readable form of the raw key.
 
     An analysis_type present in the queue but not in the register still gets a
     column (see _compute_queue_derived_cols); variables.label hands such a key
-    straight back, and the underscore swap is what it used to be shown as.
+    straight back, and it is shown with its underscores as spaces.
     """
-    lbl = _vars.label(key)
-    return key.replace("_", " ") if lbl == key else lbl
+    if _vars.label(key) == key:
+        return key.replace("_", " ")
+    return _vars.labelled(key)
 
 
 class FilesTableModel(QAbstractTableModel):
@@ -1983,11 +1981,11 @@ class DashboardWindow(QMainWindow):
         di = section - base
         if not (0 <= di < len(self._queue_derived_cols)):
             return
-        key, label = self._queue_derived_cols[di]
+        key, _label = self._queue_derived_cols[di]
         paths = [r["path"] for r in rows]
 
         from .variable_window import VariableStatsWindow
-        win = VariableStatsWindow(key, label, paths, self._db_path, session_info=None)
+        win = VariableStatsWindow(key, paths, self._db_path, session_info=None)
         win.view_file_requested.connect(self._open_raw_viewer)
         win.thresholds_changed.connect(self._on_criteria_changed)
         self._spawn(win)

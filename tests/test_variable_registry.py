@@ -120,21 +120,14 @@ def test_the_dashboard_and_the_registry_share_one_exclusion_object():
 
 
 def test_a_key_is_shown_under_exactly_one_name():
-    """The queue header and the scatter dropdown must not name a key twice.
-
-    They did, for six of twenty-one keys: seg_dX_ext_nm was "Ext ΔX (nm)" in
-    the queue and "Rupture separation (nm)" in the scatter — one number, two
-    names, on two screens, with nothing to say they were the same number.  The
-    fork was a second hand-written label list in dashboard_window; this asserts
-    it is gone rather than merely agreeing today, which is the state it was
-    already in before it drifted.
-    """
+    """The queue header and the scatter dropdown name a key the same way:
+    both are the registry's `Name (unit)`."""
     pytest.importorskip("PyQt6.QtWidgets")
     from smfs_catalog import dashboard_window as _dash
     divergent = {
-        key: (label, _vars.label(key))
+        key: (label, _vars.labelled(key))
         for key, label in _dash._QUEUE_DERIVED
-        if label != _vars.label(key)
+        if label != _vars.labelled(key)
     }
     assert not divergent, (
         "queue header != registry label for:\n  "
@@ -296,3 +289,38 @@ def test_the_gate_still_produces_the_same_hit_split():
     assert _db.normalize_path(FULL) in hits           # 1.25, in bounds
     assert _db.normalize_path(SPARSE) in non_hits     # 2.5, out of bounds
     assert _db.normalize_path(BARE) in non_hits       # missing -> non-hit
+
+
+def test_no_registered_name_carries_a_unit():
+    """Units live in quantities.py; a name that spells one out shows it twice
+    wherever the unit is added from the registry."""
+    names = {**_vars._FILE_COLUMNS, **_vars._ANALYSIS_LABELS, **_vars._SEG_LABELS}
+    with_unit = {k: n for k, n in names.items() if "(" in n}
+    assert not with_unit, f"names carrying a unit — drop it, quantities.py owns it: {with_unit}"
+
+
+def test_labelled_joins_the_name_and_the_registered_unit():
+    assert _vars.labelled("seg_force_pN") == "Seg Force (pN)"
+    assert _vars.labelled("seg_x_rupture_nm") == "Seg rupture extension (nm)"
+    # A count has no unit, so it is the name alone — never "ROI Segments ()".
+    assert _vars.labelled("seg_n_segments") == "ROI Segments"
+
+
+def test_an_axis_shows_its_unit_exactly_once():
+    """Built the way the Explore Events scatter builds its axes."""
+    pytest.importorskip("PyQt6.QtWidgets")
+    import sys
+    import pyqtgraph as pg
+    from PyQt6.QtWidgets import QApplication
+    from smfs_catalog import style
+    from smfs_catalog.qt_utils import set_si_label
+
+    _app = QApplication.instance() or QApplication(sys.argv)
+    plot = pg.PlotWidget()
+    try:
+        for key, unit in (("seg_x_rupture_nm", "nm"), ("seg_force_pN", "pN")):
+            set_si_label(plot, "bottom", style.mathify(_vars.label(key)), key=key, si=False)
+            text = plot.getAxis("bottom").labelString()
+            assert text.count(f"({unit})") == 1, text
+    finally:
+        plot.deleteLater()

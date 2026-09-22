@@ -45,6 +45,11 @@ class Variable:
         return _quant.unit_of(self.key)
 
     @property
+    def labelled(self) -> str:
+        """`Name (unit)` — see labelled() below."""
+        return labelled(self.key)
+
+    @property
     def description(self) -> str:
         """
         What this variable means — see DESCRIPTIONS below.
@@ -67,15 +72,15 @@ TIME_KEY = "measured_at_ts"
 # File columns that plausibly explain a measurement and belong on an axis.
 _FILE_COLUMNS: dict[str, str] = {
     TIME_KEY:                "Acquisition time",
-    "spring_constant_pn_nm": "Spring constant (pN/nm)",
-    "velocity_nm_s":         "Pulling velocity (nm/s)",
-    "force_dist_nm":         "Force distance (nm)",
-    "trigger_point_nn":      "Trigger point (nN)",
-    "sample_rate_hz":        "Sample rate (Hz)",
-    "force_filter_bw_hz":    "Acquisition filter BW (Hz)",
-    "inv_ols_nm_v":          "InvOLS (nm/V)",
-    "xpos_um":               "Stage X (µm)",
-    "ypos_um":               "Stage Y (µm)",
+    "spring_constant_pn_nm": "Spring constant",
+    "velocity_nm_s":         "Pulling velocity",
+    "force_dist_nm":         "Force distance",
+    "trigger_point_nn":      "Trigger point",
+    "sample_rate_hz":        "Sample rate",
+    "force_filter_bw_hz":    "Acquisition filter BW",
+    "inv_ols_nm_v":          "Instrument InvOLS",
+    "xpos_um":               "Stage X",
+    "ypos_um":               "Stage Y",
 }
 
 # ── The piezo landmarks are measured FROM snap-off, not from the stage ───────
@@ -95,40 +100,38 @@ REFERENCED: dict[str, tuple[str, str]] = {
 
 # Known display labels; unknown analysis keys fall back to their key.
 _ANALYSIS_LABELS: dict[str, str] = {
-    "snapoff_piezo_nm": "Snap-off, abs. piezo (nm)",
-    "contact_dx_nm":    "Contact→snap-off (nm)",
-    "onset_dx_nm":      "Onset from snap-off (nm)",
-    "rupture_dx_nm":    "Rupture from snap-off (nm)",
+    "snapoff_piezo_nm": "Snap-off, abs. piezo",
+    "contact_dx_nm":    "Contact→snap-off",
+    "onset_dx_nm":      "Onset from snap-off",
+    "rupture_dx_nm":    "Rupture from snap-off",
     "offset_retr":      "Offset",
     "flatness_slope":   "Flatness",
-    "baseline_rms":     "Baseline RMS (nm)",
+    "baseline_rms":     "Baseline RMS",
     "invols_slope":     "InvOLS",
-    "invols_rms":       "InvOLS RMS (nm)",
+    "invols_rms":       "InvOLS RMS",
 }
 
-# THE label for each key — one name, wherever it is shown.  The dashboard's
-# queue headers come from here too (see label() below); it used to keep a
-# second hand-written list, and six of twenty-one keys had drifted apart on it.
+# THE name for each key, wherever it is shown, without its unit (see label()).
 #
 # "ΔX" is deliberately absent: roi_events uses it for the PIEZO separation
 # (ROI.dX_pairs, "the raw stage displacement"), so labelling an extension-axis
 # quantity with it names the wrong coordinate.
 _SEG_LABELS: dict[str, str] = {
     "seg_n_segments":  "ROI Segments",
-    "seg_force_pN":    "Seg Force (pN)",
-    "seg_x_rupture_nm":  "Seg rupture extension (nm)",
-    "seg_x_junction_nm": "Seg junction extension (nm)",
-    "seg_l_p_nm":      "Seg l_p (nm)",
-    "seg_l_p_err":     "Seg l_p err (nm)",
-    "seg_l_c_nm":      "Seg l_c (nm)",
-    "seg_l_c_err":     "Seg l_c err (nm)",
-    "seg_tau":         "Seg τ (samples)",
+    "seg_force_pN":    "Seg Force",
+    "seg_x_rupture_nm":  "Seg rupture extension",
+    "seg_x_junction_nm": "Seg junction extension",
+    "seg_l_p_nm":      "Seg l_p",
+    "seg_l_p_err":     "Seg l_p err",
+    "seg_l_c_nm":      "Seg l_c",
+    "seg_l_c_err":     "Seg l_c err",
+    "seg_tau":         "Seg τ",
     "seg_z_max":       "Seg z_max",
-    "seg_x_max_nm":    "Seg x_max (nm)",
+    "seg_x_max_nm":    "Seg x_max",
     "seg_edge_pinned": "Seg edge-pinned",
-    "seg_dF_pN":       "ΔF ult−pen (pN)",
-    "seg_dX_iso_nm":   "Reload distance (nm)",
-    "seg_dX_ext_nm":   "Rupture separation (nm)",
+    "seg_dF_pN":       "ΔF ult−pen",
+    "seg_dX_iso_nm":   "Reload distance",
+    "seg_dX_ext_nm":   "Rupture separation",
 }
 
 
@@ -252,14 +255,16 @@ def label(key: str) -> str:
     """The name this key is shown under — asked of the register, never spelled
     out a second time by a consumer.
 
-    The dashboard used to keep its own (key, label) list for the queue headers.
-    Six of twenty-one keys had drifted: seg_dX_ext_nm read "Ext ΔX (nm)" in the
-    queue and "Rupture separation (nm)" in the scatter — the same number under
-    two names on two screens, with nothing to say they were the same number.
-    Two lists that merely agree today are the fork; asking one register is the
-    only version that cannot come apart.
+    A name carries no unit; quantities.py owns units. Beside an axis the axis
+    adds the unit. Anywhere else, use labelled().
     """
     return _label(key)
+
+
+def labelled(key: str) -> str:
+    """`Name (unit)`, for text with no axis beside it to carry the unit:
+    dropdowns, column headers, table headings."""
+    return _quant.with_unit(_label(key), _quant.get(key).shown_unit)
 
 
 def provenance_key(key: str) -> str:

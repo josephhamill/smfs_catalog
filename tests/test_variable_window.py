@@ -19,7 +19,7 @@ def test_empty_scope_still_loads_effective_thresholds(tmp_path):
     db.set_threshold("metric", 1.25, 4.75, "Metric", "owner", db_path)
 
     win = VariableStatsWindow(
-        "metric", "Metric", [], db_path, experimentalist="owner"
+        "metric", [], db_path, experimentalist="owner"
     )
     try:
         assert win._lo == 1.25
@@ -43,7 +43,7 @@ def test_apply_rejects_reversed_bounds_without_writing(tmp_path, monkeypatch):
     )
 
     win = VariableStatsWindow(
-        "metric", "Metric", [], db_path, experimentalist="owner"
+        "metric", [], db_path, experimentalist="owner"
     )
     try:
         win._spin_lo.setValue(9.0)
@@ -84,7 +84,7 @@ def test_missing_values_remain_in_scope_but_not_in_finite_or_plot_arrays(
     )
 
     win = VariableStatsWindow(
-        "metric", "Metric", paths, db_path, experimentalist="owner"
+        "metric", paths, db_path, experimentalist="owner"
     )
     try:
         assert win._raw_paths == paths
@@ -118,7 +118,7 @@ def test_a_dragged_bound_snaps_to_what_the_quantity_can_hold(tmp_path):
     """
     db_path = str(tmp_path / "vw.db")
     db.initialise(db_path)
-    win = VariableStatsWindow("seg_n_segments", "ROI Segments", [], db_path,
+    win = VariableStatsWindow("seg_n_segments", [], db_path,
                               session_info=None)
     try:
         win._chk_hi.setChecked(True)
@@ -139,7 +139,7 @@ def test_a_continuous_bound_snaps_to_its_own_precision(tmp_path):
     """Same rule, finer grid: snapping is the quantity's precision, not 1.0."""
     db_path = str(tmp_path / "vw.db")
     db.initialise(db_path)
-    win = VariableStatsWindow("seg_force_pN", "Force", [], db_path,
+    win = VariableStatsWindow("seg_force_pN", [], db_path,
                               session_info=None)
     try:
         win._chk_hi.setChecked(True)
