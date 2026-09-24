@@ -120,6 +120,9 @@ _SEGMENT_FIT_KEYS = frozenset({
     "seg_l_p_nm", "seg_l_c_nm", "seg_l_p_err", "seg_l_c_err",
     "seg_force_pN", "seg_x_rupture_nm", "seg_x_junction_nm",
     "seg_tau", "seg_z_max", "seg_x_max_nm", "seg_edge_pinned",
+    "seg_loading_rate_pN_s", "seg_loading_stiffness_pN_nm",
+    "seg_loading_rate_err_pN_s", "seg_loading_stiffness_err_pN_nm",
+    "seg_rate_tau",
 })
 
 
@@ -1601,10 +1604,16 @@ class EventSummaryWindow(QMainWindow):
         ("l_p_err_nm",        "l_p_err"),
         ("l_c_nm",            "l_c_nm"),
         ("l_c_err_nm",        "l_c_err"),
+        ("tau",               "tau"),
         ("n_fit_pts",         "n_fit_pts"),
         ("fit_status",        "fit_status"),
         ("fit_detail",        "fit_detail"),
         ("rupture_force_pN",  "rupture_force_pN"),
+        ("loading_rate_pN_s",           "loading_rate_pN_s"),
+        ("loading_rate_err_pN_s",       "loading_rate_err_pN_s"),
+        ("loading_stiffness_pN_nm",     "loading_stiffness_pN_nm"),
+        ("loading_stiffness_err_pN_nm", "loading_stiffness_err_pN_nm"),
+        ("rate_tau",                    "rate_tau"),
         ("dX_from_prev_nm",   "dX_from_prev_nm"),
         ("dF_from_prev_pN",   "dF_from_prev_pN"),
     ]

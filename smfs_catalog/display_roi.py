@@ -866,7 +866,20 @@ class ROIWindow(QWidget):
             dx = "/".join(_quant.format_value('seg_dX_ext_nm', v)
                           for v in roi.dX_ext_pairs if v is not None)
             dxs = f"  ΔXext={dx} nm" if dx else ""
-            parts.append(f"ROI{i}[{roi.ordering}] F={fs} pN{dxs}")
+            # The rate each of those forces was reached at.  Beside the force
+            # rather than anywhere else: a rupture force read without it cannot
+            # be compared against another curve's, and this line is where the
+            # force is read.  Segments pair one-to-one with ruptures, so the
+            # two lists line up position by position.
+            rs = "/".join(
+                _quant.format_value('seg_loading_rate_pN_s', s.loading_rate_pN_s)
+                + ("" if s.loading_rate_err_pN_s is None else "±" +
+                   _quant.format_value('seg_loading_rate_err_pN_s',
+                                       s.loading_rate_err_pN_s))
+                for s in roi.segments if s.loading_rate_pN_s is not None
+            )
+            rss = f"  r={rs} pN/s" if rs else ""
+            parts.append(f"ROI{i}[{roi.ordering}] F={fs} pN{rss}{dxs}")
         return (f"detector: {self._detector_mode}   |   "
                 f"{events.n_rois} ROI(s)   |   " + "   ".join(parts))
 

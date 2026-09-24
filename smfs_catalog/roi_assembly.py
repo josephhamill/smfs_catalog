@@ -84,6 +84,14 @@ def _seg_row(roi: ROI, i: int, *, file_id, path, roi_index: int) -> dict:
         "fit_status":  seg.fit_status,
         "fit_detail":  seg.fit_detail,
         "rupture_force_pN": rup.force_pN,
+        # The ramp into that force.  Travels in the same row for the same
+        # reason tau does: a rupture force read without the rate it was
+        # reached at cannot be compared with anything.
+        "loading_rate_pN_s":       seg.loading_rate_pN_s,
+        "loading_stiffness_pN_nm": seg.loading_stiffness_pN_nm,
+        "loading_rate_err_pN_s":       seg.loading_rate_err_pN_s,
+        "loading_stiffness_err_pN_nm": seg.loading_stiffness_err_pN_nm,
+        "rate_tau":                    seg.rate_tau,
         # dX/dF from the PREVIOUS rupture (None for the first).
         "dX_from_prev_nm": roi.dX_pairs[i - 1] if i > 0 else None,
         "dF_from_prev_pN": roi.dF_pairs[i - 1] if i > 0 else None,
