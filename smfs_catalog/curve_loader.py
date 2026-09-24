@@ -222,7 +222,7 @@ def _spring_constant(note: bytes) -> float | None:
     all, and those two must agree by construction, not by two regexes that
     look similar.  (N/m and pN/nm are the same number, hence the ×1000.)
     """
-    m = re.search(rb"SpringConstant: ?([0-9]*\.?[0-9]+)\r", note)
+    m = re.search(_note_key_pattern(b"SpringConstant"), note)
     if m is None:
         return None
     try:
@@ -239,7 +239,7 @@ def _hold_z_sensor(note: bytes) -> int | None:
     The panel stamping its own keys is what makes the distinction a statement
     by the file rather than an inference from its shape.
     """
-    m = re.search(rb"FCPHoldZSensor: ?([0-1])\r", note)
+    m = re.search(rb"(?:\A|\r)FCPHoldZSensor: ?([0-1])\r", note)
     return int(m.group(1)) if m else None
 
 
@@ -397,14 +397,69 @@ def qualify_wave(
     return Qualification(curve_type, None, None, idx_turn)
 
 
-def _note_float(note: bytes, pattern: bytes, scale: float = 1.0) -> float | None:
-    m = re.search(pattern, note)
+# A signed decimal, with optional exponent, requiring at least one digit.
+# Trailing [^\r]* lets a unit suffix (" °C", " m/s") follow the number.
+_NOTE_NUMBER = rb"(-?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)[^\r]*\r"
+
+
+def _note_key_pattern(key: bytes) -> bytes:
+    """
+    Match `key` only where it STARTS a note line.
+
+    The anchor is the whole point.  Asylum notes carry many keys that end with
+    a shorter key's name — AmpInvOLS beside InvOLS, DisplaySpringConstant
+    beside SpringConstant, FMapXYVelocity and RetractVelocity beside Velocity,
+    OldForceDist beside ForceDist.  An unanchored search matches the tail of
+    any of those, so a file that simply does not carry the field comes back
+    with a lookalike's value instead of None: a force map's stage speed read as
+    a pulling velocity, a stale ForceDist read as the current one.  A missing
+    value is honest and recoverable; a confident wrong one is neither.
+    """
+    return rb"(?:\A|\r)" + key + rb": ?" + _NOTE_NUMBER
+
+
+def _note_float(note: bytes, key: bytes, scale: float = 1.0) -> float | None:
+    """Numeric value of note line `key`, scaled, or None when absent."""
+    m = re.search(_note_key_pattern(key), note)
     if m is None:
         return None
     try:
         return float(m.group(1)) * scale
     except (ValueError, IndexError):
         return None
+
+
+def _retract_velocity(note: bytes) -> float | None:
+    """
+    THE pulling speed that applies to the RETRACT half, in nm/s, or None when
+    the note describes a configuration this has not been shown to handle.
+
+    The note carries three candidate speeds and two flags that decide between
+    them.  `Velocity` is the ramp speed the operator sets.  `ApproachVelocity`
+    and `RetractVelocity` are the split pair, and across every cohort measured
+    they hold one unchanging factory value while `Velocity` tracks the actual
+    setting — they are not being driven.  `UseVelocity` (0 everywhere) and
+    `VelocitySynch` (1 everywhere) say exactly that: the split pair is off, and
+    the two halves share one speed.  Piezo traces agree, approach and retract
+    matching to ~1% across six cohorts and software 16.33 through 19.37.
+
+    So under the observed configuration the answer is `Velocity`, and a note
+    that states no flags at all is the same case — their absence is not a
+    contradiction.
+
+    Any OTHER combination is a configuration nobody here has seen, and what the
+    flags then mean is not established.  Returning None leaves the speed blank,
+    which is recoverable and visible; returning a guess would put a wrong
+    pulling speed on curves with nothing to mark it, and every rupture force
+    compared against it would inherit the error silently.  The flags themselves
+    are stored in file_metadata, so a blank can always be explained.
+    """
+    velocity = _note_float(note, b"Velocity", 1e9)
+    use      = _note_float(note, b"UseVelocity")
+    synch    = _note_float(note, b"VelocitySynch")
+    if (use is None and synch is None) or (use == 0.0 and synch == 1.0):
+        return velocity
+    return None
 
 
 def _note_fields(note: bytes, header) -> dict:
@@ -414,8 +469,8 @@ def _note_fields(note: bytes, header) -> dict:
     Shared by both loaders so a curve the analysis pipeline refuses still
     reports the same numbers, from the same parse, as one it accepts.
     """
-    xpos = _note_float(note, rb"XLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", 1e6)
-    ypos = _note_float(note, rb"YLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", 1e6)
+    xpos = _note_float(note, b"XLVDT", 1e6)
+    ypos = _note_float(note, b"YLVDT", 1e6)
 
     try:
         sfa = header["sfA"][0]
@@ -431,28 +486,22 @@ def _note_fields(note: bytes, header) -> dict:
         "sample_rate_hz": sample_rate_hz,
         "measured_date": (date_m.group(1).decode("latin-1").strip()
                           if date_m else None),
-        "velocity_nm_s": _note_float(
-            note, rb"Velocity: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        "velocity_nm_s": _retract_velocity(note),
         # TriggerPoint is stored in Newtons (SI) in the Asylum Research wave
         # note.  scale=1e9 converts N → nN.  The field is trigger_point_nn — a
         # FORCE (nN), not a distance.  Confirmed: trigger(nN) × (1/k) =
         # max_deflection(nm).
-        "trigger_point_nn": _note_float(
-            note, rb"TriggerPoint: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
-        "force_dist_nm": _note_float(
-            note, rb"ForceDist: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
-        "inv_ols_nm_v": _note_float(
-            note, rb"InvOLS: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", 1e9),
+        "trigger_point_nn": _note_float(note, b"TriggerPoint", 1e9),
+        "force_dist_nm": _note_float(note, b"ForceDist", 1e9),
+        "inv_ols_nm_v": _note_float(note, b"InvOLS", 1e9),
         # Hz already in the wave note — no scaling.  Same key the scanner
         # promotes to files.force_filter_bw_hz; parsed here too so a loaded
         # curve knows its own bandwidth without a lookup.
-        "force_filter_bw_hz": _note_float(
-            note, rb"ForceFilterBW: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r"),
+        "force_filter_bw_hz": _note_float(note, b"ForceFilterBW"),
         # The operator-set acquisition rate.  Preferred over the header for the
         # time axis because some panels leave sfA at 1 s/point, which would
         # date a 6-second curve at 30 hours.
-        "pts_per_sec": _note_float(
-            note, rb"NumPtsPerSec: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r"),
+        "pts_per_sec": _note_float(note, b"NumPtsPerSec"),
     }
 
 

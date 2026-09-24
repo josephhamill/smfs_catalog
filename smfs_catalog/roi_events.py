@@ -45,6 +45,7 @@ import numpy as np
 from scipy.signal import find_peaks
 
 from .models import fit_model, wlc
+from .regression import linear_fit
 from .roi_detection import find_onset
 
 
@@ -114,6 +115,11 @@ class Segment:
     # [left_idx, right_idx].  Used to draw the WLC fit over exactly the points fit.
     fit_lo_idx: Optional[int] = None
     fit_hi_idx: Optional[int] = None
+    # The loading-rate fit's own window — the top of the same ramp, a narrower
+    # sub-range than the WLC window above.  Stored for the same reason: a slope
+    # without the samples it was taken over cannot be drawn or checked.
+    rate_lo_idx: Optional[int] = None
+    rate_hi_idx: Optional[int] = None
     # Extension (nm) on THIS segment's own rising ramp where force first climbs
     # back through the PREVIOUS rupture's force (the lab's "isoforce" distance —
     # e.g. bond ruptures at 100 pN/1500 nm, tether segment recrosses 100 pN at
@@ -148,6 +154,26 @@ class Segment:
     # the fit stopped early. See ramp_peak_is_edge_pinned, which is the
     # one definition; this field is only where its answer is kept.
     edge_pinned: Optional[bool] = None
+    # How fast force was climbing into THIS segment's own rupture, measured
+    # over the straight top of its loading ramp.  The rate is the rupture's
+    # x-coordinate on a dynamic force spectroscopy plot; the stiffness is the
+    # load path's compliance, and dF/dt = dF/dz · v relates them.  Stored for
+    # the reason isoforce_x_nm and x_max_nm are: recovering either later would
+    # mean rebuilding this segment's force trace, which the event_map document
+    # does not keep.  ramp_loading_slopes is the one definition of both; these
+    # are only where its answers are kept.
+    loading_rate_pN_s:       Optional[float] = None
+    loading_stiffness_pN_nm: Optional[float] = None
+    # Each slope's own regression ±1σ, kept beside it for the reason l_p_err is
+    # kept beside l_p: a ramp whose oscillation over the fitted window exceeds
+    # its own trend yields a slope indistinguishable from zero, and the slope
+    # alone never says so.
+    loading_rate_err_pN_s:       Optional[float] = None
+    loading_stiffness_err_pN_nm: Optional[float] = None
+    # Residual correlation time of the loading-rate fit, in samples.  The two
+    # errors above already have sqrt(rate_tau) applied; this is stored for the
+    # same reason `tau` is, so the size of an error bar can be explained.
+    rate_tau: Optional[float] = None
     # Compact, user-facing outcome of the fit attempt.  Detailed numerical
     # diagnostics remain in their dedicated fields; this distinguishes a
     # verified missing fit from an unreported/failed calculation.
@@ -694,6 +720,138 @@ def ramp_peak_is_edge_pinned(peak_idx: int, lo: int, hi: int) -> bool:
     return hi > lo and int(peak_idx) >= int(hi)
 
 
+# Minimum samples in a loading-ramp window before a slope is worth reporting.
+# Matches the segment-length floor fit_segments already applies.
+RAMP_SLOPE_MIN_PTS = 5
+
+# Where the loading-ramp fit starts, as a fraction of the rupture force.  The
+# top half of the rise is the part a straight line describes: lower down the
+# ramp carries the WLC's curvature, and including it biases the slope low.
+RAMP_SLOPE_FORCE_FRAC = 0.5
+
+
+def ramp_slope_window(
+    force: np.ndarray, lo: int, peak_idx: int, frac: float,
+) -> Optional[tuple[int, int]]:
+    """
+    The samples a loading-ramp slope is fitted over: (start, peak_idx),
+    inclusive, or None under RAMP_SLOPE_MIN_PTS points.
+
+    Walks back from the peak while force stays at or above `frac` of it.  In
+    force rather than in samples, so it covers the same part of the ramp at any
+    rupture force and any pulling speed; from the top, because lower down the
+    ramp is WLC-curved and a line stops describing it.
+
+    `force` must be the smoothed low-frequency force — `peak_idx` was located on
+    that signal, and a window bounded by a peak from a different signal
+    describes neither.
+    """
+    lo       = max(0, int(lo))
+    peak_idx = min(len(force) - 1, int(peak_idx))
+    if peak_idx <= lo:
+        return None
+
+    f_peak = float(force[peak_idx])
+    if not np.isfinite(f_peak) or f_peak <= 0.0:
+        return None
+
+    floor = frac * f_peak
+    start = peak_idx
+    while start > lo and force[start - 1] >= floor:
+        start -= 1
+
+    if peak_idx - start + 1 < RAMP_SLOPE_MIN_PTS:
+        return None
+    return start, peak_idx
+
+
+def ramp_loading_slopes(
+    force:          np.ndarray,
+    piezo:          np.ndarray,
+    start:          int,
+    stop:           int,
+    sample_rate_hz: float,
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float],
+           Optional[float]]:
+    """
+    THE single definition of a loading ramp's slope, in the two presentations
+    the field reports:
+
+      • loading rate      dF/dt, pN/s  — the rupture's position on the x-axis
+                                         of a dynamic force spectroscopy plot.
+      • loading stiffness dF/dz, pN/nm — the compliance of the whole load path,
+                                         cantilever and molecule in series.
+
+    Each with its own regression's ±1σ, returned as (rate, rate_err, stiffness,
+    stiffness_err).  The error is not decoration: a loading ramp carrying an
+    oscillation larger than its own trend over the fitted window yields a slope
+    the regression cannot distinguish from zero, and nothing about the slope
+    alone says so.  Read together they disqualify such a fit whichever way its
+    sign happened to fall — which filtering on sign does not.  Same reason
+    l_p_err travels beside l_p rather than being left to be inferred.
+
+    The two are related by dF/dt = dF/dz · v, which is why `piezo` must be RAW
+    piezo displacement.  Run against the deflection-corrected extension axis
+    the WLC fits use, the same regression measures the molecule's stiffness
+    alone, the cantilever having been subtracted out, and that identity no
+    longer holds.
+
+    `force` must be the SMOOTHED low-frequency force, for the same reason
+    ramp_force_peak requires it: the window is defined relative to a peak
+    located on that signal, and a slope measured on a different signal from the
+    peak that bounds it describes neither.
+
+    [start, stop] is inclusive at both ends and comes from ramp_slope_window,
+    which is what the caller stores on the segment.  Taking the range rather
+    than deriving it is what lets the stored bounds and the stored slope
+    describe the same samples.
+
+    A value is None rather than approximate: a non-positive sample rate leaves
+    no time axis to fit against, which takes dF/dt only — dF/dz never needed one
+    and still stands.
+
+    Both errors are correlation-corrected, as _fit_wlc_window's are and for the
+    same reason: an OLS standard error is right only for INDEPENDENT residuals,
+    and these come off a low-pass channel whose neighbouring samples are not.
+    They are multiplied by sqrt(tau), and tau is returned with them so a reader
+    can see why an error bar is the size it is.
+    """
+    nothing = (None, None, None, None, None)
+    start = max(0, int(start))
+    stop  = min(len(force) - 1, int(stop))
+    n = stop - start + 1
+    if n < RAMP_SLOPE_MIN_PTS:
+        return nothing
+
+    F = force[start:stop + 1]
+    z = piezo[start:stop + 1]
+
+    fit_t = None
+    if np.isfinite(sample_rate_hz) and sample_rate_hz > 0:
+        fit_t = linear_fit(np.arange(n, dtype=float) / float(sample_rate_hz), F)
+    fit_z = linear_fit(z, F)
+    if fit_t is None and fit_z is None:
+        return nothing
+
+    # One tau serves both: piezo is an affine function of time across the
+    # window, so the two regressions put the same line through the same points
+    # and differ only in the units of their slope.
+    ref   = fit_t if fit_t is not None else fit_z
+    x_ref = (np.arange(n, dtype=float) / float(sample_rate_hz)
+             if fit_t is not None else z)
+    tau   = integrated_autocorr_time(F - ref.predict(x_ref))
+    scale = float(np.sqrt(tau))
+
+    rate      = rate_err      = None
+    stiffness = stiffness_err = None
+    if fit_t is not None:
+        rate, rate_err = fit_t.slope, fit_t.slope_se * scale
+    if fit_z is not None:
+        stiffness, stiffness_err = fit_z.slope, fit_z.slope_se * scale
+
+    return rate, rate_err, stiffness, stiffness_err, float(tau)
+
+
 def fit_segments(
     curve,
     events:       CurveEvents,
@@ -704,6 +862,7 @@ def fit_segments(
     low_retr:  Optional[np.ndarray] = None,
     guess_l_p: float = 2.0,
     guess_l_c: float = 120.0,
+    ramp_force_frac: float = RAMP_SLOPE_FORCE_FRAC,
 ) -> None:
     """
     Fill each Segment's (l_p, l_c, l_p_err, l_c_err) and each Rupture's force_pN
@@ -795,6 +954,23 @@ def fit_segments(
             rup.force_pN     = float(F_slice[peak_rel])
             rup.force_idx    = a + peak_rel
             rup.extension_nm = float(x_slice[peak_rel])
+
+            # How fast this rupture was loaded.  Recorded before the WLC fit is
+            # attempted, so a segment whose optimiser fails still reports its
+            # loading rate — the rate is a property of the pull, not of the fit.
+            # Raw piezo, not the extension axis: the stiffness returned is the
+            # whole load path's, and on the deflection-corrected axis it would
+            # be the molecule's alone.
+            rate_win = ramp_slope_window(force, a, a + peak_rel, ramp_force_frac)
+            if rate_win is not None:
+                seg.rate_lo_idx, seg.rate_hi_idx = rate_win
+                (seg.loading_rate_pN_s, seg.loading_rate_err_pN_s,
+                 seg.loading_stiffness_pN_nm,
+                 seg.loading_stiffness_err_pN_nm,
+                 seg.rate_tau) = ramp_loading_slopes(
+                    force, curve.piezo_retr, seg.rate_lo_idx, seg.rate_hi_idx,
+                    curve.sample_rate_hz,
+                )
 
             # Isoforce crossing (lab convention, not a fit output): where THIS
             # segment's rising ramp first climbs back through the PREVIOUS
@@ -1009,11 +1185,19 @@ _PAYLOAD_VERSION = 5   # v5: segments carry left_extension_nm — where the
                        # are d1-edge loading ramps (prev fall → this rise)
 
 # The keys events_to_payload writes, pinned so a schema change cannot slip
-# through without a version bump.  Asserting the version alone is
-# one-directional: it fires when the number MOVES, and stays silent when a
-# field is added and the number does not — which reads every stored document
-# back with that field missing, catalog-wide, with every test green.  These
-# two sets close that direction; see test_fit_uncertainty's payload guards.
+# through unnoticed.  Asserting the version alone is one-directional: it fires
+# when the number MOVES, and stays silent when a field is added and the number
+# does not — which reads every stored document back with that field missing,
+# catalog-wide, with every test green.  These two sets close that direction;
+# see test_fit_uncertainty's payload guards.
+#
+# Noticing is not the same as bumping.  _PAYLOAD_VERSION guards against a
+# stored document being MISREAD — a field whose meaning, units or derivation
+# changed, where the old value parses cleanly and is wrong.  A purely additive
+# field leaves every existing value correct and merely absent, which reads back
+# as None: incomplete, not wrong, and no reason to refuse the whole document.
+# Bumping for an addition discards fits that are still good, which is how
+# documents come to be stranded at a version nothing revisits.
 PAYLOAD_RUPTURE_KEYS: frozenset[str] = frozenset({
     "idx", "piezo_nm", "d1_height", "prominence", "force_pN", "force_idx",
     "rise_idx", "fall_idx", "extension_nm",
@@ -1021,8 +1205,10 @@ PAYLOAD_RUPTURE_KEYS: frozenset[str] = frozenset({
 PAYLOAD_SEGMENT_KEYS: frozenset[str] = frozenset({
     "left_idx", "right_idx", "left_piezo_nm", "right_piezo_nm",
     "l_p_nm", "l_c_nm", "l_p_err", "l_c_err", "n_pts",
-    "fit_lo_idx", "fit_hi_idx", "isoforce_x_nm",
+    "fit_lo_idx", "fit_hi_idx", "rate_lo_idx", "rate_hi_idx", "isoforce_x_nm",
     "tau", "x_max_nm", "left_extension_nm", "edge_pinned",
+    "loading_rate_pN_s", "loading_stiffness_pN_nm",
+    "loading_rate_err_pN_s", "loading_stiffness_err_pN_nm", "rate_tau",
     "fit_status", "fit_detail",
 })
 
@@ -1063,6 +1249,8 @@ def events_to_payload(events: CurveEvents) -> dict:
                      "l_p_err": s.l_p_err, "l_c_err": s.l_c_err,
                      "n_pts": s.n_pts,
                      "fit_lo_idx": s.fit_lo_idx, "fit_hi_idx": s.fit_hi_idx,
+                     "rate_lo_idx": s.rate_lo_idx,
+                     "rate_hi_idx": s.rate_hi_idx,
                      "isoforce_x_nm": s.isoforce_x_nm,
                      # v4.  z_max is NOT here — it is a property
                      # derived from x_max_nm/l_c_nm on read, so there is one
@@ -1073,6 +1261,16 @@ def events_to_payload(events: CurveEvents) -> dict:
                      # from the rest of this document.
                      "left_extension_nm": s.left_extension_nm,
                      "edge_pinned": s.edge_pinned,
+                     # Additive: absent from a document written before them,
+                     # which reads back as None — the honest answer for a
+                     # curve whose ramp was never measured.  No version bump,
+                     # because nothing already stored changes meaning.
+                     "loading_rate_pN_s": s.loading_rate_pN_s,
+                     "loading_stiffness_pN_nm": s.loading_stiffness_pN_nm,
+                     "loading_rate_err_pN_s": s.loading_rate_err_pN_s,
+                     "loading_stiffness_err_pN_nm":
+                         s.loading_stiffness_err_pN_nm,
+                     "rate_tau": s.rate_tau,
                      "fit_status": s.fit_status,
                      "fit_detail": s.fit_detail}
                     for s in roi.segments
@@ -1109,10 +1307,18 @@ def payload_to_events(payload: dict) -> Optional[CurveEvents]:
                     l_p_err=s.get("l_p_err"), l_c_err=s.get("l_c_err"),
                     n_pts=s.get("n_pts", 0),
                     fit_lo_idx=s.get("fit_lo_idx"), fit_hi_idx=s.get("fit_hi_idx"),
+                    rate_lo_idx=s.get("rate_lo_idx"),
+                    rate_hi_idx=s.get("rate_hi_idx"),
                     isoforce_x_nm=s.get("isoforce_x_nm"),
                     tau=s.get("tau"), x_max_nm=s.get("x_max_nm"),
                     left_extension_nm=s.get("left_extension_nm"),
                     edge_pinned=s.get("edge_pinned"),
+                    loading_rate_pN_s=s.get("loading_rate_pN_s"),
+                    loading_stiffness_pN_nm=s.get("loading_stiffness_pN_nm"),
+                    loading_rate_err_pN_s=s.get("loading_rate_err_pN_s"),
+                    loading_stiffness_err_pN_nm=s.get(
+                        "loading_stiffness_err_pN_nm"),
+                    rate_tau=s.get("rate_tau"),
                     fit_status=s.get(
                         "fit_status",
                         "fit_available" if s.get("l_p_nm") is not None else "not_attempted",

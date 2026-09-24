@@ -127,6 +127,13 @@ _QUEUE_DERIVED_KEYS = (
     "seg_force_pN",
     "seg_x_rupture_nm",
     "seg_x_junction_nm",
+    # Beside the force, because a rupture force means nothing without the rate
+    # it was reached at.
+    "seg_loading_rate_pN_s",
+    "seg_loading_rate_err_pN_s",
+    "seg_loading_stiffness_pN_nm",
+    "seg_loading_stiffness_err_pN_nm",
+    "seg_rate_tau",
     "seg_l_p_nm",
     "seg_l_p_err",
     "seg_l_c_nm",

@@ -28,6 +28,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -44,6 +45,7 @@ from . import db as _db
 from . import export_utils as _export
 from .curve_loader import LoadError, load_force_curve
 from .models import wlc
+from .regression import linear_fit
 from . import sample_marks
 from . import style
 from .widgets import SampleMarksToggle
@@ -217,6 +219,22 @@ class WlcViewWindow(QMainWindow):
         manual_row.addWidget(self._manual_status_label)
         manual_row.addStretch()
 
+        # Which fit the upper panel shows.  A swap rather than an overlay: the
+        # WLC fit lives on the extension axis, the loading-rate fit on time, and
+        # a line that is straight on one is curved on the other.
+        self._view_combo = QComboBox()
+        self._view_combo.addItem("WLC fit", "wlc")
+        self._view_combo.addItem("Loading rate", "rate")
+        self._view_combo.setToolTip(
+            "WLC fit: force against extension, with the per-segment models.\n"
+            "Loading rate: force against time over the fitted ramp window, "
+            "with the linear fit and its confidence band."
+        )
+        self._view_combo.currentIndexChanged.connect(
+            lambda _i: self._on_view_mode_changed())
+        manual_row.addWidget(QLabel("View:"))
+        manual_row.addWidget(self._view_combo)
+
         # Parameter-variation envelope from the stored marginal standard
         # errors. It is descriptive because the stored result has no covariance.
         self._ci_chk = QCheckBox("Show fit uncertainty envelope")
@@ -364,9 +382,17 @@ class WlcViewWindow(QMainWindow):
             return
         from . import clustering as _clustering
         rows = _clustering.labels_for_rows(rows)
+        # Value then its own error, each fit followed by the tau that explains
+        # the size of that error — the same order the ROI/segment export uses,
+        # so the two files read alike.
         headers = ["path", "roi_index", "n_ruptures", "ordering", "position",
-                   "seg_index", "l_p_nm", "l_c_nm", "l_p_err", "l_c_err",
-                   "rupture_force_pN", "dX_from_prev_nm", "dF_from_prev_pN"]
+                   "seg_index",
+                   "l_p_nm", "l_p_err", "l_c_nm", "l_c_err", "tau",
+                   "rupture_force_pN",
+                   "loading_rate_pN_s", "loading_rate_err_pN_s",
+                   "loading_stiffness_pN_nm", "loading_stiffness_err_pN_nm",
+                   "rate_tau",
+                   "dX_from_prev_nm", "dF_from_prev_pN"]
         if _clustering.current() is not None:
             headers.append("cluster")
         with _export.export_group(
@@ -478,6 +504,28 @@ class WlcViewWindow(QMainWindow):
         self._2dh_label.setStyleSheet("")
         self._clickable_segments = []
         self._manual_status_label.setText("")
+
+    # ── Which fit the upper panel shows ──────────────────────────────────────
+
+    @property
+    def _view_mode(self) -> str:
+        return self._view_combo.currentData() or "wlc"
+
+    def _on_view_mode_changed(self) -> None:
+        """Swap both x-axes with the mode.
+
+        The two fits do not share a coordinate: the WLC model is a curve in
+        extension, the loading-rate model a line in time.  Drawing either on the
+        other's axis misstates its shape, so the axis moves with the panel.
+        """
+        rate = self._view_mode == "rate"
+        for plot in (self._top, self._bot):
+            if rate:
+                set_si_label(plot, "bottom", "Time", _quant.S)
+            else:
+                set_si_label(plot, "bottom", f"Extension {style.EXTENSION}",
+                             _quant.NM)
+        self._show_current()
 
     # ── Manual segment override ──────────────────────────────────────────────
 
@@ -603,6 +651,13 @@ class WlcViewWindow(QMainWindow):
         lo = min(r.onset_idx for r in events.rois)
         term_idx = max((r.ruptures[-1].idx for r in events.rois if r.ruptures),
                        default=lo)
+        if self._view_mode == "rate":
+            self._raw_region.setRegion([float(curve.piezo_retr[lo]),
+                                        float(curve.piezo_retr[term_idx])])
+            self._raw_region.show()
+            self._draw_rate_view(curve, events, force, lo, term_idx)
+            return
+
         self._data_line.setData(ext[lo:term_idx + 1].tolist(),
                                 force[lo:term_idx + 1].tolist())
         self._raw_region.setRegion([float(curve.piezo_retr[lo]),
@@ -613,6 +668,7 @@ class WlcViewWindow(QMainWindow):
         resid_x: list[float] = []
         resid_y: list[float] = []
         summary: list[str] = []
+        rates:   list[str] = []
         has_terminal_fit = False   # any segment fit at all → included in total 2DH
         n_rois = len(events.rois)
         for ri, roi in enumerate(events.rois):
@@ -647,6 +703,18 @@ class WlcViewWindow(QMainWindow):
                 resid_y += (Fs - wlc(xs, seg.l_p_nm, seg.l_c_nm)).tolist()
                 summary.append(f"{_quant.format_value('seg_l_p_nm', seg.l_p_nm)}"
                                f"/{_quant.format_value('seg_l_c_nm', seg.l_c_nm)}")
+                # Appended here, in step with `summary`, so the nth rate belongs
+                # to the nth l_p/l_c pair.  An em dash rather than a skip for a
+                # segment whose ramp was too short to fit: dropping it would
+                # shift every later rate onto the wrong segment.
+                rates.append(
+                    _quant.format_value('seg_loading_rate_pN_s',
+                                        seg.loading_rate_pN_s)
+                    + ("" if seg.loading_rate_err_pN_s is None else "±" +
+                       _quant.format_value('seg_loading_rate_err_pN_s',
+                                           seg.loading_rate_err_pN_s))
+                    if seg.loading_rate_pN_s is not None else "—"
+                )
                 has_terminal_fit = True
                 if roi is target_roi:
                     self._clickable_segments.append(
@@ -681,12 +749,108 @@ class WlcViewWindow(QMainWindow):
         else:
             self._resid_line.setData([], [])
 
-        self._top.setTitle(
-            f"segments ({style.L_P}/{style.L_C}): {',  '.join(summary)}" if summary
-            else "No fittable segments"
-        )
+        title = (f"segments ({style.L_P}/{style.L_C}): {',  '.join(summary)}"
+                 if summary else "No fittable segments")
+        # The rate each fitted segment's rupture was loaded at.  Its own clause
+        # rather than folded into the pair above, which the title declares to be
+        # l_p/l_c.  Suppressed entirely when no segment measured one.
+        if any(r != "—" for r in rates):
+            title += f"   |   r: {',  '.join(rates)} pN/s"
+        self._top.setTitle(title)
         if has_terminal_fit:
             self._update_2dh_status()
+
+    # ── Loading-rate view ─────────────────────────────────────────────────────
+
+    def _draw_rate_view(self, curve, events, force, lo, term_idx) -> None:
+        """Force against time, with each segment's loading-rate fit drawn over
+        the samples it was actually taken from.
+
+        The window comes from the segment's stored rate_lo_idx/rate_hi_idx, not
+        from recomputing it here, so the line drawn and the number reported
+        cannot describe different samples.  The fit is re-run over those stored
+        bounds only to recover the confidence band, which is not persisted.
+
+        Time is absolute within the retract, so several ramps on one curve sit
+        where they happened rather than being stacked at a common origin.
+        """
+        fs = curve.sample_rate_hz
+        if not fs:
+            self._top.setTitle("No sample rate — time axis unavailable")
+            return
+
+        def t_of(i):
+            return np.asarray(i, dtype=float) / fs
+
+        self._data_line.setData(t_of(np.arange(lo, term_idx + 1)).tolist(),
+                                force[lo:term_idx + 1].tolist())
+
+        resid_t: list[float] = []
+        resid_y: list[float] = []
+        rates:   list[str] = []
+        n_rois = len(events.rois)
+        for ri, roi in enumerate(events.rois):
+            n_segs = len(roi.segments)
+            for si, seg in enumerate(roi.segments):
+                if seg.rate_lo_idx is None or seg.rate_hi_idx is None:
+                    continue
+                a, b = seg.rate_lo_idx, seg.rate_hi_idx
+                ts = t_of(np.arange(a, b + 1))
+                Fs = force[a:b + 1]
+                fit = linear_fit(ts, Fs)
+                if fit is None:
+                    continue
+                col = style.roi_segment_qcolor(ri, n_rois, si, n_segs,
+                                               alpha=style.A_MODEL)
+                pts = pg.ScatterPlotItem(
+                    x=ts.tolist(), y=Fs.tolist(), size=3,
+                    brush=pg.mkBrush(col), pen=pg.mkPen(None),
+                )
+                self._top.addItem(pts)
+                self._multi_items.append(pts)
+
+                line = self._top.plot(
+                    ts.tolist(), fit.predict(ts).tolist(),
+                    pen=pg.mkPen(col, width=style.W_MODEL),
+                )
+                self._multi_items.append(line)
+                self._multi_items += self._draw_rate_ci(ts, fit, col)
+
+                resid_t += ts.tolist()
+                resid_y += (Fs - fit.predict(ts)).tolist()
+                rates.append(
+                    _quant.format_value('seg_loading_rate_pN_s', fit.slope)
+                    + "±"
+                    + _quant.format_value('seg_loading_rate_err_pN_s',
+                                          fit.slope_se)
+                )
+
+        if resid_t:
+            order = np.argsort(resid_t)
+            self._resid_line.setData(np.asarray(resid_t)[order].tolist(),
+                                     np.asarray(resid_y)[order].tolist())
+        else:
+            self._resid_line.setData([], [])
+
+        self._top.setTitle(
+            f"loading rate: {',  '.join(rates)} pN/s" if rates
+            else "No segment measured a loading rate"
+        )
+
+    def _draw_rate_ci(self, ts, fit, col) -> list:
+        """Confidence band on the fitted line, from the regression's own
+        covariance — a real band, unlike the WLC envelope below, because a
+        straight-line fit has the covariance the stored WLC result lacks."""
+        if not self._ci_chk.isChecked():
+            return []
+        lower, upper = fit.band(ts)
+        band = pg.FillBetweenItem(
+            pg.PlotDataItem(ts.tolist(), lower.tolist()),
+            pg.PlotDataItem(ts.tolist(), upper.tolist()),
+            brush=style.band_brush(col, alpha=55),
+        )
+        self._top.addItem(band, ignoreBounds=True)
+        return [band]
 
     # ── Per-segment parameter-variation envelope ──────────────────────────────
 

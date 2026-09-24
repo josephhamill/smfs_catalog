@@ -557,6 +557,11 @@ SEG_SUMMARY_KEYS = (
     # variables, so a missing value is an automatic non-hit and checking
     # seg_z_max silently drops every curve whose fit failed.
     "seg_tau", "seg_z_max", "seg_x_max_nm", "seg_edge_pinned",
+    # How fast the reported rupture was loaded.  Kept adjacent because they are
+    # one regression's two outputs: rate = stiffness * pulling velocity.
+    "seg_loading_rate_pN_s", "seg_loading_stiffness_pN_nm",
+    "seg_loading_rate_err_pN_s", "seg_loading_stiffness_err_pN_nm",
+    "seg_rate_tau",
 )
 SEG_SUMMARY_FIELD = {
     "seg_l_p_nm": "l_p_nm", "seg_l_c_nm": "l_c_nm",
@@ -568,6 +573,11 @@ SEG_SUMMARY_FIELD = {
     "seg_n_segments": "n_segments",
     "seg_tau": "tau", "seg_z_max": "z_max", "seg_x_max_nm": "x_max_nm",
     "seg_edge_pinned": "edge_pinned",
+    "seg_loading_rate_pN_s": "loading_rate_pN_s",
+    "seg_loading_stiffness_pN_nm": "loading_stiffness_pN_nm",
+    "seg_loading_rate_err_pN_s": "loading_rate_err_pN_s",
+    "seg_loading_stiffness_err_pN_nm": "loading_stiffness_err_pN_nm",
+    "seg_rate_tau": "rate_tau",
 }
 
 
@@ -687,6 +697,9 @@ def segment_summary_bulk(
             "dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None,
             "n_segments": None,
             "tau": None, "z_max": None, "x_max_nm": None, "edge_pinned": None,
+            "loading_rate_pN_s": None, "loading_stiffness_pN_nm": None,
+            "loading_rate_err_pN_s": None,
+            "loading_stiffness_err_pN_nm": None, "rate_tau": None,
             "fit_status": None, "fit_detail": None,
         }
         for p in paths
@@ -803,6 +816,15 @@ def segment_summary_bulk(
             # read as a short pull or an overlong contour length, rather than
             # only as a number that is too small.
             row["x_max_nm"] = seg.x_max_nm
+            # The selected segment's own loading ramp, following the same rule
+            # as the force it explains — a rupture force and the rate it was
+            # reached at must never come from different segments.
+            row["loading_rate_pN_s"]      = seg.loading_rate_pN_s
+            row["loading_stiffness_pN_nm"] = seg.loading_stiffness_pN_nm
+            # Each slope's own uncertainty, following the value it belongs to.
+            row["loading_rate_err_pN_s"]      = seg.loading_rate_err_pN_s
+            row["loading_stiffness_err_pN_nm"] = seg.loading_stiffness_err_pN_nm
+            row["rate_tau"] = seg.rate_tau
             # Numeric 0/1, not a bool: this reaches criteria_gate (which bounds
             # numbers) and quantities.format_value (which formats them).  The
             # dataclass keeps the bool; only this projection flattens it.

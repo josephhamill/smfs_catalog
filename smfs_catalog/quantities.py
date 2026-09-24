@@ -54,6 +54,7 @@ NM_PER_NM = "nm/nm"    # d¹, a slope — a ratio that names what it is a ratio 
 NM_PER_S  = "nm/s"
 NM_PER_V  = "nm/V"
 PN_PER_NM = "pN/nm"
+PN_PER_S  = "pN/s"
 RATIO     = ""         # dimensionless by construction (F·l_p/kT, x/l_c)
 
 
@@ -193,6 +194,14 @@ QUANTITIES: dict[str, Quantity] = {
     # A flag, carried as 0/1 so it can be bounded like any other criterion
     # ("seg_edge_pinned <= 0" = exclude edge-pinned fits).
     "seg_edge_pinned": Quantity(COUNT, 0, integer=True),
+    # The loading ramp's two slopes.  Rate spans several decades across
+    # normal pulling speeds, so it is read on a log axis; one decimal is
+    # for the table, not for the plot.
+    "seg_loading_rate_pN_s":       Quantity(PN_PER_S, 1),
+    "seg_loading_stiffness_pN_nm": Quantity(PN_PER_NM, 3),
+    "seg_loading_rate_err_pN_s":       Quantity(PN_PER_S, 1),
+    "seg_loading_stiffness_err_pN_nm": Quantity(PN_PER_NM, 3),
+    "seg_rate_tau":                    Quantity(PTS, 1),
 
     # ── Per-curve landmarks and calibration (analysis_results) ───────────────
     "contact_piezo_nm": Quantity(NM, 1),   # ~ -900 .. 3600

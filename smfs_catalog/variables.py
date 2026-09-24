@@ -132,6 +132,11 @@ _SEG_LABELS: dict[str, str] = {
     "seg_dF_pN":       "ΔF ult−pen",
     "seg_dX_iso_nm":   "Reload distance",
     "seg_dX_ext_nm":   "Rupture separation",
+    "seg_loading_rate_pN_s":       "Loading rate",
+    "seg_loading_stiffness_pN_nm": "Loading stiffness",
+    "seg_loading_rate_err_pN_s":       "Loading rate err",
+    "seg_loading_stiffness_err_pN_nm": "Loading stiffness err",
+    "seg_rate_tau":                    "Seg rate τ",
 }
 
 
@@ -163,6 +168,11 @@ DESCRIPTIONS: dict[str, str] = {
     "seg_dX_iso_nm": "Reload distance at the penultimate rupture force after that rupture — the force-matched twin of Rupture separation. Blank if the force is not reached again.",
     "seg_dX_ext_nm": "Extension gap between the last two rupture points, without force matching — the unmatched twin of Reload distance. Blank when fewer than two ruptures are available.",
     "seg_n_segments": "Number of ruptured segments in the right-most outer ROI; two or more means a distinct penultimate segment exists.",
+    "seg_loading_rate_pN_s": "How fast force was climbing into the reported rupture, fitted over the straight top of its loading ramp. Rupture force is only comparable between curves loaded at similar rates.",
+    "seg_loading_rate_err_pN_s": "Fit uncertainty (±1σ) on the loading rate. A ramp whose noise over the fitted window exceeds its own rise gives a slope this error swamps — read the two together.",
+    "seg_loading_stiffness_err_pN_nm": "Fit uncertainty (±1σ) on the loading stiffness, from its own regression. Large beside the value means the ramp carried no straight stretch worth fitting.",
+    "seg_rate_tau": "Residual correlation time in samples, from the loading-rate fit's own residual. Larger values mean neighbouring samples count as repeated observations. Already applied to both rate error columns.",
+    "seg_loading_stiffness_pN_nm": "Slope of that same ramp against piezo travel: the stiffness of cantilever and molecule in series. Times the pulling velocity it gives the loading rate, so it says which of the two dominated.",
     TIME_KEY: "Instrument acquisition time. Put it on the X axis to measure drift; older files may have date-only resolution.",
     "spring_constant_pn_nm": "Cantilever stiffness recorded by the instrument. It scales every force converted from deflection.",
     "velocity_nm_s": "Piezo retraction speed. Rupture force depends on loading rate, so compare cohorts at similar velocities.",

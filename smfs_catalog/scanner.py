@@ -25,7 +25,8 @@ from igor2.binarywave import load as load_ibw
 
 from . import db
 from .curve_loader import (
-    _hold_z_sensor, _spring_constant, qualify_wave, retract_deflection_nm,
+    _hold_z_sensor, _note_key_pattern, _retract_velocity, _spring_constant,
+    qualify_wave, retract_deflection_nm,
 )
 from .event_processor import compute_deflection_histogram, defl_grid_params
 
@@ -128,9 +129,7 @@ def _note_float(key: str, note: bytes, scale: float = 1.0) -> float | None:
     Extract a numeric value by key from the wave note.
     Allows unit suffixes (e.g. ' °C') between the number and the line end.
     """
-    pattern = (rb"\r" + key.encode() +
-               rb": ?(-?[0-9]*\.?[0-9]*(?:[eE][+-]?[0-9]+)?)[^\r]*\r")
-    return _safe_float(pattern, note, scale)
+    return _safe_float(_note_key_pattern(key.encode()), note, scale)
 
 
 def _note_str(key: str, note: bytes) -> str | None:
@@ -152,6 +151,14 @@ _METADATA_KEYS: dict[str, tuple[str, float]] = {
     # ── Force curve acquisition ────────────────────────────────────────────
     "ApproachVelocity":   ("float", 1e9),    # m/s  → nm/s
     "RetractVelocity":    ("float", 1e9),    # m/s  → nm/s
+    # The two flags that decide whether the pair above means anything.  Across
+    # every cohort measured so far they read 0 and 1: the split velocities are
+    # not driven, and the two halves are synched to the single Velocity that
+    # becomes files.velocity_nm_s.  Stored so that the day someone flicks
+    # either one, the change is visible in the data rather than inferred from a
+    # pulling speed that quietly stopped matching its curves.
+    "UseVelocity":        ("float", 1.0),    # 0/1
+    "VelocitySynch":      ("float", 1.0),    # 0/1
     "ForceScanRate":      ("float", 1.0),    # Hz
     "DwellTime":          ("float", 1.0),    # s
     "DwellRate":          ("float", 1.0),    # Hz (sampling during dwell)
@@ -232,22 +239,18 @@ def _parse_ibw(path: str) -> dict:
         # column below and the force_extension/unknown call in qualify_wave
         # must be the same number, not two regexes that resemble each other.
         result["spring_constant_pn_nm"] = _spring_constant(note)
-        result["velocity_nm_s"] = _safe_float(
-            rb"Velocity: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", note, scale=1e9)
-        result["force_dist_nm"] = _safe_float(
-            rb"ForceDist: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", note, scale=1e9)
+        # One resolver for both modules — the column and a loaded curve must
+        # agree by construction, as with _spring_constant above.
+        result["velocity_nm_s"] = _retract_velocity(note)
+        result["force_dist_nm"] = _note_float("ForceDist", note, scale=1e9)
         # TriggerPoint is stored in Newtons (SI) in the Asylum Research wave note.
         # scale=1e9 converts N → nN.  The column is trigger_point_nn — it is a
         # FORCE (nN), not a distance.  Confirmed: trigger(nN) × (1/k) = max_deflection(nm).
         # E.g. 1 nN / 79.3 pN/nm = 12.6 nm, 4 nN / 79.3 pN/nm = 50.4 nm — both match observed data.
-        result["trigger_point_nn"] = _safe_float(
-            rb"TriggerPoint: ([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", note, scale=1e9)
-        result["xpos_um"] = _safe_float(
-            rb"XLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", note, scale=1e6)
-        result["ypos_um"] = _safe_float(
-            rb"YLVDT: ?(-?[0-9]*\.?[0-9]*e?-?[0-9]*)\r", note, scale=1e6)
-        result["inv_ols_nm_v"] = _safe_float(
-            rb"InvOLS: ?([0-9]*\.?[0-9]*e?[+-]?[0-9]*)\r", note, scale=1e9)
+        result["trigger_point_nn"] = _note_float("TriggerPoint", note, scale=1e9)
+        result["xpos_um"] = _note_float("XLVDT", note, scale=1e6)
+        result["ypos_um"] = _note_float("YLVDT", note, scale=1e6)
+        result["inv_ols_nm_v"] = _note_float("InvOLS", note, scale=1e9)
         # The ACQUISITION low-pass the experimentalist set in the AFM software,
         # applied to the deflection channel at capture — the data reaches this
         # app already band-limited to it. It determines whether
