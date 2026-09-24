@@ -1477,9 +1477,11 @@ class EventSummaryWindow(QMainWindow):
         if len(paths) < 5:
             return
         pop = self._active_population
+        cl = _clustering.current() if self._cluster_bar.is_active() else None
         existing = self._spectrum_wins.get(pop)
         if existing is not None and existing.isVisible():
-            if getattr(existing, "_event_summary_revision", None) == self._data_revision:
+            if (getattr(existing, "_event_summary_revision", None) == self._data_revision
+                    and existing.clustering is cl):
                 existing.raise_()
                 existing.activateWindow()
                 return
@@ -1487,7 +1489,8 @@ class EventSummaryWindow(QMainWindow):
 
         from .force_spectrum_window import ForceSpectrumWindow
         win = ForceSpectrumWindow(paths, self._db_path,
-                                  caption=self._provenance_caption(len(paths)))
+                                  caption=self._provenance_caption(len(paths)),
+                                  clustering=cl)
         self._spectrum_wins[pop] = win
         win._event_summary_revision = self._data_revision
         win.show()

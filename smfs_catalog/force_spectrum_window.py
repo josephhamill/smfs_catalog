@@ -33,17 +33,22 @@ from .qt_utils import fit_on_screen, set_plot_title, set_si_label
 FORCE_KEY = "seg_force_pN"
 RATE_KEY  = "seg_loading_rate_pN_s"
 
+_FIT_DASHES = (Qt.PenStyle.SolidLine, Qt.PenStyle.DashLine, Qt.PenStyle.DotLine)
+
 
 class ForceSpectrumWindow(QMainWindow):
     def __init__(self, paths: list[str], db_path: str, caption: str = "",
-                 parent=None) -> None:
+                 clustering=None, parent=None) -> None:
+        """`clustering` is the clustering.Clustering to colour dots by, or
+        None for the neutral tone."""
         super().__init__(parent)
+        self.clustering = clustering
         self.setWindowTitle("SMFS — force spectrum")
         self.setWindowFlag(Qt.WindowType.Window)
         fit_on_screen(self, 1200, 720)
         style.apply_plot_defaults()
 
-        _order, cols = _vars.columns(paths, [FORCE_KEY, RATE_KEY], db_path)
+        resolved, cols = _vars.columns(paths, [FORCE_KEY, RATE_KEY], db_path)
         meta = _db.get_file_metadata_bulk(paths, list(_fs.TEMPERATURE_KEYS), db_path)
         temp_K, n_temp = _fs.temperature_K(list(meta.values()))
         kT = _fs.kT_of(temp_K)
@@ -65,12 +70,12 @@ class ForceSpectrumWindow(QMainWindow):
         root.addWidget(hdr)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._build_plot(rate, force, caption))
+        splitter.addWidget(self._build_plot(resolved, rate, force, caption, clustering))
         splitter.addWidget(self._build_tables())
         splitter.setSizes([700, 500])
         root.addWidget(splitter, stretch=1)
 
-    def _build_plot(self, rate, force, caption: str) -> QWidget:
+    def _build_plot(self, paths, rate, force, caption: str, clustering) -> QWidget:
         plot = pg.PlotWidget()
         rate_unit = _quant.unit_of(RATE_KEY)
         plot.setLabel("bottom", f"ln({_vars.label(RATE_KEY)} / {rate_unit})")
@@ -81,18 +86,27 @@ class ForceSpectrumWindow(QMainWindow):
 
         ok = np.isfinite(rate) & np.isfinite(force) & (rate > 0.0)
         ln_r = np.log(rate[ok])
-        dot = QColor(style.INK_MUTED)
-        dot.setAlpha(style.DOT_ALPHA)
+        neutral = style.scatter_brush(style.INK_MUTED)
+        if clustering is None:
+            brushes = neutral
+        else:
+            # An unlabelled curve keeps the neutral tone, as in Explore Events.
+            labels = [clustering.label_for(p) for p, keep in zip(paths, ok) if keep]
+            brushes = [style.scatter_brush(style.series_labeled(lbl))
+                       if lbl is not None else neutral for lbl in labels]
         plot.addItem(pg.ScatterPlotItem(ln_r, force[ok], size=style.DOT_SIZE,
-                                        pen=None, brush=dot))
+                                        pen=None, brush=brushes))
         if ln_r.size:
             grid = np.linspace(ln_r.min(), ln_r.max(), 300)
-            for fit, color in zip(self._fits, style.SERIES_LABELED):
+            for i, fit in enumerate(self._fits):
+                # Cluster colours come from the same palette, so while they
+                # are shown the fits give up colour and differ by dash.
+                pen = (pg.mkPen(style.SERIES_LABELED[i], width=2) if clustering is None
+                       else pg.mkPen(style.INK, width=2, style=_FIT_DASHES[i]))
                 # Only where the model gives a force of its own; the clamped
                 # stretches are not drawn.
                 y = np.where(fit.in_domain(grid), fit.predict(grid), np.nan)
-                plot.plot(grid, y, pen=pg.mkPen(color, width=2),
-                          name=fit.label, connect="finite")
+                plot.plot(grid, y, pen=pen, name=fit.label, connect="finite")
         return plot
 
     def _build_tables(self) -> QWidget:
