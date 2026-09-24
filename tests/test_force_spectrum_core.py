@@ -52,6 +52,17 @@ def test_cusp_data_are_fitted_and_preferred_as_cusp():
     assert best.nu != 1.0
 
 
+def test_domain_excludes_the_clamped_stretches():
+    rate, force = _spectrum(0.5, -4.0, 25.0, 2.0 / 3.0)
+    cusp = _by_label(FS.fit_all(rate, force, KT)[0])["DHS cusp (ν=2/3)"]
+    grid = np.linspace(-20.0, 60.0, 400)
+    inside = cusp.in_domain(grid)
+    f = cusp.predict(grid)
+    f_c = cusp.params["ΔG"][0] * KT / (cusp.nu * cusp.params["x_b"][0])
+    assert inside.any() and not inside.all()
+    assert np.all((f[inside] > 0.0) & (f[inside] < f_c))
+
+
 def test_only_nonpositive_or_missing_rates_are_dropped():
     rate, force = _spectrum(0.4, -2.0, 1.0, 1.0, n=50)
     rate[:3] = [0.0, -5.0, np.nan]

@@ -88,8 +88,11 @@ class ForceSpectrumWindow(QMainWindow):
         if ln_r.size:
             grid = np.linspace(ln_r.min(), ln_r.max(), 300)
             for fit, color in zip(self._fits, style.SERIES_LABELED):
-                plot.plot(grid, fit.predict(grid), pen=pg.mkPen(color, width=2),
-                          name=fit.label)
+                # Only where the model gives a force of its own; the clamped
+                # stretches are not drawn.
+                y = np.where(fit.in_domain(grid), fit.predict(grid), np.nan)
+                plot.plot(grid, y, pen=pg.mkPen(color, width=2),
+                          name=fit.label, connect="finite")
         return plot
 
     def _build_tables(self) -> QWidget:

@@ -84,11 +84,16 @@ def mean_force(ln_r, x_b, log10_koff, dG, nu, kT):
     koff = 10.0 ** log10_koff
     if nu == 1.0:
         return (kT / x_b) * (ln_r + np.log(x_b / (koff * kT)) - EULER_GAMMA)
-    L = np.log(kT * koff / x_b) + dG + EULER_GAMMA - ln_r
     # Clip to the model's domain: below 0 the barrier is gone (F = F_c),
     # above 1 the force would be negative (F = 0).
-    base = np.clip(L / dG, 0.0, 1.0)
+    base = np.clip(_barrier_fraction(ln_r, x_b, log10_koff, dG, kT), 0.0, 1.0)
     return (dG * kT / (nu * x_b)) * (1.0 - base ** nu)
+
+
+def _barrier_fraction(ln_r, x_b, log10_koff, dG, kT):
+    """The DHS bracket (kT/ΔG)·ln(…); the model is defined where it lies in (0, 1)."""
+    L = np.log(kT * 10.0 ** log10_koff / x_b) + dG + EULER_GAMMA - np.asarray(ln_r, dtype=float)
+    return L / dG
 
 
 @dataclass
@@ -106,6 +111,17 @@ class SpectrumFit:
         lk  = self.params["log10 k_off"][0]
         dG  = self.params.get("ΔG", (1.0, 0.0))[0]
         return mean_force(ln_r, x_b, lk, dG, self.nu, self.kT)
+
+    def in_domain(self, ln_r) -> np.ndarray:
+        """Where the model gives a force of its own rather than a clamped
+        0 or F_c. Bell-Evans is defined everywhere."""
+        ln_r = np.asarray(ln_r, dtype=float)
+        if self.nu == 1.0:
+            return np.ones(ln_r.shape, dtype=bool)
+        frac = _barrier_fraction(ln_r, self.params["x_b"][0],
+                                 self.params["log10 k_off"][0],
+                                 self.params["ΔG"][0], self.kT)
+        return (frac > 0.0) & (frac < 1.0)
 
 
 def _stats(f: np.ndarray, f_fit: np.ndarray, n_params: int) -> dict:
