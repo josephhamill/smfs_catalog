@@ -2391,6 +2391,37 @@ def get_file_columns(
         conn.close()
 
 
+def get_file_metadata_bulk(
+    paths:   list[str],
+    keys:    list[str],
+    db_path: str = DEFAULT_DB_PATH,
+) -> dict[str, dict]:
+    """{resolved_path: {key: value}} of wave-note metadata, in bulk.
+
+    A key the file has no row for is absent from its dict."""
+    if not paths or not keys:
+        return {}
+    conn = get_connection(db_path)
+    try:
+        resolved = [normalize_path(p) for p in paths]
+        out: dict[str, dict] = {}
+        key_marks = ",".join("?" * len(keys))
+        for i in range(0, len(resolved), 500):
+            chunk = resolved[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = conn.execute(f"""
+                SELECT f.path, m.key, m.value_real, m.value_text
+                FROM file_metadata m JOIN files f ON f.id = m.file_id
+                WHERE f.path IN ({marks}) AND m.key IN ({key_marks})
+            """, chunk + list(keys)).fetchall()
+            for row in rows:
+                v = row["value_real"] if row["value_real"] is not None else row["value_text"]
+                out.setdefault(row["path"], {})[row["key"]] = v
+        return out
+    finally:
+        conn.close()
+
+
 def get_experimentalist_for_file(
     file_path: str,
     db_path: str = DEFAULT_DB_PATH,
