@@ -230,6 +230,7 @@ class EventSummaryWindow(QMainWindow):
         # scope selector's populations never collide or silently reuse
         # each other's window — see module docstring.
         self._gmm_wins:      dict   = {}   # "population:x_key:y_key" → GmmFitWindow
+        self._spectrum_wins: dict   = {}   # population → ForceSpectrumWindow
         self._norm_2dh_wins: dict   = {}   # population → Normalized2DHWindow
         self._phys_2dh_wins: dict   = {}   # population → Physical2DHWindow
         self._2dh_wins:     list   = []   # registered via set_2dh_window()
@@ -416,6 +417,13 @@ class EventSummaryWindow(QMainWindow):
         self._fit_2d_btn = QPushButton("Fit 2D…")
         self._fit_2d_btn.clicked.connect(self._on_fit_2d)
         action_row.addWidget(self._fit_2d_btn)
+        self._spectrum_btn = QPushButton("Force spectrum…")
+        self._spectrum_btn.setToolTip(
+            "Rupture force against ln(loading rate) for this population, "
+            "fitted with Bell-Evans and DHS."
+        )
+        self._spectrum_btn.clicked.connect(self._on_force_spectrum)
+        action_row.addWidget(self._spectrum_btn)
         self._isoforce_btn = QPushButton("Isoforce…")
         self._isoforce_btn.setToolTip(
             "Curves with an adjacent isoforce pair on the last ROI: the current "
@@ -1460,6 +1468,27 @@ class EventSummaryWindow(QMainWindow):
                            paths=self._paths_for_mask(sel),
                            x_key=xk, y_key=yk)
         self._gmm_wins[gmm_key] = win
+        win._event_summary_revision = self._data_revision
+        win.show()
+
+    def _on_force_spectrum(self) -> None:
+        sel = self._population_mask()
+        paths = self._paths_for_mask(sel)
+        if len(paths) < 5:
+            return
+        pop = self._active_population
+        existing = self._spectrum_wins.get(pop)
+        if existing is not None and existing.isVisible():
+            if getattr(existing, "_event_summary_revision", None) == self._data_revision:
+                existing.raise_()
+                existing.activateWindow()
+                return
+            existing.close()
+
+        from .force_spectrum_window import ForceSpectrumWindow
+        win = ForceSpectrumWindow(paths, self._db_path,
+                                  caption=self._provenance_caption(len(paths)))
+        self._spectrum_wins[pop] = win
         win._event_summary_revision = self._data_revision
         win.show()
 
