@@ -112,20 +112,6 @@ _CURS_PEN   = pg.mkPen(style.INK, width=1.5, style=Qt.PenStyle.DashLine)
 _DEFAULT_X = "seg_x_rupture_nm"
 _DEFAULT_Y = "seg_force_pN"
 
-# seg_* variables that exist only once the selected segment got far enough
-# through roi_events.fit_segments, so a missing value is explained by that
-# segment's stored fit outcome. The rest (ROI-level deltas, segment count) can
-# be missing for reasons the fit outcome does not describe.
-_SEGMENT_FIT_KEYS = frozenset({
-    "seg_l_p_nm", "seg_l_c_nm", "seg_l_p_err", "seg_l_c_err",
-    "seg_force_pN", "seg_x_rupture_nm", "seg_x_junction_nm",
-    "seg_tau", "seg_z_max", "seg_x_max_nm", "seg_edge_pinned",
-    "seg_loading_rate_pN_s", "seg_loading_stiffness_pN_nm",
-    "seg_loading_rate_err_pN_s", "seg_loading_stiffness_err_pN_nm",
-    "seg_rate_tau",
-})
-
-
 def _vsep() -> QFrame:
     """Thin vertical rule — groups the action row's button clusters without
     a QLabel caption above each one (kept to a single row)."""
@@ -1046,7 +1032,7 @@ class EventSummaryWindow(QMainWindow):
                 led.drop(p, "no_segment_chosen", seg_txt)
                 return
             if (o["fit_status"] in ("no_fit", "not_attempted")
-                    and any(k in _SEGMENT_FIT_KEYS for k in seg_missing)):
+                    and any(k in _vars.SEGMENT_FIT_KEYS for k in seg_missing)):
                 reason = ("fit_failed" if o["fit_detail"] == "optimizer failed"
                           else "fit_not_attempted")
                 led.drop(p, reason,
@@ -1565,7 +1551,7 @@ class EventSummaryWindow(QMainWindow):
         # from the same register as the plotted values: without it the export
         # gives a point with no error bar while the number sits in the DB.
         errs = {k: k[:-len("_nm")] + "_err" for k in dict.fromkeys((xk, yk))
-                if k.endswith("_nm") and k[:-len("_nm")] + "_err" in _SEGMENT_FIT_KEYS}
+                if k.endswith("_nm") and k[:-len("_nm")] + "_err" in _vars.SEGMENT_FIT_KEYS}
         err_cols = (_vars.columns(sel_paths, list(errs.values()), self._db_path)[1]
                     if errs else {})
 

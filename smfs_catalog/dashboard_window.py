@@ -109,43 +109,8 @@ _DB_COLUMNS: list[tuple[str, str]] = [
     ("indent_mode",           "Indent"),
 ]
 
-# The queue's derived columns, in display order.  KEYS ONLY: names and units
-# come from variables.py and quantities.py, like every other column header.
-_QUEUE_DERIVED_KEYS = (
-    "snapoff_piezo_nm",
-    "contact_dx_nm",
-    "offset_retr",
-    "flatness_slope",
-    "baseline_rms",
-    "invols_slope",
-    "invols_rms",
-    "onset_dx_nm",
-    "rupture_dx_nm",
-    "seg_n_segments",
-    # The reported rupture's force and its two extensions, adjacent because
-    # they are one point: (x from snap-off, x from onset, y).
-    "seg_force_pN",
-    "seg_x_rupture_nm",
-    "seg_x_junction_nm",
-    # Beside the force, because a rupture force means nothing without the rate
-    # it was reached at.
-    "seg_loading_rate_pN_s",
-    "seg_loading_rate_err_pN_s",
-    "seg_loading_stiffness_pN_nm",
-    "seg_loading_stiffness_err_pN_nm",
-    "seg_rate_tau",
-    "seg_l_p_nm",
-    "seg_l_p_err",
-    "seg_l_c_nm",
-    "seg_l_c_err",
-    "seg_tau",
-    "seg_z_max",
-    "seg_x_max_nm",
-    "seg_edge_pinned",
-    "seg_dF_pN",
-    "seg_dX_iso_nm",
-    "seg_dX_ext_nm",
-)
+# The queue's derived columns, in the register's display order.
+_QUEUE_DERIVED_KEYS = _vars.DISPLAY_ORDER
 
 _QUEUE_DERIVED = [(k, _vars.labelled(k)) for k in _QUEUE_DERIVED_KEYS]
 
@@ -222,8 +187,6 @@ _QUEUE_COLUMNS = _QUEUE_COLUMNS_FIXED + _QUEUE_DERIVED
 _QUEUE_BASE_KEYS = list(_QUEUE_DERIVED_KEYS)
 
 _QUEUE_HIDE = _vars.EXCLUDED_VARIABLE_KEYS
-
-_QUEUE_DERIVED_ORDER = _QUEUE_BASE_KEYS
 
 
 def _prettify_key(key: str) -> str:
@@ -883,6 +846,8 @@ class DashboardWindow(QMainWindow):
         _qhdr.setSectionsClickable(True)
         _qhdr.setToolTip("Click a variable column header to view its distribution & drift over time")
         _qhdr.sectionClicked.connect(self._on_queue_header_clicked)
+        _qhdr.setSectionsMovable(True)
+        _qhdr.sectionMoved.connect(self._on_queue_column_moved)
         self._queue_table.cellDoubleClicked.connect(self._on_queue_double_click)
         body_l.addWidget(self._queue_table, 1)
 
@@ -1297,13 +1262,44 @@ class DashboardWindow(QMainWindow):
         keep = set(_QUEUE_BASE_KEYS) | present
         cols: list[tuple[str, str]] = []
         seen: set[str] = set()
-        for key in _QUEUE_DERIVED_ORDER:
+        for key in _vars.display_order(self._db_path):
             if key in keep:
                 cols.append((key, _prettify_key(key)))
                 seen.add(key)
         for key in sorted(present - seen):
             cols.append((key, _prettify_key(key)))
         return cols
+
+    def _apply_hidden_columns(self) -> None:
+        """Hide the derived columns unticked in the criteria window."""
+        hidden = _vars.hidden_columns(self._db_path)
+        for c, (key, _label) in enumerate(self._queue_derived_cols, start=len(_QUEUE_COLUMNS_FIXED)):
+            self._queue_table.setColumnHidden(c, key in hidden)
+
+    def _on_queue_column_moved(self, _logical: int, old_visual: int, new_visual: int) -> None:
+        """Save a dragged column's new place as the order of every variable list.
+
+        The drag is undone and the table rebuilt in the saved order, so a
+        section's logical index stays its column — the header click handler
+        relies on that.  The fixed columns always stay first.
+        """
+        hdr = self._queue_table.horizontalHeader()
+        n_fixed = len(_QUEUE_COLUMNS_FIXED)
+        by_visual = sorted(range(hdr.count()), key=hdr.visualIndex)
+        moved = [self._queue_derived_cols[c - n_fixed][0] for c in by_visual if c >= n_fixed]
+        hdr.blockSignals(True)
+        hdr.moveSection(new_visual, old_visual)
+        hdr.blockSignals(False)
+        # The table's columns take back their own slots in the full order, so
+        # variables not in this queue keep their places.
+        in_table, refill = set(moved), iter(moved)
+        order = [next(refill) if k in in_table else k
+                 for k in _vars.display_order(self._db_path)]
+        _vars.set_display_order(order + list(refill), self._db_path)
+        self._refresh_queue_table()
+        dlg = getattr(self, "_criteria_dlg", None)
+        if dlg is not None and dlg.isVisible():
+            dlg.set_variable_order(self._queue_derived_cols)
 
     def _fetch_queue_column_data(
         self, paths: list[str],
@@ -1340,6 +1336,7 @@ class DashboardWindow(QMainWindow):
             tip = _vars.describe(key)
             if tip:
                 self._queue_table.horizontalHeaderItem(c).setToolTip(tip)
+        self._apply_hidden_columns()
 
         paths = [r["path"] for r in rows]
         col_values = self._fetch_queue_column_data(paths)
@@ -2104,6 +2101,7 @@ class DashboardWindow(QMainWindow):
         )
         dlg.view_file_requested.connect(self._open_raw_viewer)
         dlg.criteria_changed.connect(self._on_criteria_changed)
+        dlg.columns_changed.connect(self._apply_hidden_columns)
         self._criteria_dlg = dlg
         self._spawn(dlg)
 

@@ -105,8 +105,10 @@ class _CardWidget(QWidget):
     # A drag in progress: the window refreshes this card's own count only.
     moved = pyqtSignal(str)
     open_detail = pyqtSignal(str, str)
+    # (key, shown) — the "show in dashboard table" tick changed.
+    shown_toggled = pyqtSignal(str, bool)
 
-    def __init__(self, card: _cards.Card, parent=None) -> None:
+    def __init__(self, card: _cards.Card, shown: bool = True, parent=None) -> None:
         super().__init__(parent)
         self._card = card
         self._updating = False
@@ -124,7 +126,17 @@ class _CardWidget(QWidget):
         self._title = QLabel(card.label)
         f = self._title.font(); f.setBold(True); self._title.setFont(f)
         self._title.setToolTip(_criterion_tooltip(card.key))
-        root.addWidget(self._title)
+        self._show_chk = QCheckBox("Show in table")
+        self._show_chk.setChecked(shown)
+        self._show_chk.setToolTip(
+            "Whether the dashboard table shows this variable's column. "
+            "Display only: a hidden variable still gates the hit.")
+        self._show_chk.toggled.connect(
+            lambda on: self.shown_toggled.emit(card.key, on))
+        title_row = QHBoxLayout()
+        title_row.addWidget(self._title, 1)
+        title_row.addWidget(self._show_chk)
+        root.addLayout(title_row)
 
         self._cost = QLabel("")
         self._cost.setStyleSheet(style.qss_text(style.UI_MUTED))
@@ -418,6 +430,8 @@ class CriteriaDialog(QMainWindow):
     # Emitted whenever the gate changes, so the dashboard updates the Hit
     # column, its criteria line and any open population window.
     criteria_changed = pyqtSignal()
+    # Emitted when a card's "show in table" tick changes the stored hidden set.
+    columns_changed = pyqtSignal()
 
     def __init__(
         self,
@@ -517,15 +531,21 @@ class CriteriaDialog(QMainWindow):
             w.deleteLater()
         self._widgets.clear()
 
+        hidden = _vars.hidden_columns(self._db_path)
         for card in _cards.cohort(self._variables, self._event_paths,
                                   self._experimentalist, self._db_path):
-            w = _CardWidget(card)
+            w = _CardWidget(card, shown=card.key not in hidden)
+            w.shown_toggled.connect(self._on_shown_toggled)
             w.committed.connect(self._on_committed)
             w.moved.connect(self._on_moved)
             w.open_detail.connect(self._open_detail)
             self._widgets[card.key] = w
         self._relayout()
         self.refresh_total()
+
+    def _on_shown_toggled(self, key: str, shown: bool) -> None:
+        _vars.set_column_shown(key, shown, self._db_path)
+        self.columns_changed.emit()
 
     def _relayout(self) -> None:
         """Put each card in the section its bounds put it in.
@@ -568,6 +588,11 @@ class CriteriaDialog(QMainWindow):
         who = self._experimentalist or _db.DEFAULT_EXPERIMENTALIST
         self.setWindowTitle("SMFS — hit criteria")
         self._context_label.setText(f"Criteria owner: {who}")
+
+    def set_variable_order(self, variables: list[tuple[str, str]]) -> None:
+        """Re-place the existing cards in a new order, without rebuilding them."""
+        self._variables = variables
+        self._relayout()
 
     def set_event_paths(self, event_paths: list[str]) -> None:
         """Update the input cohort (dashboard calls this on queue changes).
