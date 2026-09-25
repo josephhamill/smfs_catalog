@@ -324,3 +324,36 @@ def test_an_axis_shows_its_unit_exactly_once():
             assert text.count(f"({unit})") == 1, text
     finally:
         plot.deleteLater()
+
+
+def test_offered_variables_follow_the_display_order():
+    offered = [v.key for v in _vars.available(ALL, DB)]
+    ordered = [k for k in offered if k in _vars.DISPLAY_ORDER]
+    assert ordered == [k for k in _vars.DISPLAY_ORDER if k in offered]
+    assert offered[:len(ordered)] == ordered
+
+
+def test_a_hidden_column_is_stored_catalog_wide_and_can_be_shown_again():
+    assert _vars.hidden_columns(DB) == frozenset()
+    _vars.set_column_shown("seg_tau", False, DB)
+    _vars.set_column_shown("seg_z_max", False, DB)
+    assert _vars.hidden_columns(DB) == {"seg_tau", "seg_z_max"}
+    _vars.set_column_shown("seg_tau", True, DB)
+    assert _vars.hidden_columns(DB) == {"seg_z_max"}
+    _vars.set_column_shown("seg_z_max", True, DB)
+
+
+def test_a_saved_order_keeps_new_variables_beside_their_group():
+    default = list(_vars.DISPLAY_ORDER)
+    assert _vars.display_order(DB) == tuple(default)
+    # Saved before seg_z_max existed, with seg_tau dragged to the front.
+    saved = ["seg_tau"] + [k for k in default if k not in ("seg_tau", "seg_z_max")]
+    _vars.set_display_order(saved, DB)
+    got = list(_vars.display_order(DB))
+    assert got[0] == "seg_tau"
+    prev = default[default.index("seg_z_max") - 1]
+    assert got.index("seg_z_max") == got.index(prev) + 1
+    assert sorted(got) == sorted(default)
+    offered = [v.key for v in _vars.available(ALL, DB)]
+    assert offered[0] == "seg_tau"
+    _vars.set_display_order(default, DB)

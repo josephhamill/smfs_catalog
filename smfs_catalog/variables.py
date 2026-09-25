@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 from dataclasses import dataclass
 
 import numpy as np
@@ -138,6 +139,116 @@ _SEG_LABELS: dict[str, str] = {
     "seg_loading_stiffness_err_pN_nm": "Loading stiffness err",
     "seg_rate_tau":                    "Seg rate τ",
 }
+
+
+# ── The order variables are shown in ──────────────────────────────────────────
+#
+# The default order of every list of variables shown; users rearrange it by
+# dragging dashboard columns (see display_order). Adjacency carries meaning, so
+# the reason two keys sit together is written beside them.
+DISPLAY_ORDER: tuple[str, ...] = (
+    "snapoff_piezo_nm",
+    "contact_dx_nm",
+    "offset_retr",
+    "flatness_slope",
+    "baseline_rms",
+    "invols_slope",
+    "invols_rms",
+    "onset_dx_nm",
+    "rupture_dx_nm",
+    "seg_n_segments",
+    # The reported rupture's force and its two extensions, adjacent because
+    # they are one point: (x from snap-off, x from onset, y).
+    "seg_force_pN",
+    "seg_x_rupture_nm",
+    "seg_x_junction_nm",
+    # Beside the force, because a rupture force means nothing without the rate
+    # it was reached at.
+    "seg_loading_rate_pN_s",
+    "seg_loading_rate_err_pN_s",
+    "seg_loading_stiffness_pN_nm",
+    "seg_loading_stiffness_err_pN_nm",
+    "seg_rate_tau",
+    "seg_l_p_nm",
+    "seg_l_p_err",
+    "seg_l_c_nm",
+    "seg_l_c_err",
+    "seg_tau",
+    "seg_z_max",
+    "seg_x_max_nm",
+    "seg_edge_pinned",
+    "seg_dF_pN",
+    "seg_dX_iso_nm",
+    "seg_dX_ext_nm",
+)
+
+# seg_* variables that exist only once the selected segment got far enough
+# through roi_events.fit_segments, so a missing value is explained by that
+# segment's stored fit outcome. The rest (ROI-level deltas, segment count) can
+# be missing for reasons the fit outcome does not describe.
+SEGMENT_FIT_KEYS: frozenset[str] = frozenset({
+    "seg_l_p_nm", "seg_l_c_nm", "seg_l_p_err", "seg_l_c_err",
+    "seg_force_pN", "seg_x_rupture_nm", "seg_x_junction_nm",
+    "seg_tau", "seg_z_max", "seg_x_max_nm", "seg_edge_pinned",
+    "seg_loading_rate_pN_s", "seg_loading_stiffness_pN_nm",
+    "seg_loading_rate_err_pN_s", "seg_loading_stiffness_err_pN_nm",
+    "seg_rate_tau",
+})
+
+# DISPLAY_ORDER as the user has rearranged it by dragging dashboard columns,
+# for everyone using this catalog.
+_APP_SETTING_ORDER = "column_order"
+
+
+def display_order(db_path: str = _db.DEFAULT_DB_PATH) -> tuple[str, ...]:
+    """The saved order, or DISPLAY_ORDER if none.
+
+    A key missing from the saved order (a variable added since) goes in after
+    whichever key precedes it in DISPLAY_ORDER, so it lands beside its group.
+    """
+    raw = _db.get_app_setting(_APP_SETTING_ORDER, "", db_path)
+    try:
+        saved = json.loads(raw) if raw else []
+    except ValueError:
+        saved = []
+    order = [k for k in saved if isinstance(k, str)]
+    placed = set(order)
+    for i, key in enumerate(DISPLAY_ORDER):
+        if key in placed:
+            continue
+        prev = next((k for k in reversed(DISPLAY_ORDER[:i]) if k in placed), None)
+        order.insert(order.index(prev) + 1 if prev else 0, key)
+        placed.add(key)
+    return tuple(order)
+
+
+def set_display_order(keys: list[str], db_path: str = _db.DEFAULT_DB_PATH) -> None:
+    """Save the order every list of variables is shown in."""
+    _db.set_app_setting(_APP_SETTING_ORDER, json.dumps(list(keys)), db_path)
+
+
+# Which variables the dashboard table hides, for everyone using this catalog.
+# Stored as the hidden set so a newly added variable is shown by default.
+_APP_SETTING_HIDDEN = "hidden_columns"
+
+
+def hidden_columns(db_path: str = _db.DEFAULT_DB_PATH) -> frozenset[str]:
+    """Keys whose dashboard column is hidden."""
+    raw = _db.get_app_setting(_APP_SETTING_HIDDEN, "", db_path)
+    try:
+        return frozenset(json.loads(raw)) if raw else frozenset()
+    except ValueError:
+        return frozenset()
+
+
+def set_column_shown(key: str, shown: bool, db_path: str = _db.DEFAULT_DB_PATH) -> None:
+    """Show or hide one variable's dashboard column."""
+    hidden = set(hidden_columns(db_path))
+    if shown:
+        hidden.discard(key)
+    else:
+        hidden.add(key)
+    _db.set_app_setting(_APP_SETTING_HIDDEN, json.dumps(sorted(hidden)), db_path)
 
 
 # ── What each variable MEANS ─────────────────────────────────────────────────
@@ -321,6 +432,9 @@ def available(paths: list[str], db_path: str = _db.DEFAULT_DB_PATH) -> list[Vari
             continue
         out.append(Variable(k, _label(k), SOURCE_ANALYSIS))
     out += [Variable(k, lbl, SOURCE_FILE) for k, lbl in _FILE_COLUMNS.items()]
+    order = display_order(db_path)
+    rank = {k: i for i, k in enumerate(order)}
+    out.sort(key=lambda v: rank.get(v.key, len(order)))
     return out
 
 
