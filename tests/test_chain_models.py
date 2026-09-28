@@ -6,7 +6,7 @@
 # (at your option) any later version. See the LICENSE file in the
 # repository root, or <https://www.gnu.org/licenses/>.
 
-"""The chain models fitted beside Marko-Siggia recover what they were given."""
+"""The chain models beyond Marko-Siggia recover what they were given."""
 
 from __future__ import annotations
 
@@ -14,9 +14,7 @@ import numpy as np
 import pytest
 
 from smfs_catalog import models as _m
-from smfs_catalog.roi_events import (
-    Segment, _fit_chain_model, events_to_payload, payload_to_events,
-)
+from smfs_catalog.roi_events import _fit_chain_model
 
 # (model key, true params). Forces run to ~500 pN so a stretch modulus is
 # constrained, as it is on real high-force ramps.
@@ -58,17 +56,3 @@ def test_force_from_extension_inverts_the_model(key):
     F = np.array([1.0, 10.0, 100.0, 1000.0])
     x = extension(F, *TRUE[key])
     assert _m.CHAIN_MODELS[key].force(x, *TRUE[key]) == pytest.approx(F, rel=1e-3)
-
-
-def test_model_fits_survive_the_payload_and_old_documents_read_empty():
-    from smfs_catalog.roi_events import CurveEvents, ROI, Rupture
-    seg = Segment(left_idx=0, right_idx=10, left_piezo_nm=0.0, right_piezo_nm=1.0)
-    seg.model_fits = {"ewlc": {"l_p": 0.4, "l_p_err": 0.01, "tau": 1.0}, "fjc": None}
-    rup = Rupture(idx=10, piezo_nm=1.0, d1_height=1.0)
-    ev = CurveEvents(rois=[ROI(onset_idx=0, return_idx=12, onset_piezo_nm=0.0,
-                               return_piezo_nm=1.2, ruptures=[rup], segments=[seg])],
-                     detector="test")
-    doc = events_to_payload(ev)
-    assert payload_to_events(doc).rois[0].segments[0].model_fits == seg.model_fits
-    del doc["rois"][0]["segments"][0]["model_fits"]
-    assert payload_to_events(doc).rois[0].segments[0].model_fits == {}

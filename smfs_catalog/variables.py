@@ -22,7 +22,6 @@ import numpy as np
 
 from . import db as _db
 from . import quantities as _quant
-from .models import MODEL_VARIABLES
 from .roi_pipeline import (
     SEG_SUMMARY_KEYS, SEG_SUMMARY_FIELD, read_segment_select, segment_summary_bulk,
 )
@@ -141,18 +140,6 @@ _SEG_LABELS: dict[str, str] = {
     "seg_rate_tau":                    "Seg rate τ",
 }
 
-# The further chain models' variables, named from their registry entries.
-_MODEL_LABEL = {"bwlc": "Bouchiat", "ewlc": "eWLC", "fjc": "FJC", "efjc": "eFJC"}
-_PARAM_LABEL = {"l_p": "l_p", "l_c": "l_c", "b": "b", "k0": "K0", "k_s": "K_s"}
-_PARAM_MEANING = {
-    "l_p": "persistence length", "l_c": "contour length", "b": "Kuhn length",
-    "k0": "stretch modulus", "k_s": "segment stretch modulus",
-}
-_SEG_LABELS.update({
-    key: f"Seg {_MODEL_LABEL[m.key]} {_PARAM_LABEL[p]}" + (" err" if err else "")
-    for key, _, m, p, err in MODEL_VARIABLES
-})
-
 
 # ── The order variables are shown in ──────────────────────────────────────────
 #
@@ -190,8 +177,6 @@ DISPLAY_ORDER: tuple[str, ...] = (
     "seg_z_max",
     "seg_x_max_nm",
     "seg_edge_pinned",
-    # The further chain models, each one's parameters beside their errors.
-    *(key for key, *_ in MODEL_VARIABLES),
     "seg_dF_pN",
     "seg_dX_iso_nm",
     "seg_dX_ext_nm",
@@ -208,7 +193,6 @@ SEGMENT_FIT_KEYS: frozenset[str] = frozenset({
     "seg_loading_rate_pN_s", "seg_loading_stiffness_pN_nm",
     "seg_loading_rate_err_pN_s", "seg_loading_stiffness_err_pN_nm",
     "seg_rate_tau",
-    *(key for key, *_ in MODEL_VARIABLES),
 })
 
 
@@ -317,16 +301,6 @@ DESCRIPTIONS: dict[str, str] = {
     "xpos_um": "Stage X position on the sample, useful for detecting spatially localized surface effects.",
     "ypos_um": "Stage Y position on the sample, useful for detecting spatially localized surface effects.",
 }
-
-
-DESCRIPTIONS.update({
-    key: (f"Correlation-corrected fit uncertainty (±1σ) on the {m.name} "
-          f"{_PARAM_MEANING[p]}; it is a lower bound on total uncertainty."
-          if err else
-          f"{_PARAM_MEANING[p].capitalize()} from the {m.name} fit of the "
-          f"currently selected Ultimate or Penultimate segment.")
-    for key, _, m, p, err in MODEL_VARIABLES
-})
 
 
 def describe(key: str) -> str:

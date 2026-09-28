@@ -55,7 +55,7 @@ ANA = {
     "roi_inner_threshold_nm_per_nm": 2.2916,
     "roi_post_snapoff_mask_nm": 20.0, "roi_onset_threshold_nm": -0.2,
     "roi_detector_mode_idx": 1.0, "roi_prominence": 1.0,
-    "roi_min_distance_pts": 6.0,
+    "roi_min_distance_pts": 6.0, "chain_model_idx": 4.0,
 }
 DYL = {
     "baseline_anchor_nm": 20.0, "spectral_cutoff_hz": 1500.0,
@@ -66,7 +66,7 @@ DYL = {
     "roi_inner_threshold_nm_per_nm": 0.4907,
     "roi_post_snapoff_mask_nm": 15.0, "roi_onset_threshold_nm": 0.0,
     "roi_detector_mode_idx": 2.0, "roi_prominence": 0.5,
-    "roi_min_distance_pts": 12.0,
+    "roi_min_distance_pts": 12.0, "chain_model_idx": 2.0,
 }
 ANA_PATH = _db.normalize_path("/x/ana.ibw")
 DYL_PATH = _db.normalize_path("/x/dyl.ibw")
@@ -162,6 +162,7 @@ def test_signature_changes_when_a_parameter_changes(dbp):
     base = event_params_from(_db.load_analysis_params(dbp))
     base_sig = event_map_params_json(base)
     for field, bump in (("anchor_nm", 99.0), ("d1_threshold", 9.9),
-                        ("trim_pts", 7777), ("invols_window_pts", 999)):
+                        ("trim_pts", 7777), ("invols_window_pts", 999),
+                        ("chain_model", "fjc")):
         assert event_map_params_json(replace(base, **{field: bump})) != base_sig, (
             f"changing {field} did not change the stored signature")

@@ -34,8 +34,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 
-from .models import MODEL_VARIABLES
-
 # ── Units ─────────────────────────────────────────────────────────────────────
 # Plain ASCII/Unicode text, machine-readable, deliberately NOT typeset.  Same
 # boundary style.mathify() draws: typeset on plots, plain everywhere else.
@@ -153,16 +151,6 @@ GENERIC = Quantity("", 4)      # unknown key: 4 decimals, no unit claimed
 # roi_pipeline.SEG_SUMMARY_KEYS, and db.PARAM_KEYS.  One key, one answer,
 # wherever it is displayed.
 
-# (value, ±1σ) for each chain-model parameter, models.MODEL_VARIABLES' units.
-# Stretch moduli run from hundreds of pN to the 1e7 bound.
-_CHAIN_PARAM: dict[str, tuple[Quantity, Quantity]] = {
-    "l_p": (Quantity(NM, 3), Quantity(NM, 4)),
-    "b":   (Quantity(NM, 3), Quantity(NM, 4)),
-    "l_c": (Quantity(NM, 1), Quantity(NM, 3)),
-    "k0":  (Quantity(PN, 0), Quantity(PN, 0)),
-    "k_s": (Quantity(PN, 0), Quantity(PN, 0)),
-}
-
 QUANTITIES: dict[str, Quantity] = {
 
     # ── File/instrument metadata ──────────────────────────────────────────────
@@ -214,9 +202,6 @@ QUANTITIES: dict[str, Quantity] = {
     "seg_loading_rate_err_pN_s":       Quantity(PN_PER_S, 1),
     "seg_loading_stiffness_err_pN_nm": Quantity(PN_PER_NM, 3),
     "seg_rate_tau":                    Quantity(PTS, 1),
-    # Every further chain model's parameters and errors, each at the precision
-    # of its Marko-Siggia counterpart (a Kuhn length reads like l_p).
-    **{key: _CHAIN_PARAM[param][err] for key, _, _, param, err in MODEL_VARIABLES},
 
     # ── Per-curve landmarks and calibration (analysis_results) ───────────────
     "contact_piezo_nm": Quantity(NM, 1),   # ~ -900 .. 3600
@@ -272,6 +257,7 @@ QUANTITIES: dict[str, Quantity] = {
     "roi_detector_mode_idx":         INTEGER,
     "roi_prominence":                Quantity(NM_PER_NM, 3),
     "roi_min_distance_pts":          Quantity(PTS, 0, integer=True),
+    "chain_model_idx":               INTEGER,
 
     # ── 2DH grid settings ────────────────────────────────────────────────────
     # Normalized axes x/l_c and F·l_p/kT are dimensionless.

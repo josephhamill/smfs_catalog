@@ -44,7 +44,7 @@ from typing import Optional
 import numpy as np
 from scipy.signal import find_peaks
 
-from .models import EXTRA_MODELS, ChainModel, fit_model, wlc
+from .models import ChainModel, fit_model, wlc
 from .regression import linear_fit
 from .roi_detection import find_onset
 
@@ -179,10 +179,6 @@ class Segment:
     # verified missing fit from an unreported/failed calculation.
     fit_status: str = "not_attempted"
     fit_detail: Optional[str] = None
-    # The models.EXTRA_MODELS fits of the same window, by model key:
-    # {param: value, param + "_err": ±1σ, "tau": ...}, or None where that
-    # model's fit failed. Empty until fit_segments() runs.
-    model_fits: dict = field(default_factory=dict)
 
     @property
     def width_pts(self) -> int:
@@ -1015,10 +1011,6 @@ def fit_segments(
                 seg.fit_status = "no_fit"
                 seg.fit_detail = "optimizer failed"
 
-            start = (fit[0], fit[1]) if fit is not None else (guess_l_p, guess_l_c)
-            seg.model_fits = {m.key: _fit_chain_model(m, x_fit, F_fit, *start)
-                              for m in EXTRA_MODELS}
-
             prev_rup = rup
 
 
@@ -1183,7 +1175,7 @@ def _fit_chain_model(
     model: ChainModel, x: np.ndarray, F: np.ndarray, l_p: float, l_c: float,
 ) -> Optional[dict]:
     """
-    Fit one models.EXTRA_MODELS entry to the window _fit_wlc_window fit, from
+    Fit one models.CHAIN_MODELS entry to the window _fit_wlc_window fit, from
     that fit's (l_p, l_c).  Errors carry the same sqrt(tau) correction, for
     the reason given there.  l_c is floored above the data only for an
     inextensible model, whose force diverges at l_c.  None on failure.
@@ -1246,7 +1238,7 @@ PAYLOAD_SEGMENT_KEYS: frozenset[str] = frozenset({
     "tau", "x_max_nm", "left_extension_nm", "edge_pinned",
     "loading_rate_pN_s", "loading_stiffness_pN_nm",
     "loading_rate_err_pN_s", "loading_stiffness_err_pN_nm", "rate_tau",
-    "model_fits", "fit_status", "fit_detail",
+    "fit_status", "fit_detail",
 })
 
 
@@ -1308,8 +1300,6 @@ def events_to_payload(events: CurveEvents) -> dict:
                      "loading_stiffness_err_pN_nm":
                          s.loading_stiffness_err_pN_nm,
                      "rate_tau": s.rate_tau,
-                     # Additive, like the loading rate above.
-                     "model_fits": s.model_fits,
                      "fit_status": s.fit_status,
                      "fit_detail": s.fit_detail}
                     for s in roi.segments
@@ -1358,7 +1348,6 @@ def payload_to_events(payload: dict) -> Optional[CurveEvents]:
                     loading_stiffness_err_pN_nm=s.get(
                         "loading_stiffness_err_pN_nm"),
                     rate_tau=s.get("rate_tau"),
-                    model_fits=s.get("model_fits") or {},
                     fit_status=s.get(
                         "fit_status",
                         "fit_available" if s.get("l_p_nm") is not None else "not_attempted",

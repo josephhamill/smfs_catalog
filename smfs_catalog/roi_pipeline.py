@@ -33,7 +33,7 @@ from dataclasses import dataclass, asdict
 from . import db as _db
 from .analysis_params import AnalysisParams
 from .curve_loader import LoadError, load_force_curve
-from .models import MODEL_VARIABLES
+from .models import CHAIN_MODEL_BY_IDX
 from .provenance import cache_version
 from .roi_selection import (
     ReportedSegmentChoice,
@@ -87,6 +87,7 @@ class EventParams:
     detector:          str
     prominence:        float
     distance_pts:      int
+    chain_model:       str       # a models.CHAIN_MODELS key
     invols_offset_pts: int
     invols_window_pts: int
 
@@ -124,6 +125,7 @@ def event_params_from(
         detector          = det,
         prominence=params.roi_prominence,
         distance_pts=params.roi_min_distance_pts,
+        chain_model=CHAIN_MODEL_BY_IDX[params.chain_model_idx],
         invols_offset_pts=params.invols_offset_pts,
         invols_window_pts=params.invols_window_pts,
     )
@@ -563,8 +565,6 @@ SEG_SUMMARY_KEYS = (
     "seg_loading_rate_pN_s", "seg_loading_stiffness_pN_nm",
     "seg_loading_rate_err_pN_s", "seg_loading_stiffness_err_pN_nm",
     "seg_rate_tau",
-    # Every further chain model's parameters and errors, from its registry.
-    *(key for key, *_ in MODEL_VARIABLES),
 )
 SEG_SUMMARY_FIELD = {
     "seg_l_p_nm": "l_p_nm", "seg_l_c_nm": "l_c_nm",
@@ -581,7 +581,6 @@ SEG_SUMMARY_FIELD = {
     "seg_loading_rate_err_pN_s": "loading_rate_err_pN_s",
     "seg_loading_stiffness_err_pN_nm": "loading_stiffness_err_pN_nm",
     "seg_rate_tau": "rate_tau",
-    **{key: fld for key, fld, *_ in MODEL_VARIABLES},
 }
 
 
@@ -705,7 +704,6 @@ def segment_summary_bulk(
             "loading_rate_err_pN_s": None,
             "loading_stiffness_err_pN_nm": None, "rate_tau": None,
             "fit_status": None, "fit_detail": None,
-            **{fld: None for _, fld, *_ in MODEL_VARIABLES},
         }
         for p in paths
     }
@@ -830,9 +828,6 @@ def segment_summary_bulk(
             row["loading_rate_err_pN_s"]      = seg.loading_rate_err_pN_s
             row["loading_stiffness_err_pN_nm"] = seg.loading_stiffness_err_pN_nm
             row["rate_tau"] = seg.rate_tau
-            for _, fld, model, param, err in MODEL_VARIABLES:
-                fit = seg.model_fits.get(model.key)
-                row[fld] = None if fit is None else fit.get(param + "_err" if err else param)
             # Numeric 0/1, not a bool: this reaches criteria_gate (which bounds
             # numbers) and quantities.format_value (which formats them).  The
             # dataclass keeps the bool; only this projection flattens it.

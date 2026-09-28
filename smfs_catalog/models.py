@@ -76,7 +76,7 @@ def fit_model(
     return _curve_fit(model_fn, x, F, p0=p0, bounds=bounds, maxfev=maxfev)
 
 
-# ── Further chain models, fitted beside Marko-Siggia ─────────────────────────
+# ── Further chain models, one chosen per profile ─────────────────────────────
 
 # Bouchiat et al. (1999) polynomial correction to Marko-Siggia, i = 2..7.
 _BOUCHIAT_A = (-0.5164228, -2.737418, 16.07497, -38.87607, 39.49944, -14.17718)
@@ -167,6 +167,8 @@ class ChainModel:
 
 
 _INF = np.inf
+# A profile's chain_model_idx is a position in this registry. Append only:
+# reordering would change what every stored profile means.
 CHAIN_MODELS: dict[str, ChainModel] = {m.key: m for m in (
     ChainModel("wlc",  "WLC (Marko-Siggia)", wlc, ("l_p", "l_c"),
                ((0.05, 500.0), (0.0, _INF)), lc_floor=True),
@@ -181,15 +183,4 @@ CHAIN_MODELS: dict[str, ChainModel] = {m.key: m for m in (
                ((0.01, 1000.0), (1e-3, _INF), (1.0, 1e7)), lc_floor=False,
                stretch_k="k_s"),
 )}
-
-# The models fitted beside Marko-Siggia, which keeps its own fields.
-EXTRA_MODELS: tuple[ChainModel, ...] = tuple(
-    m for k, m in CHAIN_MODELS.items() if k != "wlc")
-
-# (variable key, summary field, model, param, is error) for every EXTRA_MODELS
-# parameter and its ±1σ, in registry order. Units come from quantities.py.
-MODEL_VARIABLES: tuple[tuple[str, str, ChainModel, str, bool], ...] = tuple(
-    (f"seg_{m.key}_{p}" + ("_err" if err else ""),
-     f"{m.key}_{p}" + ("_err" if err else ""), m, p, err)
-    for m in EXTRA_MODELS for p in m.params for err in (False, True)
-)
+CHAIN_MODEL_BY_IDX: tuple[str, ...] = tuple(CHAIN_MODELS)
