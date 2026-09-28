@@ -397,7 +397,8 @@ def compute_curve_events_coords(
     snap = float(curve.piezo_retr[si]) if 0 <= si < len(curve.piezo_retr) else 0.0
 
     if _cached_events is None:
-        fit_segments(curve, events, offset, inv, snap, low_retr=dc.low_retr)
+        fit_segments(curve, events, offset, inv, snap, low_retr=dc.low_retr,
+                     chain_model=ep.chain_model)
 
         if can_read_cache:
             _db.write_event_map(

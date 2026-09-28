@@ -14,7 +14,10 @@ import numpy as np
 import pytest
 
 from smfs_catalog import models as _m
-from smfs_catalog.roi_events import _fit_chain_model
+from smfs_catalog.roi_events import (
+    _SEGMENT_FIELDS, CurveEvents, ROI, Rupture, Segment, _fit_chain_model,
+    events_to_payload, payload_to_events,
+)
 
 # (model key, true params). Forces run to ~500 pN so a stretch modulus is
 # constrained, as it is on real high-force ramps.
@@ -45,8 +48,9 @@ def test_each_model_recovers_its_own_parameters(key):
     fit = _fit_chain_model(_m.CHAIN_MODELS[key], x, F, 0.6, 1.3 * float(np.max(x)))
     assert fit is not None
     for name, want in zip(_m.CHAIN_MODELS[key].params, TRUE[key]):
-        assert fit[name] == pytest.approx(want, rel=0.05), name
-        assert fit[name + "_err"] > 0
+        value_field, err_field = _SEGMENT_FIELDS[name]
+        assert fit[value_field] == pytest.approx(want, rel=0.05), name
+        assert fit[err_field] > 0
 
 
 @pytest.mark.parametrize("key", ["ewlc", "fjc", "efjc"])
@@ -56,3 +60,17 @@ def test_force_from_extension_inverts_the_model(key):
     F = np.array([1.0, 10.0, 100.0, 1000.0])
     x = extension(F, *TRUE[key])
     assert _m.CHAIN_MODELS[key].force(x, *TRUE[key]) == pytest.approx(F, rel=1e-3)
+
+
+def test_the_segment_keeps_its_model_and_an_older_document_reads_as_marko_siggia():
+    seg = Segment(left_idx=0, right_idx=10, left_piezo_nm=0.0, right_piezo_nm=1.0,
+                  chain_model="efjc", b_nm=0.8, b_err=0.01, k_pN=5000.0, k_err=90.0)
+    rup = Rupture(idx=10, piezo_nm=1.0, d1_height=1.0)
+    ev = CurveEvents(rois=[ROI(onset_idx=0, return_idx=12, onset_piezo_nm=0.0,
+                               return_piezo_nm=1.2, ruptures=[rup], segments=[seg])],
+                     detector="test")
+    doc = events_to_payload(ev)
+    back = payload_to_events(doc).rois[0].segments[0]
+    assert (back.chain_model, back.b_nm, back.k_pN, back.k_err) == ("efjc", 0.8, 5000.0, 90.0)
+    del doc["rois"][0]["segments"][0]["chain_model"]
+    assert payload_to_events(doc).rois[0].segments[0].chain_model == "wlc"
