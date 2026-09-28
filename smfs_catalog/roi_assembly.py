@@ -68,6 +68,11 @@ def _seg_row(roi: ROI, i: int, *, file_id, path, roi_index: int) -> dict:
         "l_c_nm":      seg.l_c_nm,
         "l_p_err":     seg.l_p_err,
         "l_c_err":     seg.l_c_err,
+        "chain_model": seg.chain_model,
+        "b_nm":        seg.b_nm,
+        "b_err":       seg.b_err,
+        "k_pN":        seg.k_pN,
+        "k_err":       seg.k_err,
         # Fit-conditioning diagnostics.  These travel WITH the error bars,
         # in the same row: uncertainty travels with the value it belongs to,
         # and an uncertainty that leaves the app without the number

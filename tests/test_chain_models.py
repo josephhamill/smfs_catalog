@@ -62,6 +62,12 @@ def test_force_from_extension_inverts_the_model(key):
     assert _m.CHAIN_MODELS[key].force(x, *TRUE[key]) == pytest.approx(F, rel=1e-3)
 
 
+def test_b_and_k_travel_with_their_errors():
+    from smfs_catalog.variables import error_key
+    assert error_key("seg_b_nm") == "seg_b_err"
+    assert error_key("seg_k_pN") == "seg_k_err"
+
+
 def test_the_segment_keeps_its_model_and_an_older_document_reads_as_marko_siggia():
     seg = Segment(left_idx=0, right_idx=10, left_piezo_nm=0.0, right_piezo_nm=1.0,
                   chain_model="efjc", b_nm=0.8, b_err=0.01, k_pN=5000.0, k_err=90.0)

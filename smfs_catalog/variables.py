@@ -126,7 +126,11 @@ _SEG_LABELS: dict[str, str] = {
     "seg_l_p_err":     "Seg l_p err",
     "seg_l_c_nm":      "Seg l_c",
     "seg_l_c_err":     "Seg l_c err",
-    "seg_tau":         "Seg τ",
+    "seg_b_nm":        "Seg b",
+    "seg_b_err":       "Seg b err",
+    "seg_k_pN":        "Seg K",
+    "seg_k_err":       "Seg K err",
+    "seg_tau":        "Seg τ",
     "seg_z_max":       "Seg z_max",
     "seg_x_max_nm":    "Seg x_max",
     "seg_edge_pinned": "Seg edge-pinned",
@@ -173,6 +177,11 @@ DISPLAY_ORDER: tuple[str, ...] = (
     "seg_l_p_err",
     "seg_l_c_nm",
     "seg_l_c_err",
+    # The chain model's other parameters, beside l_p and l_c.
+    "seg_b_nm",
+    "seg_b_err",
+    "seg_k_pN",
+    "seg_k_err",
     "seg_tau",
     "seg_z_max",
     "seg_x_max_nm",
@@ -188,6 +197,7 @@ DISPLAY_ORDER: tuple[str, ...] = (
 # be missing for reasons the fit outcome does not describe.
 SEGMENT_FIT_KEYS: frozenset[str] = frozenset({
     "seg_l_p_nm", "seg_l_c_nm", "seg_l_p_err", "seg_l_c_err",
+    "seg_b_nm", "seg_b_err", "seg_k_pN", "seg_k_err",
     "seg_force_pN", "seg_x_rupture_nm", "seg_x_junction_nm",
     "seg_tau", "seg_z_max", "seg_x_max_nm", "seg_edge_pinned",
     "seg_loading_rate_pN_s", "seg_loading_stiffness_pN_nm",
@@ -198,7 +208,7 @@ SEGMENT_FIT_KEYS: frozenset[str] = frozenset({
 
 def error_key(key: str) -> str | None:
     """The key holding `key`'s fit uncertainty (±1σ), or None if it has none."""
-    stem = key[:-len("_nm")] if key.endswith("_nm") else key
+    stem = next((key[:-len(u)] for u in ("_nm", "_pN") if key.endswith(u)), key)
     return stem + "_err" if stem + "_err" in SEGMENT_FIT_KEYS else None
 
 # DISPLAY_ORDER as the user has rearranged it by dragging dashboard columns,
@@ -273,12 +283,16 @@ DESCRIPTIONS: dict[str, str] = {
     "seg_force_pN": "Rupture force terminating the currently selected Ultimate or Penultimate segment, or a manually picked Primary segment on curves that have one.",
     "seg_x_rupture_nm": "Extension at that same rupture, from snap-off, on the deflection-corrected axis the WLC fits use. The junction's end-to-end length when it broke, so it is the one comparable with Seg l_c.",
     "seg_x_junction_nm": "How far the junction had stretched when that rupture happened: the same extension measured from the junction's onset, not snap-off. A stretch, not a length — not comparable with Seg l_c.",
-    "seg_l_p_nm": "WLC persistence length fitted to the currently selected Ultimate or Penultimate segment.",
-    "seg_l_c_nm": "WLC contour length fitted to the currently selected Ultimate or Penultimate segment.",
+    "seg_l_p_nm": "Persistence length from the profile's chain-model fit of the currently selected Ultimate or Penultimate segment. Blank under an FJC model, which has none.",
+    "seg_l_c_nm": "Contour length from the profile's chain-model fit of the currently selected Ultimate or Penultimate segment.",
     "seg_l_p_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's persistence length; it is a lower bound on total uncertainty.",
     "seg_l_c_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's contour length; it is a lower bound on total uncertainty.",
-    "seg_tau": "Residual correlation time in samples, measured from the segment's own WLC fit residual. Larger values mean neighbouring samples count as repeated observations rather than independent data. Already in the err columns.",
-    "seg_z_max": "Maximum fitted extension divided by contour length. Higher values generally mean the WLC fit is better conditioned.",
+    "seg_b_nm": "Kuhn length from the profile's chain-model fit of the currently selected Ultimate or Penultimate segment. Blank under a WLC model, which has none.",
+    "seg_b_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's Kuhn length; it is a lower bound on total uncertainty.",
+    "seg_k_pN": "Stretch modulus from the profile's chain-model fit of the selected Ultimate or Penultimate segment; blank under an inextensible model. Fitted between 1 and 1e7 pN, so a chain with no measurable stretch reads 1e7.",
+    "seg_k_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's stretch modulus; it is a lower bound on total uncertainty.",
+    "seg_tau": "Residual correlation time in samples, measured from the segment's own fit residual. Larger values mean neighbouring samples count as repeated observations rather than independent data. Already in the err columns.",
+    "seg_z_max": "Maximum fitted extension divided by contour length. Higher values generally mean the fit is better conditioned. It can exceed 1 under an extensible model, whose chain stretches past its contour length.",
     "seg_x_max_nm": "Largest extension reached inside the fitted window, in nm. It is Seg z_max's numerator: read the two together to tell a short pull from an overlong contour length.",
     "seg_edge_pinned": "Whether the force peak lies on the fitted window's right edge (1 = edge, 0 = interior), where force may be underestimated.",
     "seg_dF_pN": "Ultimate rupture force minus penultimate rupture force. Blank when fewer than two ruptures are available.",
