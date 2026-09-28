@@ -62,6 +62,32 @@ def test_force_from_extension_inverts_the_model(key):
     assert _m.CHAIN_MODELS[key].force(x, *TRUE[key]) == pytest.approx(F, rel=1e-3)
 
 
+@pytest.mark.parametrize("key", list(TRUE))
+def test_x_at_force_inverts_the_segment_model(key):
+    fit = _m.ChainFit(key, TRUE[key])
+    x = fit.x_at_force(100.0)
+    assert x is not None
+    assert float(fit.force(x)) == pytest.approx(100.0, rel=1e-3)
+
+
+def test_a_segment_reads_back_as_its_own_model():
+    seg = Segment(left_idx=0, right_idx=10, left_piezo_nm=0.0, right_piezo_nm=1.0,
+                  chain_model="fjc", b_nm=0.8, l_c_nm=100.0, l_c_err=0.5)
+    assert seg.chain_fit() == _m.ChainFit("fjc", (0.8, 100.0))
+    assert seg.chain_fit_errs() == (0.0, 0.5)
+    assert Segment(left_idx=0, right_idx=10, left_piezo_nm=0.0, right_piezo_nm=1.0,
+                   chain_model="fjc", l_c_nm=100.0).chain_fit() is None
+
+
+def test_normalized_2dh_leaves_out_other_models():
+    from smfs_catalog.normalized_2dh_window import Normalized2DHWindow
+    reason = Normalized2DHWindow._fit_drop_reason
+    win = Normalized2DHWindow.__new__(Normalized2DHWindow)
+    assert reason(win, _m.ChainFit("wlc", (0.4, 100.0))) is None
+    assert reason(win, _m.ChainFit("bwlc", (0.4, 100.0))) == "not_marko_siggia"
+    assert reason(win, None) == "no_fit"
+
+
 def test_b_and_k_travel_with_their_errors():
     from smfs_catalog.variables import error_key
     assert error_key("seg_b_nm") == "seg_b_err"

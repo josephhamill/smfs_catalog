@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
+from scipy.optimize import brentq as _brentq
 from scipy.optimize import curve_fit as _curve_fit
 
 _TEMPERATURE = 293.15    # K
@@ -150,6 +151,7 @@ class ChainModel:
     each one's fit bounds, and whether l_c must exceed every observed
     extension (true only of inextensible chains, whose force diverges at l_c).
     `stretch_k` names the extensibility modulus, if the model has one.
+    `extension` is x(F), for a model defined that way.
     """
     key:       str
     name:      str
@@ -158,6 +160,7 @@ class ChainModel:
     bounds:    tuple[tuple[float, float], ...]
     lc_floor:  bool
     stretch_k: str | None = None
+    extension: Callable | None = None
 
     def p0(self, l_p: float, l_c: float) -> list[float]:
         """A start point from the Marko-Siggia fit of the same window."""
@@ -176,11 +179,48 @@ CHAIN_MODELS: dict[str, ChainModel] = {m.key: m for m in (
                ((0.05, 500.0), (0.0, _INF)), lc_floor=True),
     ChainModel("ewlc", "Extensible WLC", ewlc, ("l_p", "l_c", "k0"),
                ((0.05, 500.0), (1e-3, _INF), (1.0, 1e7)), lc_floor=False,
-               stretch_k="k0"),
+               stretch_k="k0", extension=ewlc_extension),
     ChainModel("fjc",  "FJC", fjc, ("b", "l_c"),
-               ((0.01, 1000.0), (0.0, _INF)), lc_floor=True),
+               ((0.01, 1000.0), (0.0, _INF)), lc_floor=True,
+               extension=fjc_extension),
     ChainModel("efjc", "Extensible FJC", efjc, ("b", "l_c", "k_s"),
                ((0.01, 1000.0), (1e-3, _INF), (1.0, 1e7)), lc_floor=False,
-               stretch_k="k_s"),
+               stretch_k="k_s", extension=efjc_extension),
 )}
 CHAIN_MODEL_BY_IDX: tuple[str, ...] = tuple(CHAIN_MODELS)
+
+
+@dataclass(frozen=True)
+class ChainFit:
+    """One fitted chain model: its CHAIN_MODELS key and its parameter values
+    in that model's order. Everything that draws or inverts a stored fit
+    asks this, so each segment is read with its own model."""
+    model:  str
+    params: tuple[float, ...]
+
+    @property
+    def chain(self) -> ChainModel:
+        return CHAIN_MODELS[self.model]
+
+    @property
+    def l_c(self) -> float:
+        return self.params[self.chain.params.index("l_c")]
+
+    def force(self, x: np.ndarray) -> np.ndarray:
+        return self.chain.force(np.asarray(x, dtype=float), *self.params)
+
+    def x_at_force(self, F_target: float) -> float | None:
+        """Extension (nm) where this fit reaches F_target (pN), or None if it
+        never does. Read off x(F) where the model has one; otherwise Brent's
+        method on the monotone F(x) in (0, l_c)."""
+        if self.chain.extension is not None:
+            with np.errstate(invalid="ignore"):
+                x = float(self.chain.extension(float(F_target), *self.params))
+            return x if np.isfinite(x) else None
+        x_lo, x_hi = 1e-6 * self.l_c, 0.9999 * self.l_c
+        try:
+            if float(self.force(x_hi)) < F_target:
+                return None   # above the pole: unreachable
+            return float(_brentq(lambda x: float(self.force(x)) - F_target, x_lo, x_hi))
+        except Exception:
+            return None

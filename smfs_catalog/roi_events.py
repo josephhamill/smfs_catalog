@@ -44,7 +44,7 @@ from typing import Optional
 import numpy as np
 from scipy.signal import find_peaks
 
-from .models import CHAIN_MODELS, ChainModel, fit_model, wlc
+from .models import CHAIN_MODELS, ChainFit, ChainModel, fit_model, wlc
 from .regression import linear_fit
 from .roi_detection import find_onset
 
@@ -192,6 +192,22 @@ class Segment:
     @property
     def width_pts(self) -> int:
         return abs(self.right_idx - self.left_idx)
+
+    def chain_fit(self) -> Optional[ChainFit]:
+        """This segment's fit as a models.ChainFit, or None if any of its
+        model's parameters is missing."""
+        fields = [_SEGMENT_FIELDS[p] for p in CHAIN_MODELS[self.chain_model].params]
+        values = [getattr(self, value) for value, _ in fields]
+        if any(v is None for v in values):
+            return None
+        return ChainFit(self.chain_model, tuple(float(v) for v in values))
+
+    def chain_fit_errs(self) -> tuple[float, ...]:
+        """±1σ of chain_fit()'s parameters, in the same order; a missing
+        error reads 0."""
+        return tuple(float(getattr(self, err) or 0.0)
+                     for _, err in (_SEGMENT_FIELDS[p]
+                                    for p in CHAIN_MODELS[self.chain_model].params))
 
     @property
     def z_max(self) -> Optional[float]:

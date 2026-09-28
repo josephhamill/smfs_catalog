@@ -159,19 +159,19 @@ check("l_c does require a fit", "lc" in fit_dependent)
 # be placed.  Physical is the only window with an opinion of its own.
 from smfs_catalog.base_2dh_window import _TwoDHWindowBase
 check("the base class requires a fit by default",
-      _TwoDHWindowBase._requires_wlc_fit(object()) is True)
+      _TwoDHWindowBase._requires_fit(object()) is True)
 check("the normalized 2DH does not override it — it divides x by l_c",
-      "_requires_wlc_fit" not in vars(Normalized2DHWindow))
+      "_requires_fit" not in vars(Normalized2DHWindow))
 check("the physical 2DH is the one that overrides it",
-      "_requires_wlc_fit" in vars(Physical2DHWindow))
+      "_requires_fit" in vars(Physical2DHWindow))
 
-# The build loop must ASK, not assume: a bare unconditional l_p/l_c guard in
-# sync_from_event_summary is exactly what dropped those curves before.
+# The build loop must ASK, not assume: a bare unconditional fit guard in
+# sync_from_event_summary would drop curves a fit-free anchor can place.
 sync_src = (PKG / "base_2dh_window.py").read_text()
 sync_body = sync_src[sync_src.index("def sync_from_event_summary"):]
 sync_body = sync_body[:sync_body.index("def _load_or_compute")]
-check("the 2DH build loop consults _requires_wlc_fit",
-      "_requires_wlc_fit()" in sync_body)
+check("the 2DH build loop consults _requires_fit",
+      "_requires_fit()" in sync_body)
 check("the 2DH build loop records a drop instead of a bare continue",
       sync_body.count("led.drop") >= 4)
 

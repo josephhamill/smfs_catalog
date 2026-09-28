@@ -251,33 +251,34 @@ class Physical2DHWindow(_TwoDHWindowBase):
 
     # ── Coordinate transform ─────────────────────────────────────────────────
 
-    def _compute_anchor(self, x, F, lo, hi, l_p, l_c, right_idx):
+    def _compute_anchor(self, x, F, lo, hi, fit, right_idx):
         """The extension x (nm) that maps to Δx=0 for this curve, per the
-        current align mode. l_p/l_c/right_idx are the CHOSEN segment's stored
-        values, already resolved upstream by base._resolve_fit."""
+        current align mode. fit/right_idx are the CHOSEN segment's stored
+        values, already resolved upstream by base._resolve_fit; the fit is
+        read with the segment's own chain model."""
         x_roi, F_roi = x[lo:hi + 1], F[lo:hi + 1]
-        a_lp, a_lc, a_rupture_x = None, None, None
+        a_fit, a_rupture_x = None, None
         if self._align_mode == "rupture":
             if right_idx is None or not (0 <= right_idx < len(x)):
                 return None
             a_rupture_x = float(x[right_idx])
         elif self._align_mode in ("fstar", "lc"):
-            if l_p is None or l_c is None:
+            if fit is None:
                 return None   # fstar/lc are undefined without a real fit
-            a_lp, a_lc = l_p, l_c
+            a_fit = fit
         anchor_fn = PHYS_ALIGN_ANCHORS.get(self._align_mode, PHYS_ALIGN_ANCHORS[PHYS_ALIGN_DEFAULT])
-        return anchor_fn(x_roi, F_roi, a_lp, a_lc, self._f_star, a_rupture_x)
+        return anchor_fn(x_roi, F_roi, a_fit, self._f_star, a_rupture_x)
 
-    # Which anchors actually consume the WLC fit.  onset/snapoff/rupture are
-    # all observed data points, so requiring l_p/l_c for them would discard
-    # curves whose registration itself is fully defined.
+    # Which anchors actually consume the fit.  onset/snapoff/rupture are all
+    # observed data points, so requiring a fit for them would discard curves
+    # whose registration itself is fully defined.
     _FIT_DEPENDENT_ALIGN_MODES = frozenset({"fstar", "lc"})
 
-    def _requires_wlc_fit(self) -> bool:
+    def _requires_fit(self) -> bool:
         return self._align_mode in self._FIT_DEPENDENT_ALIGN_MODES
 
-    def _build_histogram(self, x, F, lo, hi, l_p, l_c, right_idx):
-        anchor = self._compute_anchor(x, F, lo, hi, l_p, l_c, right_idx)
+    def _build_histogram(self, x, F, lo, hi, fit, right_idx):
+        anchor = self._compute_anchor(x, F, lo, hi, fit, right_idx)
         if anchor is None:
             return None
         return compute_physical_histogram_at(
@@ -287,8 +288,8 @@ class Physical2DHWindow(_TwoDHWindowBase):
             f_range=(self._f_min, self._f_max),
         )
 
-    def _build_overlay_xF(self, x, F, lo, hi, l_p, l_c, right_idx):
-        anchor = self._compute_anchor(x, F, lo, hi, l_p, l_c, right_idx)
+    def _build_overlay_xF(self, x, F, lo, hi, fit, right_idx):
+        anchor = self._compute_anchor(x, F, lo, hi, fit, right_idx)
         if anchor is None:
             return None
         return x - anchor, F

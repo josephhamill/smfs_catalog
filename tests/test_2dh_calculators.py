@@ -9,6 +9,7 @@ from smfs_catalog.event_processor import (
     phys_anchor_snapoff,
 )
 from smfs_catalog.base_2dh_window import _TwoDHWindowBase, _counts_per_trace
+from smfs_catalog.models import ChainFit
 from smfs_catalog.ledger import Ledger
 
 
@@ -39,15 +40,16 @@ def test_observed_physical_anchors_do_not_require_a_wlc_fit():
     x = np.array([4.0, 5.0])
     F = np.array([1.0, 2.0])
 
-    assert phys_anchor_onset(x, F, None, None, 50.0) == 4.0
-    assert phys_anchor_snapoff(x, F, None, None, 50.0) == 0.0
-    assert phys_anchor_rupture(x, F, None, None, 50.0, 5.0) == 5.0
-    assert phys_anchor_lc(x, F, None, 12.0, 50.0) == 12.0
+    assert phys_anchor_onset(x, F, None, 50.0) == 4.0
+    assert phys_anchor_snapoff(x, F, None, 50.0) == 0.0
+    assert phys_anchor_rupture(x, F, None, 50.0, 5.0) == 5.0
+    assert phys_anchor_lc(x, F, ChainFit("wlc", (0.4, 12.0)), 50.0) == 12.0
 
 
 def test_incremental_2dh_uses_the_same_fit_policy_as_full_rebuild():
     class IncrementalWindow:
         add_event = _TwoDHWindowBase.add_event
+        _fit_drop_reason = _TwoDHWindowBase._fit_drop_reason
 
         def __init__(self, needs_fit):
             self._needs_fit = needs_fit
@@ -55,9 +57,9 @@ def test_incremental_2dh_uses_the_same_fit_policy_as_full_rebuild():
             self.computed = self.refreshed = False
 
         def _stored_segment_fit(self, path):
-            return None, None, 17
+            return None, 17
 
-        def _requires_wlc_fit(self):
+        def _requires_fit(self):
             return self._needs_fit
 
         def _load_or_compute(self, path):

@@ -69,7 +69,7 @@ from PyQt6.QtWidgets import (
 from .curve_loader import ForceCurve, LoadError, load_force_curve
 from . import db as _db
 from . import quantities as _quant
-from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS, wlc
+from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
 from .roi_pipeline import (
     DETECTOR_BY_IDX, DETECTOR_MODE_LABELS, MODE_TO_STORED_IDX,
     compute_curve_events_coords, event_geometry_identity, event_params_from,
@@ -771,9 +771,10 @@ class ROIWindow(QWidget):
         for ri, roi in enumerate(events.rois):
             n_segs = len(roi.segments)
             for si, seg in enumerate(roi.segments):
-                if seg.l_p_nm is None or seg.l_c_nm is None:
+                fit = seg.chain_fit()
+                if fit is None:
                     continue
-                # Draw the WLC model over exactly the fitted window (reload/onset
+                # Draw the segment's model over exactly the fitted window (reload/onset
                 # bottom → force peak), not the whole d1-bounded segment.
                 a = seg.fit_lo_idx if seg.fit_lo_idx is not None else seg.left_idx
                 b = seg.fit_hi_idx if seg.fit_hi_idx is not None else seg.right_idx
@@ -782,7 +783,7 @@ class ROIWindow(QWidget):
                 if xs.size < 2:
                     continue
                 xs = np.sort(xs)
-                ys = np.asarray(wlc(xs, seg.l_p_nm, seg.l_c_nm))
+                ys = np.asarray(fit.force(xs))
                 col = style.roi_segment_qcolor(ri, n_rois, si, n_segs,
                                                alpha=style.A_MODEL)
                 item = self._fx_plot.plot(

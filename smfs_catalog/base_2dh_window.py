@@ -591,11 +591,11 @@ class _TwoDHWindowBase(QMainWindow):
     # ── Incremental update (one new event) ──────────────────────────────────────
 
     def add_event(self, path: str) -> None:
-        fit = self._stored_segment_fit(path)
-        if fit is None:
+        stored = self._stored_segment_fit(path)
+        if stored is None:
             return
-        l_p, l_c, _right_idx = fit
-        if self._requires_wlc_fit() and (l_p is None or l_c is None):
+        fit, _right_idx = stored
+        if self._requires_fit() and self._fit_drop_reason(fit) is not None:
             return
         H = self._load_or_compute(path)
         if H is not None:
@@ -660,22 +660,20 @@ class _TwoDHWindowBase(QMainWindow):
                 [p for p in file_ids if p not in reusable and file_ids[p] not in cached],
                 ["snapoff_piezo_nm", "offset_retr", "invols_slope"], self._db_path)
 
-            needs_fit = self._requires_wlc_fit()
+            needs_fit = self._requires_fit()
             for i, path in enumerate(valid_paths):
                 key = _db.normalize_path(path)
-                fit = fits.get(path)
-                if fit is None:
+                stored = fits.get(path)
+                if stored is None:
                     led.drop(path, "no_segment_chosen", f"segment: {self._align_segment}")
                     continue
-                l_p, l_c, _right_idx = fit
-                # Only require the WLC fit when the transform actually USES
-                # it. Onset, snap-off, and rupture anchors are observed data
+                fit, _right_idx = stored
+                # Only require the fit when the transform actually USES it.
+                # Onset, snap-off, and rupture anchors are observed data
                 # points and therefore do not require a fit.
-                if needs_fit and (l_p is None or l_c is None):
-                    led.drop(path, "no_fit",
-                             f"segment: {self._align_segment}, "
-                             f"l_p={'ok' if l_p is not None else 'None'}, "
-                             f"l_c={'ok' if l_c is not None else 'None'}")
+                reason = self._fit_drop_reason(fit) if needs_fit else None
+                if reason is not None:
+                    led.drop(path, reason, f"segment: {self._align_segment}")
                     continue
 
                 file_id = file_ids[path]
@@ -764,21 +762,21 @@ class _TwoDHWindowBase(QMainWindow):
         return x, F
 
     def _resolve_fit(self, file_path: str, n: int, conn=None):
-        """(lo, hi, l_p, l_c, right_idx) for the last-outer-ROI's chosen
-        segment (self._align_segment), or None if there's no stored ROI, the
-        span is degenerate, or the chosen segment doesn't exist. l_p/l_c may
-        still be None within a non-None result (fit failed) — callers that
-        need a real fit (both windows' histogram/overlay builders) check for
-        that themselves; add_event's fit-quality gate does too."""
+        """(lo, hi, fit, right_idx) for the last-outer-ROI's chosen segment
+        (self._align_segment), or None if there's no stored ROI, the span is
+        degenerate, or the chosen segment doesn't exist. `fit` may still be
+        None within a non-None result (fit failed) — callers that need a real
+        fit (both windows' histogram/overlay builders) check for that
+        themselves; add_event's fit-quality gate does too."""
         span = self._stored_roi_span(file_path, n, conn=conn)
         if span is None:
             return None
-        fit = self._stored_segment_fit(file_path, conn=conn)
-        if fit is None:
+        stored = self._stored_segment_fit(file_path, conn=conn)
+        if stored is None:
             return None
         lo, hi = span
-        l_p, l_c, right_idx = fit
-        return lo, hi, l_p, l_c, right_idx
+        fit, right_idx = stored
+        return lo, hi, fit, right_idx
 
     def _stored_roi_span(self, file_path: str, n: int, conn=None):
         """[onset_idx, return_idx] of the LAST (most baseline-ward) outer ROI,
@@ -806,10 +804,11 @@ class _TwoDHWindowBase(QMainWindow):
         return (lo, hi) if hi - lo >= 1 else None
 
     def _stored_segment_fit(self, file_path: str, conn=None):
-        """(l_p, l_c, right_idx) of the CHOSEN inner segment (self.
+        """(fit, right_idx) of the CHOSEN inner segment (self.
         _align_segment: first/penultimate/last/primary/secondary) of the
         last-outer ROI, READ from the finder's stored event_map document.
-        l_p/l_c are None if that segment's WLC fit failed or is missing;
+        `fit` is that segment's models.ChainFit, None if the fit failed or is
+        missing;
         right_idx (the segment's terminating rupture, an index into the
         curve's arrays — used by physical's "rupture" align mode) doesn't
         depend on the fit and is set whenever the segment itself exists.
@@ -852,9 +851,7 @@ class _TwoDHWindowBase(QMainWindow):
             seg = segs[-2] if len(segs) >= 2 else segs[-1]   # "when present", else last
         else:                                     # "first"
             seg = segs[0]
-        l_p = float(seg.l_p_nm) if seg.l_p_nm is not None else None
-        l_c = float(seg.l_c_nm) if seg.l_c_nm is not None else None
-        return l_p, l_c, seg.right_idx
+        return seg.chain_fit(), seg.right_idx
 
     def _compute_from_curve(
         self, file_path: str, pre_fetched: dict | None = None, conn=None,
@@ -870,15 +867,20 @@ class _TwoDHWindowBase(QMainWindow):
         resolved = self._resolve_fit(file_path, len(x), conn=conn)
         if resolved is None:
             return None
-        lo, hi, l_p, l_c, right_idx = resolved
-        return self._build_histogram(x, F, lo, hi, l_p, l_c, right_idx)
+        lo, hi, fit, right_idx = resolved
+        return self._build_histogram(x, F, lo, hi, fit, right_idx)
 
-    def _build_histogram(self, x, F, lo, hi, l_p, l_c, right_idx) -> np.ndarray | None:
+    def _build_histogram(self, x, F, lo, hi, fit, right_idx) -> np.ndarray | None:
         """Subclass hook: this curve's transform + binning."""
         raise NotImplementedError
 
-    def _requires_wlc_fit(self) -> bool:
-        """Does THIS window's transform actually need l_p/l_c to place a curve?
+    def _fit_drop_reason(self, fit) -> str | None:
+        """The ledger reason a curve with this fit can't be placed, or None
+        if it can. Normalized adds a reason of its own."""
+        return "no_fit" if fit is None else None
+
+    def _requires_fit(self) -> bool:
+        """Does THIS window's transform actually need the fit to place a curve?
 
         True on the base class because the normalized 2DH divides x by l_c —
         without a fit there is no x̃ and the curve genuinely cannot be placed.
@@ -977,10 +979,10 @@ class _TwoDHWindowBase(QMainWindow):
         resolved = self._resolve_fit(file_path, len(x), conn=conn)
         if resolved is None:
             return None
-        lo, hi, l_p, l_c, right_idx = resolved
-        return self._build_overlay_xF(x, F, lo, hi, l_p, l_c, right_idx)
+        lo, hi, fit, right_idx = resolved
+        return self._build_overlay_xF(x, F, lo, hi, fit, right_idx)
 
-    def _build_overlay_xF(self, x, F, lo, hi, l_p, l_c, right_idx):
+    def _build_overlay_xF(self, x, F, lo, hi, fit, right_idx):
         """Subclass hook: same transform as _build_histogram, but returning
         plot-ready (x, F) arrays instead of a binned histogram."""
         raise NotImplementedError
