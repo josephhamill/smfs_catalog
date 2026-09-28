@@ -45,6 +45,7 @@ from PyQt6.QtWidgets import (
 from . import db as _db
 from . import export_utils as _export
 from .curve_loader import LoadError, load_force_curve
+from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
 from .regression import linear_fit
 from . import sample_marks
 from . import style
@@ -223,10 +224,10 @@ class WlcViewWindow(QMainWindow):
         # WLC fit lives on the extension axis, the loading-rate fit on time, and
         # a line that is straight on one is curved on the other.
         self._view_combo = QComboBox()
-        self._view_combo.addItem("WLC fit", "wlc")
+        self._view_combo.addItem("Chain fit", "wlc")
         self._view_combo.addItem("Loading rate", "rate")
         self._view_combo.setToolTip(
-            "WLC fit: force against extension, with the per-segment models.\n"
+            "Chain fit: force against extension, with the per-segment models.\n"
             "Loading rate: force against time over the fitted ramp window, "
             "with the linear fit and its confidence band."
         )
@@ -234,6 +235,18 @@ class WlcViewWindow(QMainWindow):
             lambda _i: self._on_view_mode_changed())
         manual_row.addWidget(QLabel("View:"))
         manual_row.addWidget(self._view_combo)
+
+        # The profile's chain model, the same setting the ROI window edits.
+        # Changing it refits the curve on screen; the rest go stale until
+        # they are next shown or re-analysed.
+        self._chain_combo = QComboBox()
+        for key in CHAIN_MODEL_BY_IDX:
+            self._chain_combo.addItem(CHAIN_MODELS[key].name)
+        self._chain_combo.setCurrentIndex(
+            _db.load_analysis_params(self._db_path).chain_model_idx)
+        self._chain_combo.currentIndexChanged.connect(self._on_chain_model_changed)
+        manual_row.addWidget(QLabel("Chain model:"))
+        manual_row.addWidget(self._chain_combo)
 
         # Parameter-variation envelope from the stored marginal standard
         # errors. It is descriptive because the stored result has no covariance.
@@ -506,6 +519,10 @@ class WlcViewWindow(QMainWindow):
         self._clickable_segments = []
         self._manual_status_label.setText("")
 
+    def _on_chain_model_changed(self, index: int) -> None:
+        _db.update_analysis_param("chain_model_idx", float(index), self._db_path)
+        self._show_current()
+
     # ── Which fit the upper panel shows ──────────────────────────────────────
 
     @property
@@ -600,6 +617,10 @@ class WlcViewWindow(QMainWindow):
             # resolution — a second way of deciding is how one computation
             # ended up built from two people's numbers.
             param_set = _db.load_analysis_params(self._db_path)
+            # The ROI window may have changed the model since this one drew.
+            self._chain_combo.blockSignals(True)
+            self._chain_combo.setCurrentIndex(param_set.chain_model_idx)
+            self._chain_combo.blockSignals(False)
             ep = event_params_from(param_set)
             file_id = _db.get_file_id(file_path, self._db_path)
             res = compute_curve_events_coords(
