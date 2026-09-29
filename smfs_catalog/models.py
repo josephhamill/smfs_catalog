@@ -126,10 +126,12 @@ _LN_F_GRID = np.log(_F_GRID)
 
 def _force_from_extension(extension: Callable, x: np.ndarray, *params) -> np.ndarray:
     """F(x) for a model defined as x(F), read off x(F) evaluated once on
-    _F_GRID. Every x(F) here increases monotonically with F, which is what
-    makes the grid a valid interpolation table."""
+    _F_GRID. Only the part of x(F) that rises with F is a function F(x), so
+    the table stops where x(F) first stops rising or stops being finite."""
     x_grid = extension(_F_GRID, *params)
-    return np.exp(np.interp(np.asarray(x, dtype=float), x_grid, _LN_F_GRID))
+    stop = np.flatnonzero(~(np.diff(x_grid) > 0))
+    n = int(stop[0]) + 1 if stop.size else x_grid.size
+    return np.exp(np.interp(np.asarray(x, dtype=float), x_grid[:n], _LN_F_GRID[:n]))
 
 
 def ewlc(x: np.ndarray, l_p: float, l_c: float, k0: float) -> np.ndarray:
@@ -148,16 +150,15 @@ def efjc(x: np.ndarray, b: float, l_c: float, k_s: float) -> np.ndarray:
 class ChainModel:
     """
     One force-extension model: its parameters in `force`'s argument order,
-    each one's fit bounds, and whether l_c must exceed every observed
-    extension (true only of inextensible chains, whose force diverges at l_c).
-    `stretch_k` names the extensibility modulus, if the model has one.
-    `extension` is x(F), for a model defined that way.
+    and whether l_c must exceed every observed extension (true only of
+    inextensible chains, whose force diverges at l_c). No parameter is
+    otherwise bounded. `stretch_k` names the extensibility modulus, if the
+    model has one. `extension` is x(F), for a model defined that way.
     """
     key:       str
     name:      str
     force:     Callable
     params:    tuple[str, ...]
-    bounds:    tuple[tuple[float, float], ...]
     lc_floor:  bool
     stretch_k: str | None = None
     extension: Callable | None = None
@@ -169,22 +170,16 @@ class ChainModel:
         return [guess[p] for p in self.params]
 
 
-_INF = np.inf
 # A profile's chain_model_idx is a position in this registry. Append only:
 # reordering would change what every stored profile means.
 CHAIN_MODELS: dict[str, ChainModel] = {m.key: m for m in (
-    ChainModel("wlc",  "WLC (Marko-Siggia)", wlc, ("l_p", "l_c"),
-               ((0.05, 500.0), (0.0, _INF)), lc_floor=True),
-    ChainModel("bwlc", "WLC (Bouchiat)", wlc_bouchiat, ("l_p", "l_c"),
-               ((0.05, 500.0), (0.0, _INF)), lc_floor=True),
-    ChainModel("ewlc", "Extensible WLC", ewlc, ("l_p", "l_c", "k0"),
-               ((0.05, 500.0), (1e-3, _INF), (1.0, 1e7)), lc_floor=False,
+    ChainModel("wlc",  "WLC (Marko-Siggia)", wlc, ("l_p", "l_c"), lc_floor=True),
+    ChainModel("bwlc", "WLC (Bouchiat)", wlc_bouchiat, ("l_p", "l_c"), lc_floor=True),
+    ChainModel("ewlc", "Extensible WLC", ewlc, ("l_p", "l_c", "k0"), lc_floor=False,
                stretch_k="k0", extension=ewlc_extension),
-    ChainModel("fjc",  "FJC", fjc, ("b", "l_c"),
-               ((0.01, 1000.0), (0.0, _INF)), lc_floor=True,
+    ChainModel("fjc",  "FJC", fjc, ("b", "l_c"), lc_floor=True,
                extension=fjc_extension),
-    ChainModel("efjc", "Extensible FJC", efjc, ("b", "l_c", "k_s"),
-               ((0.01, 1000.0), (1e-3, _INF), (1.0, 1e7)), lc_floor=False,
+    ChainModel("efjc", "Extensible FJC", efjc, ("b", "l_c", "k_s"), lc_floor=False,
                stretch_k="k_s", extension=efjc_extension),
 )}
 CHAIN_MODEL_BY_IDX: tuple[str, ...] = tuple(CHAIN_MODELS)

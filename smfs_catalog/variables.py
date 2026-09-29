@@ -289,7 +289,7 @@ DESCRIPTIONS: dict[str, str] = {
     "seg_l_c_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's contour length; it is a lower bound on total uncertainty.",
     "seg_b_nm": "Kuhn length from the profile's chain-model fit of the currently selected Ultimate or Penultimate segment. Blank under a WLC model, which has none.",
     "seg_b_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's Kuhn length; it is a lower bound on total uncertainty.",
-    "seg_k_pN": "Stretch modulus from the profile's chain-model fit of the selected Ultimate or Penultimate segment; blank under an inextensible model. Fitted between 1 and 1e7 pN, so a chain with no measurable stretch reads 1e7.",
+    "seg_k_pN": "Stretch modulus from the profile's chain-model fit of the selected Ultimate or Penultimate segment; blank under an inextensible model. Unbounded; no measurable stretch gives a very large K.",
     "seg_k_err": "Correlation-corrected fit uncertainty (±1σ) on the selected segment's stretch modulus; it is a lower bound on total uncertainty.",
     "seg_tau": "Residual correlation time in samples, measured from the segment's own fit residual. Larger values mean neighbouring samples count as repeated observations rather than independent data. Already in the err columns.",
     "seg_z_max": "Maximum fitted extension divided by contour length. Higher values generally mean the fit is better conditioned. It can exceed 1 under an extensible model, whose chain stretches past its contour length.",

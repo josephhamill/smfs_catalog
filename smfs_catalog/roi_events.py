@@ -1223,36 +1223,42 @@ def _fit_chain_model(
     the model has, with its ±1σ and tau, or None on failure.
 
     Errors carry the same sqrt(tau) correction, for the reason given there.
-    l_c is floored above the data only for an inextensible model, whose force
-    diverges at l_c.  A stretch modulus K is fitted as its compliance c = 1/K
-    over the same range, which converges in fewer evaluations; K = 1/c and
-    its ±1σ is σc/c².
+    No parameter is bounded, except that l_c is floored above the data for
+    an inextensible model, whose force diverges at l_c.  A stretch modulus K
+    is fitted as θ = ln(1/K), unbounded, so K = e^-θ is positive and its ±1σ
+    is K·σθ.  A chain with no measurable stretch gives a very large K with a
+    very large error.  A fit that leaves the region where the model is
+    defined (non-finite parameters or force) counts as failed.
     """
-    lo = [b[0] for b in model.bounds]
-    hi = [b[1] for b in model.bounds]
+    n = len(model.params)
+    lo, hi = [-np.inf] * n, [np.inf] * n
     p0 = model.p0(l_p, l_c)
     i_lc = model.params.index("l_c")
     if model.lc_floor:
-        lo[i_lc] = max(lo[i_lc], float(np.max(x)) * 1.001)
+        lo[i_lc] = float(np.max(x)) * 1.001
     i_k = model.params.index(model.stretch_k) if model.stretch_k else None
     if i_k is not None:
-        lo[i_k], hi[i_k] = 1.0 / hi[i_k], 1.0 / lo[i_k]
-        p0[i_k] = 1.0 / p0[i_k]
+        p0[i_k] = np.log(1.0 / p0[i_k])
 
     def force(x, *p):
-        if i_k is not None:
-            p = (*p[:i_k], 1.0 / p[i_k], *p[i_k + 1:])
-        return model.force(x, *p)
+        with np.errstate(all="ignore"):
+            if i_k is not None:
+                p = (*p[:i_k], np.exp(-p[i_k]), *p[i_k + 1:])
+            return model.force(x, *p)
 
     try:
         popt, pcov = fit_model(force, x, F, p0=np.clip(p0, lo, hi), bounds=(lo, hi))
     except Exception:
         return None
+    resid = F - force(x, *popt)
+    if not (np.all(np.isfinite(popt)) and np.all(np.isfinite(resid))):
+        return None
     perr = np.sqrt(np.diag(pcov))
     if i_k is not None:
-        c = popt[i_k]
-        popt[i_k], perr[i_k] = 1.0 / c, perr[i_k] / c ** 2
-    tau = integrated_autocorr_time(F - model.force(x, *popt))
+        with np.errstate(over="ignore"):
+            k = np.exp(-popt[i_k])
+        popt[i_k], perr[i_k] = k, k * perr[i_k]
+    tau = integrated_autocorr_time(resid)
     scale = float(np.sqrt(tau))
     out = {"tau": float(tau)}
     for name, v, e in zip(model.params, popt, perr):
