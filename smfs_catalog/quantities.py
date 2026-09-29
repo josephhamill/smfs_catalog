@@ -175,6 +175,11 @@ QUANTITIES: dict[str, Quantity] = {
     "seg_l_c_nm":      Quantity(NM, 1),    # median 104, p95 411
     "seg_l_p_err":     Quantity(NM, 4),    # median 0.0057 — 2 decimals reads 0.00
     "seg_l_c_err":     Quantity(NM, 3),    # median 0.184
+    # A Kuhn length reads like l_p. A stretch modulus is thousands of pN.
+    "seg_b_nm":        Quantity(NM, 3),
+    "seg_b_err":       Quantity(NM, 4),
+    "seg_k_pN":        Quantity(PN, 0),
+    "seg_k_err":       Quantity(PN, 0),
     "seg_force_pN":    Quantity(PN, 1),    # median 166, p95 353
     # The reported rupture's position on the extension axis, under its two
     # zeros. Same scale as the other extension-axis distances below.
@@ -257,6 +262,7 @@ QUANTITIES: dict[str, Quantity] = {
     "roi_detector_mode_idx":         INTEGER,
     "roi_prominence":                Quantity(NM_PER_NM, 3),
     "roi_min_distance_pts":          Quantity(PTS, 0, integer=True),
+    "chain_model_idx":               INTEGER,
 
     # ── 2DH grid settings ────────────────────────────────────────────────────
     # Normalized axes x/l_c and F·l_p/kT are dimensionless.

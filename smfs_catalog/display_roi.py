@@ -69,7 +69,7 @@ from PyQt6.QtWidgets import (
 from .curve_loader import ForceCurve, LoadError, load_force_curve
 from . import db as _db
 from . import quantities as _quant
-from .models import wlc
+from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
 from .roi_pipeline import (
     DETECTOR_BY_IDX, DETECTOR_MODE_LABELS, MODE_TO_STORED_IDX,
     compute_curve_events_coords, event_geometry_identity, event_params_from,
@@ -177,6 +177,7 @@ class ROIWindow(QWidget):
             int(_ps['roi_detector_mode_idx']), "threshold")
         self._prominence     = float(_ps['roi_prominence'])
         self._distance_pts   = int(  _ps['roi_min_distance_pts'])
+        self._chain_model_idx = int(_ps['chain_model_idx'])
         # Must mirror roi_pipeline.event_params_from's default: this window is
         # supposed to SHOW what the worker STORES, so a drop_frac that differs
         # from the worker's means the markers on screen are not the ones going
@@ -284,6 +285,16 @@ class ROIWindow(QWidget):
         self._combo_detector.setCurrentIndex(cur)
         self._combo_detector.currentIndexChanged.connect(self._on_detector_changed)
         ctrl2.addWidget(LabeledControl("Detector:", self._combo_detector))
+
+        # Position in the combo is the stored chain_model_idx.
+        self._combo_chain = QComboBox()
+        for key in CHAIN_MODEL_BY_IDX:
+            self._combo_chain.addItem(CHAIN_MODELS[key].name)
+        self._combo_chain.setCurrentIndex(self._chain_model_idx)
+        self._combo_chain.setToolTip("The force-extension model every segment "
+                                     "is fit with.")
+        self._combo_chain.currentIndexChanged.connect(self._on_chain_model_changed)
+        ctrl2.addWidget(LabeledControl("Chain model:", self._combo_chain))
 
         self._spin_prom = QDoubleSpinBox()
         self._spin_prom.setRange(0.0, 10.0)
@@ -580,6 +591,7 @@ class ROIWindow(QWidget):
                 roi_detector_mode_idx=MODE_TO_STORED_IDX[self._detector_mode],
                 roi_prominence=self._prominence,
                 roi_min_distance_pts=self._distance_pts,
+                chain_model_idx=self._chain_model_idx,
             )
             ep = event_params_from(committed, detector=self._detector_mode)
 
@@ -759,9 +771,10 @@ class ROIWindow(QWidget):
         for ri, roi in enumerate(events.rois):
             n_segs = len(roi.segments)
             for si, seg in enumerate(roi.segments):
-                if seg.l_p_nm is None or seg.l_c_nm is None:
+                fit = seg.chain_fit()
+                if fit is None:
                     continue
-                # Draw the WLC model over exactly the fitted window (reload/onset
+                # Draw the segment's model over exactly the fitted window (reload/onset
                 # bottom → force peak), not the whole d1-bounded segment.
                 a = seg.fit_lo_idx if seg.fit_lo_idx is not None else seg.left_idx
                 b = seg.fit_hi_idx if seg.fit_hi_idx is not None else seg.right_idx
@@ -770,7 +783,7 @@ class ROIWindow(QWidget):
                 if xs.size < 2:
                     continue
                 xs = np.sort(xs)
-                ys = np.asarray(wlc(xs, seg.l_p_nm, seg.l_c_nm))
+                ys = np.asarray(fit.force(xs))
                 col = style.roi_segment_qcolor(ri, n_rois, si, n_segs,
                                                alpha=style.A_MODEL)
                 item = self._fx_plot.plot(
@@ -957,6 +970,7 @@ class ROIWindow(QWidget):
                     if m == self._detector_mode), 0)
         self._prominence    = _f("roi_prominence", self._prominence)
         self._distance_pts  = int(_f("roi_min_distance_pts", self._distance_pts))
+        self._chain_model_idx = int(_f("chain_model_idx", self._chain_model_idx))
 
         for w, val in (
             (self._spin_window,    self._window_pts),
@@ -973,6 +987,9 @@ class ROIWindow(QWidget):
         self._combo_detector.blockSignals(True)
         self._combo_detector.setCurrentIndex(idx)
         self._combo_detector.blockSignals(False)
+        self._combo_chain.blockSignals(True)
+        self._combo_chain.setCurrentIndex(self._chain_model_idx)
+        self._combo_chain.blockSignals(False)
 
         # No mirror into the `settings` table. The parameter set lives in
         # exactly one place - the queue owner's profile - and the pipeline
@@ -1002,6 +1019,7 @@ class ROIWindow(QWidget):
                 MODE_TO_STORED_IDX.get(self._detector_mode, 1)),
             "roi_prominence":                float(self._prominence),
             "roi_min_distance_pts":          float(self._distance_pts),
+            "chain_model_idx":               float(self._chain_model_idx),
         }, self._db_path)
 
     # ── Controls ──────────────────────────────────────────────────────────────
@@ -1131,6 +1149,12 @@ class ROIWindow(QWidget):
             self._save_user_profile()
             if self._last_curve is not None:
                 self._recompute_and_draw(self._last_curve)
+
+    def _on_chain_model_changed(self, index: int) -> None:
+        self._chain_model_idx = int(index)
+        _db.update_analysis_param('chain_model_idx', float(index), self._db_path)
+        self._save_user_profile()
+        self._recompute_current()
 
     def _preview_prominence(self, value: float) -> None:
         self._prominence = float(value)

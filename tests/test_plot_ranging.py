@@ -28,6 +28,7 @@ from smfs_catalog import display_roi as droi       # noqa: E402
 from smfs_catalog import rawcurve_window as raw    # noqa: E402
 from smfs_catalog import wlc_view_window as wvw     # noqa: E402
 from smfs_catalog.curve_loader import ForceCurve    # noqa: E402
+from smfs_catalog.roi_events import Segment         # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -59,13 +60,14 @@ def _fitted_segment():
     """A fit whose l_c - sigma corner puts the WLC pole just past the data, so
     the envelope diverges inside the fitted range.  This is the ordinary case,
     not a contrived one: l_c_err is a fraction of a nm on a real fit."""
-    return SimpleNamespace(l_p_nm=0.4, l_p_err=0.05, l_c_nm=105.0, l_c_err=4.0)
+    return Segment(left_idx=0, right_idx=10, left_piezo_nm=0.0, right_piezo_nm=1.0,
+                   l_p_nm=0.4, l_p_err=0.05, l_c_nm=105.0, l_c_err=4.0)
 
 
 def test_the_ci_envelope_does_not_set_the_wlc_plot_scale(qapp):
     xm  = np.linspace(10.0, 100.0, 200)
     seg = _fitted_segment()
-    fit = np.asarray(wvw.wlc(xm, seg.l_p_nm, seg.l_c_nm), dtype=float)
+    fit = np.asarray(seg.chain_fit().force(xm), dtype=float)
 
     p = _CiProbe()
     p._top.plot(xm.tolist(), fit.tolist())

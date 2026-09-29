@@ -101,21 +101,28 @@ class Normalized2DHWindow(_TwoDHWindowBase):
     # are unused now that the data window is the full retract; kept in the
     # shared signature so both windows implement the same hooks.
 
-    def _build_histogram(self, x, F, lo, hi, l_p, l_c, right_idx):
-        if l_p is None or l_c is None:
+    def _fit_drop_reason(self, fit) -> str | None:
+        # The normalization and the master curve are Marko-Siggia's own; a
+        # curve fit with another model has no place on them.
+        if fit is not None and fit.model != "wlc":
+            return "not_marko_siggia"
+        return super()._fit_drop_reason(fit)
+
+    def _build_histogram(self, x, F, lo, hi, fit, right_idx):
+        if self._fit_drop_reason(fit) is not None:
             return None
         return compute_wlc_histogram(
-            x, F, l_p, l_c,
+            x, F, *fit.params,
             x_bins=self._x_bins, f_bins=self._f_bins,
             x_range=(self._x_min, self._x_max),
             f_range=(self._f_min, self._f_max),
         )
 
-    def _build_overlay_xF(self, x, F, lo, hi, l_p, l_c, right_idx):
-        if l_p is None or l_c is None:
+    def _build_overlay_xF(self, x, F, lo, hi, fit, right_idx):
+        if self._fit_drop_reason(fit) is not None:
             return None
         from .models import normalize_wlc
-        return normalize_wlc(x, F, l_p, l_c)
+        return normalize_wlc(x, F, *fit.params)
 
     # ── Master WLC curve overlay (universal collapse line) ───────────────────
 

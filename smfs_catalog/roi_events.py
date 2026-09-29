@@ -44,7 +44,7 @@ from typing import Optional
 import numpy as np
 from scipy.signal import find_peaks
 
-from .models import fit_model, wlc
+from .models import CHAIN_MODELS, ChainFit, ChainModel, fit_model, wlc
 from .regression import linear_fit
 from .roi_detection import find_onset
 
@@ -93,8 +93,8 @@ class Rupture:
 class Segment:
     """
     The stretch of curve BETWEEN two consecutive landmarks within an ROI:
-    onset→r1, r1→r2, …  Each segment is the only region over which a single WLC
-    fit is physically valid, so each carries its own (l_p, l_c).
+    onset→r1, r1→r2, …  Each segment is the only region over which a single
+    chain-model fit is physically valid, so each carries its own parameters.
 
     A double-chain→single-chain transition shows up as adjacent segments fitting
     to different WLC parameters — orthogonal to the force-ordering label on the
@@ -110,6 +110,15 @@ class Segment:
     l_c_nm:   Optional[float] = None
     l_p_err:  Optional[float] = None
     l_c_err:  Optional[float] = None
+    # The models.CHAIN_MODELS key this segment is fit with. The parameter
+    # fields are shared by every model; each holds None where the model has no
+    # such parameter (an FJC has no l_p, a WLC no b). k_pN is the stretch
+    # modulus of whichever extensible model was chosen.
+    chain_model: str = "wlc"
+    b_nm:     Optional[float] = None
+    b_err:    Optional[float] = None
+    k_pN:     Optional[float] = None
+    k_err:    Optional[float] = None
     n_pts:    int = 0
     # Actual fitted window (reload/onset bottom → force peak) — a sub-range of
     # [left_idx, right_idx].  Used to draw the WLC fit over exactly the points fit.
@@ -183,6 +192,22 @@ class Segment:
     @property
     def width_pts(self) -> int:
         return abs(self.right_idx - self.left_idx)
+
+    def chain_fit(self) -> Optional[ChainFit]:
+        """This segment's fit as a models.ChainFit, or None if any of its
+        model's parameters is missing."""
+        fields = [_SEGMENT_FIELDS[p] for p in CHAIN_MODELS[self.chain_model].params]
+        values = [getattr(self, value) for value, _ in fields]
+        if any(v is None for v in values):
+            return None
+        return ChainFit(self.chain_model, tuple(float(v) for v in values))
+
+    def chain_fit_errs(self) -> tuple[float, ...]:
+        """±1σ of chain_fit()'s parameters, in the same order; a missing
+        error reads 0."""
+        return tuple(float(getattr(self, err) or 0.0)
+                     for _, err in (_SEGMENT_FIELDS[p]
+                                    for p in CHAIN_MODELS[self.chain_model].params))
 
     @property
     def z_max(self) -> Optional[float]:
@@ -863,10 +888,12 @@ def fit_segments(
     guess_l_p: float = 2.0,
     guess_l_c: float = 120.0,
     ramp_force_frac: float = RAMP_SLOPE_FORCE_FRAC,
+    chain_model: str = "wlc",
 ) -> None:
     """
-    Fill each Segment's (l_p, l_c, l_p_err, l_c_err) and each Rupture's force_pN
-    IN PLACE.
+    Fill each Segment's `chain_model` fit and each Rupture's force_pN IN PLACE.
+    A model other than Marko-Siggia starts from the Marko-Siggia fit of the
+    same window.
 
     Signal: fit on the LOW-PASS force envelope (`low_retr`, the decomposed
     low-frequency retract the detector's d¹ already uses), NOT
@@ -893,6 +920,7 @@ def fit_segments(
     if not invols_slope or not np.isfinite(invols_slope):
         for roi in events.rois:
             for seg in roi.segments:
+                seg.chain_model = chain_model
                 seg.fit_status = "no_fit"
                 seg.fit_detail = "invalid calibration"
         return
@@ -909,6 +937,7 @@ def fit_segments(
         # to None on any skip so a gap in the chain is never silently bridged.
         prev_rup: Optional[Rupture] = None
         for seg, rup in zip(roi.segments, roi.ruptures):
+            seg.chain_model = chain_model
             a, b = seg.left_idx, seg.right_idx
             # Where this segment starts, on the shared extension coordinate.
             # Recorded before every guard below: it is a property of the data,
@@ -999,9 +1028,15 @@ def fit_segments(
             seg.x_max_nm = float(np.max(x_fit))
 
             fit = _fit_wlc_window(x_fit, F_fit, guess_l_p, guess_l_c)
-            if fit is not None:
+            if chain_model != "wlc":
+                start = (fit[0], fit[1]) if fit is not None else (guess_l_p, guess_l_c)
+                fit = _fit_chain_model(CHAIN_MODELS[chain_model], x_fit, F_fit, *start)
+                for name, value in (fit or {}).items():
+                    setattr(seg, name, value)
+            elif fit is not None:
                 (seg.l_p_nm, seg.l_c_nm,
                  seg.l_p_err, seg.l_c_err, seg.tau) = fit
+            if fit is not None:
                 seg.n_pts = int(mask.sum())
                 seg.fit_lo_idx = a
                 seg.fit_hi_idx = a + peak_rel
@@ -1171,6 +1206,68 @@ def _fit_wlc_window(
             float(perr[0]) * scale, float(perr[1]) * scale, float(tau))
 
 
+# The Segment (value, ±1σ) fields each models.CHAIN_MODELS parameter fills.
+_SEGMENT_FIELDS: dict[str, tuple[str, str]] = {
+    "l_p": ("l_p_nm", "l_p_err"), "l_c": ("l_c_nm", "l_c_err"),
+    "b":   ("b_nm", "b_err"),
+    "k0":  ("k_pN", "k_err"),     "k_s": ("k_pN", "k_err"),
+}
+
+
+def _fit_chain_model(
+    model: ChainModel, x: np.ndarray, F: np.ndarray, l_p: float, l_c: float,
+) -> Optional[dict]:
+    """
+    Fit one models.CHAIN_MODELS entry to the window _fit_wlc_window fit, from
+    that fit's (l_p, l_c).  Returns {Segment field: value} for every parameter
+    the model has, with its ±1σ and tau, or None on failure.
+
+    Errors carry the same sqrt(tau) correction, for the reason given there.
+    No parameter is bounded, except that l_c is floored above the data for
+    an inextensible model, whose force diverges at l_c.  A stretch modulus K
+    is fitted as θ = ln(1/K), unbounded, so K = e^-θ is positive and its ±1σ
+    is K·σθ.  A chain with no measurable stretch gives a very large K with a
+    very large error.  A fit that leaves the region where the model is
+    defined (non-finite parameters or force) counts as failed.
+    """
+    n = len(model.params)
+    lo, hi = [-np.inf] * n, [np.inf] * n
+    p0 = model.p0(l_p, l_c)
+    i_lc = model.params.index("l_c")
+    if model.lc_floor:
+        lo[i_lc] = float(np.max(x)) * 1.001
+    i_k = model.params.index(model.stretch_k) if model.stretch_k else None
+    if i_k is not None:
+        p0[i_k] = np.log(1.0 / p0[i_k])
+
+    def force(x, *p):
+        with np.errstate(all="ignore"):
+            if i_k is not None:
+                p = (*p[:i_k], np.exp(-p[i_k]), *p[i_k + 1:])
+            return model.force(x, *p)
+
+    try:
+        popt, pcov = fit_model(force, x, F, p0=np.clip(p0, lo, hi), bounds=(lo, hi))
+    except Exception:
+        return None
+    resid = F - force(x, *popt)
+    if not (np.all(np.isfinite(popt)) and np.all(np.isfinite(resid))):
+        return None
+    perr = np.sqrt(np.diag(pcov))
+    if i_k is not None:
+        with np.errstate(over="ignore"):
+            k = np.exp(-popt[i_k])
+        popt[i_k], perr[i_k] = k, k * perr[i_k]
+    tau = integrated_autocorr_time(resid)
+    scale = float(np.sqrt(tau))
+    out = {"tau": float(tau)}
+    for name, v, e in zip(model.params, popt, perr):
+        value_field, err_field = _SEGMENT_FIELDS[name]
+        out[value_field] = float(v)
+        out[err_field] = float(e) * scale
+    return out
+
+
 _PAYLOAD_VERSION = 5   # v5: segments carry left_extension_nm — where the
                        # segment starts on the extension coordinate. For an
                        # ROI's first segment that is the junction's onset, so a
@@ -1209,6 +1306,7 @@ PAYLOAD_SEGMENT_KEYS: frozenset[str] = frozenset({
     "tau", "x_max_nm", "left_extension_nm", "edge_pinned",
     "loading_rate_pN_s", "loading_stiffness_pN_nm",
     "loading_rate_err_pN_s", "loading_stiffness_err_pN_nm", "rate_tau",
+    "chain_model", "b_nm", "b_err", "k_pN", "k_err",
     "fit_status", "fit_detail",
 })
 
@@ -1271,6 +1369,11 @@ def events_to_payload(events: CurveEvents) -> dict:
                      "loading_stiffness_err_pN_nm":
                          s.loading_stiffness_err_pN_nm,
                      "rate_tau": s.rate_tau,
+                     # Additive too. A document without chain_model was fit
+                     # with Marko-Siggia, the only model there was.
+                     "chain_model": s.chain_model,
+                     "b_nm": s.b_nm, "b_err": s.b_err,
+                     "k_pN": s.k_pN, "k_err": s.k_err,
                      "fit_status": s.fit_status,
                      "fit_detail": s.fit_detail}
                     for s in roi.segments
@@ -1319,6 +1422,9 @@ def payload_to_events(payload: dict) -> Optional[CurveEvents]:
                     loading_stiffness_err_pN_nm=s.get(
                         "loading_stiffness_err_pN_nm"),
                     rate_tau=s.get("rate_tau"),
+                    chain_model=s.get("chain_model", "wlc"),
+                    b_nm=s.get("b_nm"), b_err=s.get("b_err"),
+                    k_pN=s.get("k_pN"), k_err=s.get("k_err"),
                     fit_status=s.get(
                         "fit_status",
                         "fit_available" if s.get("l_p_nm") is not None else "not_attempted",

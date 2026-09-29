@@ -24,7 +24,7 @@ import json
 import numpy as np
 
 from .histogram_binning import counts_in_range
-from .models import normalize_wlc
+from .models import ChainFit, normalize_wlc
 
 # ── WLC-normalised 2DH grid ───────────────────────────────────────────────────
 WLC_X_BINS  = 128
@@ -169,21 +169,10 @@ def _phys_grid_params(
 
 def _wlc_x_at_force(F_target: float, l_p: float, l_c: float) -> float | None:
     """
-    Return extension x (nm) where WLC(x, l_p, l_c) = F_target (pN).
-    Brent's method on the monotone WLC curve in (0, l_c).
-    Returns None if F_target is unreachable for these parameters.
+    Return extension x (nm) where Marko-Siggia WLC(x, l_p, l_c) = F_target
+    (pN), or None if F_target is unreachable for these parameters.
     """
-    from scipy.optimize import brentq
-    from .models import wlc as _wlc_model
-    try:
-        x_lo, x_hi = 1e-6 * l_c, 0.9999 * l_c
-        if float(_wlc_model(x_hi, l_p, l_c)) < F_target:
-            return None   # F_target above WLC singularity — unreachable
-        return float(
-            brentq(lambda x: float(_wlc_model(x, l_p, l_c)) - F_target, x_lo, x_hi)
-        )
-    except Exception:
-        return None
+    return ChainFit("wlc", (l_p, l_c)).x_at_force(F_target)
 
 
 # ── Physical-2DH alignment: one anchor subroutine per registration mode ───────
@@ -197,24 +186,24 @@ def _wlc_x_at_force(F_target: float, l_p: float, l_c: float) -> float | None:
 # to an x (nm) position by the caller — this module has no curve loaded, so
 # it can't do that conversion itself, only consume the result.
 
-def phys_anchor_onset(x, F, l_p, l_c, F_star, rupture_x=None):
+def phys_anchor_onset(x, F, fit, F_star, rupture_x=None):
     """Δx=0 at the loading-ramp start (first sample of the ROI slice = onset).
-    Fit-free — immune to a bad WLC fit."""
+    Fit-free — immune to a bad fit."""
     return float(x[0]) if len(x) else None
 
-def phys_anchor_snapoff(x, F, l_p, l_c, F_star, rupture_x=None):
+def phys_anchor_snapoff(x, F, fit, F_star, rupture_x=None):
     """Δx=0 at tip–surface contact — x is already measured from snap-off."""
     return 0.0
 
-def phys_anchor_fstar(x, F, l_p, l_c, F_star, rupture_x=None):
-    """Δx=0 where the chosen segment's WLC fit reaches force F*."""
-    return _wlc_x_at_force(F_star, l_p, l_c)
+def phys_anchor_fstar(x, F, fit, F_star, rupture_x=None):
+    """Δx=0 where the chosen segment's fit (a models.ChainFit) reaches F*."""
+    return fit.x_at_force(F_star) if fit is not None else None
 
-def phys_anchor_lc(x, F, l_p, l_c, F_star, rupture_x=None):
+def phys_anchor_lc(x, F, fit, F_star, rupture_x=None):
     """Δx=0 at the chosen segment's fitted contour length l_c."""
-    return float(l_c) if l_c else None
+    return float(fit.l_c) if fit is not None and fit.l_c else None
 
-def phys_anchor_rupture(x, F, l_p, l_c, F_star, rupture_x=None):
+def phys_anchor_rupture(x, F, fit, F_star, rupture_x=None):
     """Δx=0 at the CHOSEN segment's own terminating rupture (first/penult/
     last — same segment choice as fstar/lc). Fit-free — a real data point,
     not a model extrapolation, unlike fstar/lc."""

@@ -33,6 +33,7 @@ from dataclasses import dataclass, asdict
 from . import db as _db
 from .analysis_params import AnalysisParams
 from .curve_loader import LoadError, load_force_curve
+from .models import CHAIN_MODEL_BY_IDX
 from .provenance import cache_version
 from .roi_selection import (
     ReportedSegmentChoice,
@@ -86,6 +87,7 @@ class EventParams:
     detector:          str
     prominence:        float
     distance_pts:      int
+    chain_model:       str       # a models.CHAIN_MODELS key
     invols_offset_pts: int
     invols_window_pts: int
 
@@ -123,6 +125,7 @@ def event_params_from(
         detector          = det,
         prominence=params.roi_prominence,
         distance_pts=params.roi_min_distance_pts,
+        chain_model=CHAIN_MODEL_BY_IDX[params.chain_model_idx],
         invols_offset_pts=params.invols_offset_pts,
         invols_window_pts=params.invols_window_pts,
     )
@@ -394,7 +397,8 @@ def compute_curve_events_coords(
     snap = float(curve.piezo_retr[si]) if 0 <= si < len(curve.piezo_retr) else 0.0
 
     if _cached_events is None:
-        fit_segments(curve, events, offset, inv, snap, low_retr=dc.low_retr)
+        fit_segments(curve, events, offset, inv, snap, low_retr=dc.low_retr,
+                     chain_model=ep.chain_model)
 
         if can_read_cache:
             _db.write_event_map(
@@ -541,6 +545,7 @@ def assemble_rows(
 # gained a column.
 SEG_SUMMARY_KEYS = (
     "seg_l_p_nm", "seg_l_c_nm", "seg_l_p_err", "seg_l_c_err",
+    "seg_b_nm", "seg_b_err", "seg_k_pN", "seg_k_err",
     # force and the two extensions are the reported rupture's own (x, y) —
     # kept adjacent because they are read off one Rupture and must stay so.
     "seg_force_pN", "seg_x_rupture_nm", "seg_x_junction_nm",
@@ -566,6 +571,8 @@ SEG_SUMMARY_KEYS = (
 SEG_SUMMARY_FIELD = {
     "seg_l_p_nm": "l_p_nm", "seg_l_c_nm": "l_c_nm",
     "seg_l_p_err": "l_p_err", "seg_l_c_err": "l_c_err",
+    "seg_b_nm": "b_nm", "seg_b_err": "b_err",
+    "seg_k_pN": "k_pN", "seg_k_err": "k_err",
     "seg_force_pN": "force_pN",
     "seg_x_rupture_nm": "x_rupture_nm", "seg_x_junction_nm": "x_junction_nm",
     "seg_dF_pN": "dF_pN", "seg_dX_iso_nm": "dX_iso_nm",
@@ -585,7 +592,8 @@ def segment_summary_bulk(
     paths: list[str], select: str, db_path: str,
 ) -> dict[str, dict[str, "float | None"]]:
     """
-    Per-path {"l_p_nm", "l_c_nm", "l_p_err", "l_c_err", "force_pN",
+    Per-path {"l_p_nm", "l_c_nm", "l_p_err", "l_c_err", "b_nm", "b_err",
+    "k_pN", "k_err", "chain_model", "force_pN",
     "x_rupture_nm", "x_junction_nm", "dF_pN", "dX_iso_nm", "dX_ext_nm",
     "n_segments", "tau", "z_max", "edge_pinned"},
     read from each curve's latest event_map (whatever params/code produced it —
@@ -693,6 +701,8 @@ def segment_summary_bulk(
     out: dict[str, dict[str, float | None]] = {
         _db.normalize_path(p): {
             "l_p_nm": None, "l_c_nm": None, "l_p_err": None, "l_c_err": None,
+            "b_nm": None, "b_err": None, "k_pN": None, "k_err": None,
+            "chain_model": None,
             "force_pN": None, "x_rupture_nm": None, "x_junction_nm": None,
             "dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None,
             "n_segments": None,
@@ -806,6 +816,11 @@ def segment_summary_bulk(
             row["l_c_nm"] = seg.l_c_nm
             row["l_p_err"] = seg.l_p_err
             row["l_c_err"] = seg.l_c_err
+            row["b_nm"], row["b_err"] = seg.b_nm, seg.b_err
+            row["k_pN"], row["k_err"] = seg.k_pN, seg.k_err
+            # Which model the values above are from, so a view that needs one
+            # model's equation can tell.
+            row["chain_model"] = seg.chain_model
             # The three diagnostics describe the SELECTED segment's own fit, so
             # they follow the same Ultimate/Penultimate/override rule as the
             # values they explain — an error bar and the tau behind it must

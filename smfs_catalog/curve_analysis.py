@@ -98,7 +98,7 @@ def pipeline_params_from(
     roi_d1_thr = _ps.roi_threshold_nm_per_nm
     roi_post_mask = _ps.roi_post_snapoff_mask_nm
     roi_onset_thr = _ps.roi_onset_threshold_nm
-    # These six are read by roi_pipeline.event_params_from (the multi-event
+    # These are read by roi_pipeline.event_params_from (the multi-event
     # finder _persist_multi_event_roi runs downstream), so they belong in
     # params_roi: changing one must invalidate the verdict fast-path cache, or
     # the fast path returns early and the finder never runs against the new
@@ -108,6 +108,7 @@ def pipeline_params_from(
     roi_detector_idx = _ps.roi_detector_mode_idx
     roi_prominence = _ps.roi_prominence
     roi_min_dist_pts = _ps.roi_min_distance_pts
+    chain_model_idx = _ps.chain_model_idx
 
     params_bl = json.dumps({"anchor_nm": float(anchor_nm)}, sort_keys=True,
                            separators=(",", ":"))
@@ -132,6 +133,7 @@ def pipeline_params_from(
         "roi_detector_mode_idx":    roi_detector_idx,
         "roi_prominence":           float(roi_prominence),
         "roi_min_distance_pts":     roi_min_dist_pts,
+        "chain_model_idx":          chain_model_idx,
     }, sort_keys=True, separators=(",", ":"))
     params_invols = json.dumps({
         "cutoff_hz":  float(cutoff_hz),

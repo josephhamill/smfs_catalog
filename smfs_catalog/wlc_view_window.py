@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import numpy as np
@@ -44,7 +45,7 @@ from PyQt6.QtWidgets import (
 from . import db as _db
 from . import export_utils as _export
 from .curve_loader import LoadError, load_force_curve
-from .models import wlc
+from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
 from .regression import linear_fit
 from . import sample_marks
 from . import style
@@ -223,10 +224,10 @@ class WlcViewWindow(QMainWindow):
         # WLC fit lives on the extension axis, the loading-rate fit on time, and
         # a line that is straight on one is curved on the other.
         self._view_combo = QComboBox()
-        self._view_combo.addItem("WLC fit", "wlc")
+        self._view_combo.addItem("Chain fit", "wlc")
         self._view_combo.addItem("Loading rate", "rate")
         self._view_combo.setToolTip(
-            "WLC fit: force against extension, with the per-segment models.\n"
+            "Chain fit: force against extension, with the per-segment models.\n"
             "Loading rate: force against time over the fitted ramp window, "
             "with the linear fit and its confidence band."
         )
@@ -234,6 +235,18 @@ class WlcViewWindow(QMainWindow):
             lambda _i: self._on_view_mode_changed())
         manual_row.addWidget(QLabel("View:"))
         manual_row.addWidget(self._view_combo)
+
+        # The profile's chain model, the same setting the ROI window edits.
+        # Changing it refits the curve on screen; the rest go stale until
+        # they are next shown or re-analysed.
+        self._chain_combo = QComboBox()
+        for key in CHAIN_MODEL_BY_IDX:
+            self._chain_combo.addItem(CHAIN_MODELS[key].name)
+        self._chain_combo.setCurrentIndex(
+            _db.load_analysis_params(self._db_path).chain_model_idx)
+        self._chain_combo.currentIndexChanged.connect(self._on_chain_model_changed)
+        manual_row.addWidget(QLabel("Chain model:"))
+        manual_row.addWidget(self._chain_combo)
 
         # Parameter-variation envelope from the stored marginal standard
         # errors. It is descriptive because the stored result has no covariance.
@@ -387,7 +400,8 @@ class WlcViewWindow(QMainWindow):
         # so the two files read alike.
         headers = ["path", "roi_index", "n_ruptures", "ordering", "position",
                    "seg_index",
-                   "l_p_nm", "l_p_err", "l_c_nm", "l_c_err", "tau",
+                   "l_p_nm", "l_p_err", "l_c_nm", "l_c_err",
+                   "chain_model", "b_nm", "b_err", "k_pN", "k_err", "tau",
                    "rupture_force_pN",
                    "loading_rate_pN_s", "loading_rate_err_pN_s",
                    "loading_stiffness_pN_nm", "loading_stiffness_err_pN_nm",
@@ -505,6 +519,10 @@ class WlcViewWindow(QMainWindow):
         self._clickable_segments = []
         self._manual_status_label.setText("")
 
+    def _on_chain_model_changed(self, index: int) -> None:
+        _db.update_analysis_param("chain_model_idx", float(index), self._db_path)
+        self._show_current()
+
     # ── Which fit the upper panel shows ──────────────────────────────────────
 
     @property
@@ -599,6 +617,10 @@ class WlcViewWindow(QMainWindow):
             # resolution — a second way of deciding is how one computation
             # ended up built from two people's numbers.
             param_set = _db.load_analysis_params(self._db_path)
+            # The ROI window may have changed the model since this one drew.
+            self._chain_combo.blockSignals(True)
+            self._chain_combo.setCurrentIndex(param_set.chain_model_idx)
+            self._chain_combo.blockSignals(False)
             ep = event_params_from(param_set)
             file_id = _db.get_file_id(file_path, self._db_path)
             res = compute_curve_events_coords(
@@ -674,7 +696,8 @@ class WlcViewWindow(QMainWindow):
         for ri, roi in enumerate(events.rois):
             n_segs = len(roi.segments)
             for si, seg in enumerate(roi.segments):
-                if seg.l_p_nm is None or seg.l_c_nm is None:
+                fit = seg.chain_fit()
+                if fit is None:
                     continue
                 a = seg.fit_lo_idx if seg.fit_lo_idx is not None else seg.left_idx
                 b = seg.fit_hi_idx if seg.fit_hi_idx is not None else seg.right_idx
@@ -692,7 +715,7 @@ class WlcViewWindow(QMainWindow):
                 col = style.roi_segment_qcolor(ri, n_rois, si, n_segs,
                                                alpha=style.A_MODEL)
                 xm = np.linspace(float(xs.min()), float(xs.max()), 300)
-                ym = np.asarray(wlc(xm, seg.l_p_nm, seg.l_c_nm))
+                ym = np.asarray(fit.force(xm))
                 line = self._top.plot(
                     xm.tolist(), ym.tolist(),
                     pen=pg.mkPen(col, width=style.W_MODEL),
@@ -700,7 +723,7 @@ class WlcViewWindow(QMainWindow):
                 self._multi_items.append(line)
                 self._multi_items += self._draw_fit_ci(xm, seg, col)
                 resid_x += xs.tolist()
-                resid_y += (Fs - wlc(xs, seg.l_p_nm, seg.l_c_nm)).tolist()
+                resid_y += (Fs - fit.force(xs)).tolist()
                 summary.append(f"{_quant.format_value('seg_l_p_nm', seg.l_p_nm)}"
                                f"/{_quant.format_value('seg_l_c_nm', seg.l_c_nm)}")
                 # Appended here, in step with `summary`, so the nth rate belongs
@@ -855,34 +878,34 @@ class WlcViewWindow(QMainWindow):
     # ── Per-segment parameter-variation envelope ──────────────────────────────
 
     def _draw_fit_ci(self, xm, seg, col) -> list:
-        """Parameter-variation envelope around one segment's WLC fit.
+        """Parameter-variation envelope around one segment's chain-model fit.
 
-        Uses the stored marginal standard errors (`l_p_err`/`l_c_err`, computed
-        by roi_events.fit_segments and persisted in event_map).
+        Uses the stored marginal standard errors (computed by
+        roi_events.fit_segments and persisted in event_map).
 
         The same stored uncertainties are available as dashboard columns,
         criteria-gate variables, and export fields.
 
-        The envelope spans the model evaluated at the four
-        (`l_p ± σ`, `l_c ± σ`) corners. It is not a joint confidence band and
-        makes no covariance claim. Purely informative; nothing gates on it.
+        The envelope spans the segment's model evaluated at every corner of
+        (each parameter ± σ). It is not a joint confidence band and makes no
+        covariance claim. Purely informative; nothing gates on it.
         """
         if not self._ci_chk.isChecked():
             return []
-        lp_e = seg.l_p_err if seg.l_p_err is not None else 0.0
-        lc_e = seg.l_c_err if seg.l_c_err is not None else 0.0
-        if not (np.isfinite(lp_e) and np.isfinite(lc_e)) or (lp_e == 0.0 and lc_e == 0.0):
+        fit, errs = seg.chain_fit(), seg.chain_fit_errs()
+        if fit is None or not np.all(np.isfinite(errs)) or not any(errs):
             return []
 
+        chain = fit.chain
+        i_lc = chain.params.index("l_c")
         corners = []
-        for dp in (-lp_e, lp_e):
-            for dc in (-lc_e, lc_e):
-                lp = max(seg.l_p_nm + dp, 1e-6)
-                lc = seg.l_c_nm + dc
-                if lc <= float(xm.max()):
-                    continue                       # WLC pole — undefined there
-                with np.errstate(all="ignore"):
-                    corners.append(np.asarray(wlc(xm, lp, lc), dtype=float))
+        for signs in itertools.product((-1.0, 1.0), repeat=len(errs)):
+            params = tuple(max(v + s * e, 1e-6)
+                           for v, s, e in zip(fit.params, signs, errs))
+            if chain.lc_floor and params[i_lc] <= float(xm.max()):
+                continue                           # pole — undefined there
+            with np.errstate(all="ignore"):
+                corners.append(np.asarray(chain.force(xm, *params), dtype=float))
         if not corners:
             return []
         stack = np.vstack(corners)

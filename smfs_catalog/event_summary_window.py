@@ -1550,8 +1550,8 @@ class EventSummaryWindow(QMainWindow):
         # A WLC parameter on an axis travels with its fit uncertainty, read
         # from the same register as the plotted values: without it the export
         # gives a point with no error bar while the number sits in the DB.
-        errs = {k: k[:-len("_nm")] + "_err" for k in dict.fromkeys((xk, yk))
-                if k.endswith("_nm") and k[:-len("_nm")] + "_err" in _vars.SEGMENT_FIT_KEYS}
+        errs = {k: e for k in dict.fromkeys((xk, yk))
+                if (e := _vars.error_key(k)) is not None}
         err_cols = (_vars.columns(sel_paths, list(errs.values()), self._db_path)[1]
                     if errs else {})
 
@@ -1622,6 +1622,11 @@ class EventSummaryWindow(QMainWindow):
         ("l_p_err_nm",        "l_p_err"),
         ("l_c_nm",            "l_c_nm"),
         ("l_c_err_nm",        "l_c_err"),
+        ("chain_model",       "chain_model"),
+        ("b_nm",              "b_nm"),
+        ("b_err_nm",          "b_err"),
+        ("k_pN",              "k_pN"),
+        ("k_err_pN",          "k_err"),
         ("tau",               "tau"),
         ("n_fit_pts",         "n_fit_pts"),
         ("fit_status",        "fit_status"),
