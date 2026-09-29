@@ -56,7 +56,7 @@ def _frozen() -> bool:
 
 def resource_path(*parts: str) -> Path:
     """
-    Locate a bundled data file (icons, and whatever the manual needs later).
+    Locate a bundled data file, such as the icons.
 
     In a checkout that is simply next to this script.  PyInstaller instead
     unpacks the bundle to a temporary directory and points sys._MEIPASS at it,

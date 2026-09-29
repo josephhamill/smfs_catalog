@@ -1,9 +1,7 @@
 # What the error bars mean
 
-Being rewritten, along with the rest of the documentation.
-
-The standing rules, so that nothing in the application is unexplained in the
-meantime:
+How the application computes the uncertainties it reports, and how to read
+them:
 
 - **Fit uncertainties are corrected for correlated residuals.** The force is
   low-pass filtered before fitting, so consecutive samples are not independent

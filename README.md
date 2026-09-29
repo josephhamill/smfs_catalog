@@ -14,7 +14,7 @@ curves, let it work through them, then spend your time on the curves and the
 statistics rather than on bookkeeping.
 
 **[Watch a walkthrough](https://github.com/josephhamill/smfs_catalog/releases/download/v1.3.0/smfs_catalog_walkthrough_v1-3-0.mp4)**
-(~30 min, ~490 MB, v1.3.0).
+(~30 min, ~490 MB). Recorded on v1.3.0, so some windows have changed since.
 
 ## What it does
 
@@ -79,15 +79,13 @@ session when the app exits.
 
 ### Prebuilt applications
 
-Standalone builds for Windows, macOS and Linux are attached to each
-[release](../../releases) — no Python or conda needed. They are unsigned, so
-Windows shows a SmartScreen prompt and macOS requires right-click → Open on
-first launch. The release notes give the details per platform.
+Standalone builds for Windows and Linux are attached to the
+[releases](../../releases) — no Python or conda needed. They are unsigned, so
+Windows shows a SmartScreen prompt on first launch. The release notes give the
+details per platform.
 
 ## Documentation
 
-- [`docs/SPEC_what_the_app_does.md`](docs/SPEC_what_the_app_does.md) — what
-  the analysis pipeline does, stage by stage
 - [`docs/UNCERTAINTY.md`](docs/UNCERTAINTY.md) — how uncertainties are computed
   and what they do and do not mean
 
@@ -98,8 +96,8 @@ conda activate smfs-catalog
 python -m pytest -q
 ```
 
-The suite is the specification: most tests exist because a specific behaviour
-was got wrong once, and each explains in its docstring what it is protecting.
+The suite is the specification: each test's docstring states the behaviour it
+protects.
 
 ## Built with
 

@@ -25,6 +25,7 @@ smfs_catalog/_build_stamp.py
 .DS_Store
 *.swp
 .vscode/
+*.code-workspace
 .claude/
 .venv/
 venv/
