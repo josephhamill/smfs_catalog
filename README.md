@@ -86,6 +86,8 @@ details per platform.
 
 ## Documentation
 
+- [`docs/ONBOARDING.md`](docs/ONBOARDING.md) — getting the code and a
+  glossary, for teams building on this application
 - [`docs/UNCERTAINTY.md`](docs/UNCERTAINTY.md) — how uncertainties are computed
   and what they do and do not mean
 
