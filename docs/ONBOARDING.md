@@ -13,8 +13,6 @@ code you read stays the same while development here continues.
 
 ### Copy it to GitLab
 
-One person does this once for the team.
-
 1. In GitLab: **New project** → **Import project** → **Repository by URL**.
 2. Paste `https://github.com/josephhamill/smfs_catalog.git`.
 
