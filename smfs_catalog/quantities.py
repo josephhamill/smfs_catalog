@@ -263,6 +263,10 @@ QUANTITIES: dict[str, Quantity] = {
     "roi_prominence":                Quantity(NM_PER_NM, 3),
     "roi_min_distance_pts":          Quantity(PTS, 0, integer=True),
     "chain_model_idx":               INTEGER,
+    "rupture_algorithm_idx":         INTEGER,
+    # Both count something that has no unit: d1-peak widths, noise widths.
+    "walk_back_fit_widths":          INTEGER,
+    "walk_back_noise_multiple":      Quantity(RATIO, 1),
 
     # ── 2DH grid settings ────────────────────────────────────────────────────
     # Normalized axes x/l_c and F·l_p/kT are dimensionless.

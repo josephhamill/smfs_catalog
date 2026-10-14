@@ -32,6 +32,9 @@ class AnalysisParams(Mapping[str, float]):
     roi_prominence: float = 0.1
     roi_min_distance_pts: int = 25
     chain_model_idx: int = 0
+    rupture_algorithm_idx: int = 0
+    walk_back_fit_widths: int = 3
+    walk_back_noise_multiple: float = 5.0
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object]) -> "AnalysisParams":
@@ -41,7 +44,7 @@ class AnalysisParams(Mapping[str, float]):
         int_names = {
             "turnaround_trim_pts", "invols_offset_pts", "invols_window_pts",
             "roi_window_pts", "roi_detector_mode_idx", "roi_min_distance_pts",
-            "chain_model_idx",
+            "chain_model_idx", "rupture_algorithm_idx", "walk_back_fit_widths",
         }
         for item in fields(cls):
             raw = values.get(item.name, getattr(defaults, item.name))

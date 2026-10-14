@@ -33,14 +33,14 @@
 # and terminal-vs-inner is carried by marker SYMBOL (circle vs diamond) rather
 # than by hue — otherwise the green/magenta pair would have to dodge the ROI
 # hues drawn in the same panel.  See style.py § E.
-# Its force/extension data, rupture markers, and WLC overlays all use the same
-# decomposed low-frequency retract that roi_events.fit_segments fits. The raw
-# retract is context for overview plots, not fit data.
+# Its force/extension data, rupture markers, and WLC overlays all use the signal
+# roi_events.fit_segments fitted: the raw retract under a rupture algorithm that
+# fits the saved signal, the decomposed low-frequency retract otherwise.
 #
 # Draggable threshold markers:
 #   - horizontal lines on the d1 panel       → _threshold_nm_per_nm (outer, green),
 #                                                _inner_threshold_nm_per_nm (inner, magenta)
-#   - horizontal line on the mean_dev panel   → _onset_threshold_nm
+#   - horizontal line on the deflection panel → _onset_threshold_nm
 #
 # The window displays the multi-event detector used by the analysis pipeline.
 # find_rupture/find_onset remain the stage-one event classifier but are not a
@@ -70,6 +70,9 @@ from .curve_loader import ForceCurve, LoadError, load_force_curve
 from . import db as _db
 from . import quantities as _quant
 from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
+from .rupture_algorithms import (
+    RUPTURE_ALGORITHM_BY_IDX, RUPTURE_ALGORITHMS, fit_deflection,
+)
 from .roi_pipeline import (
     DETECTOR_BY_IDX, DETECTOR_MODE_LABELS, MODE_TO_STORED_IDX,
     compute_curve_events_coords, event_geometry_identity, event_params_from,
@@ -178,6 +181,9 @@ class ROIWindow(QWidget):
         self._prominence     = float(_ps['roi_prominence'])
         self._distance_pts   = int(  _ps['roi_min_distance_pts'])
         self._chain_model_idx = int(_ps['chain_model_idx'])
+        self._rupture_algorithm_idx    = int(_ps['rupture_algorithm_idx'])
+        self._walk_back_fit_widths     = int(_ps['walk_back_fit_widths'])
+        self._walk_back_noise_multiple = float(_ps['walk_back_noise_multiple'])
         # Must mirror roi_pipeline.event_params_from's default: this window is
         # supposed to SHOW what the worker STORES, so a drop_frac that differs
         # from the worker's means the markers on screen are not the ones going
@@ -296,6 +302,42 @@ class ROIWindow(QWidget):
         self._combo_chain.currentIndexChanged.connect(self._on_chain_model_changed)
         ctrl2.addWidget(LabeledControl("Chain model:", self._combo_chain))
 
+        # Position in the combo is the stored rupture_algorithm_idx.  The two
+        # spin boxes are the drawdown walk-back algorithm's own settings and
+        # are live only while it is the one in force.
+        self._combo_rupture = QComboBox()
+        for key in RUPTURE_ALGORITHM_BY_IDX:
+            self._combo_rupture.addItem(RUPTURE_ALGORITHMS[key].name)
+        self._combo_rupture.setCurrentIndex(self._rupture_algorithm_idx)
+        self._combo_rupture.setToolTip("How each rupture is located on its "
+                                       "loading ramp.")
+        self._combo_rupture.currentIndexChanged.connect(
+            self._on_rupture_algorithm_changed)
+        ctrl2.addWidget(LabeledControl("Rupture algorithm:", self._combo_rupture))
+
+        self._spin_wb_widths = QSpinBox()
+        self._spin_wb_widths.setRange(1, 50)
+        _quant.configure_spinbox(self._spin_wb_widths, "walk_back_fit_widths")
+        self._spin_wb_widths.setValue(self._walk_back_fit_widths)
+        self._spin_wb_widths.setToolTip(
+            "Drawdown walk-back: how many d¹-peak widths left of the peak the "
+            "search starts and the noise is measured on.")
+        self._spin_wb_widths.editingFinished.connect(self._commit_walk_back_widths)
+        ctrl2.addWidget(LabeledControl("Fit length (d¹ widths):",
+                                       self._spin_wb_widths))
+
+        self._spin_wb_multiple = QDoubleSpinBox()
+        self._spin_wb_multiple.setRange(0.0, 50.0)
+        _quant.configure_spinbox(self._spin_wb_multiple, "walk_back_noise_multiple")
+        self._spin_wb_multiple.setValue(self._walk_back_noise_multiple)
+        self._spin_wb_multiple.setToolTip(
+            "Drawdown walk-back: how many noise widths below the top a sample "
+            "may be and still count as on the ramp.")
+        self._spin_wb_multiple.editingFinished.connect(
+            self._commit_walk_back_multiple)
+        ctrl2.addWidget(LabeledControl("Noise multiple:", self._spin_wb_multiple))
+        self._enable_rupture_settings()
+
         self._spin_prom = QDoubleSpinBox()
         self._spin_prom.setRange(0.0, 10.0)
         _quant.configure_spinbox(self._spin_prom, "roi_prominence")
@@ -368,7 +410,11 @@ class ROIWindow(QWidget):
 
         # ── Row 0: raw low channel (nm, baseline-subtracted) ─────────────────
         self._raw_plot = glw.addPlot(row=0, col=0)
-        set_si_label(self._raw_plot, "left", "deflection", _quant.NM)
+        # si=False: the onset-threshold line below is dragged on this axis
+        # and typed into _spin_onset, which shows plain nm and cannot carry
+        # an SI prefix.  A free axis could relabel itself pm while the box
+        # beside it said nm, for the same number.
+        set_si_label(self._raw_plot, "left", "deflection", _quant.NM, si=False)
         self._raw_plot.showGrid(x=True, y=True, alpha=0.15)
         self._raw_curve = sample_marks.trace(
             self._raw_plot, color=style.DATA, alpha=_ALPHA_SIGNAL
@@ -381,23 +427,8 @@ class ROIWindow(QWidget):
         # stacked panels.
         self._raw_plot.getAxis("bottom").setStyle(showValues=False)
 
-        # ── Row 1: mean_dev (nm) ─────────────────────────────────────────────
-        self._mean_plot = glw.addPlot(row=1, col=0)
-        # si=False: the onset-threshold line below is dragged on this axis
-        # and typed into _spin_onset, which shows plain nm and cannot carry
-        # an SI prefix.  A free axis could relabel itself pm while the box
-        # beside it said nm, for the same number.
-        set_si_label(self._mean_plot, "left", "mean dev", _quant.NM, si=False)
-        self._mean_plot.showGrid(x=True, y=True, alpha=0.15)
-        self._mean_plot.setXLink(self._raw_plot)
-        self._mean_curve = sample_marks.trace(
-            self._mean_plot, color=style.SIG_MEAN_DEV,
-            width=style.W_SIGNAL, alpha=_ALPHA_SIGNAL,
-        )
-        self._mean_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=_zero_pen))
-        self._mean_plot.getAxis("bottom").setStyle(showValues=False)
-
-        # Draggable horizontal threshold on mean_dev panel — onset threshold.
+        # Draggable horizontal threshold on the deflection panel — the onset
+        # threshold, drawn on the signal the onset search walks.
         self._thresh_line_onset = pg.InfiniteLine(
             pos=self._onset_threshold_nm, angle=0, movable=True,
             pen=pg.mkPen(_COLOR_ONSET, width=2, style=Qt.PenStyle.DashLine),
@@ -408,10 +439,10 @@ class ROIWindow(QWidget):
         self._thresh_line_onset.sigPositionChangeFinished.connect(
             self._on_onset_line_moved
         )
-        self._mean_plot.addItem(self._thresh_line_onset)
+        self._raw_plot.addItem(self._thresh_line_onset)
 
-        # ── Row 2: d1 (nm deflection per nm piezo) ───────────────────────────
-        self._d1_plot = glw.addPlot(row=2, col=0)
+        # ── Row 1: d1 (nm deflection per nm piezo) ───────────────────────────
+        self._d1_plot = glw.addPlot(row=1, col=0)
         # d¹ is a ratio (nm/nm): not an SI unit, never prefixed — and the two
         # threshold lines on it are typed into spin boxes as well.
         set_si_label(self._d1_plot, "left",   "d¹",    _quant.NM_PER_NM)
@@ -454,12 +485,12 @@ class ROIWindow(QWidget):
         )
         self._d1_plot.addItem(self._thresh_line_inner)
 
-        # ── Row 3: Force vs Extension — per-segment WLC fits ──────────────────
+        # ── Row 2: Force vs Extension — per-segment WLC fits ──────────────────
         # Different x-axis (extension, not piezo) so it is NOT x-linked to the
         # panels above.  In a multi mode it shows the retract in force-extension
         # space with each detected segment's WLC fit overlaid and each rupture's
         # force marked — the view for eyeballing the fits on real curves.
-        self._fx_plot = glw.addPlot(row=3, col=0)
+        self._fx_plot = glw.addPlot(row=2, col=0)
         set_si_label(self._fx_plot, "left",   "force",     _quant.PN)
         set_si_label(self._fx_plot, "bottom", "extension", _quant.NM)
         self._fx_plot.showGrid(x=True, y=True, alpha=0.15)
@@ -468,7 +499,7 @@ class ROIWindow(QWidget):
         self._fx_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=_zero_pen))
         # Dynamically created (variable-count) fit lines + force markers.
         self._fx_items: list = []
-        # _fx_plot shares glw's ONE scene with _raw_plot/_mean_plot/_d1_plot
+        # _fx_plot shares glw's ONE scene with _raw_plot/_d1_plot
         # (all pg.PlotItems from the same GraphicsLayoutWidget), so the click
         # handler must itself check the click landed in _fx_plot, not assume it.
         glw.scene().sigMouseClicked.connect(self._on_plot_clicked)
@@ -476,7 +507,7 @@ class ROIWindow(QWidget):
         # Per-panel overlay items (masks only — ROI/rupture markers are drawn
         # dynamically per-curve by _draw_multi, since their count varies).
         self._overlays: dict[str, list] = {"anchor": [], "postsnap": []}
-        for plot in (self._raw_plot, self._mean_plot, self._d1_plot):
+        for plot in (self._raw_plot, self._d1_plot):
             anchor_region = pg.LinearRegionItem(
                 values=(0.0, 0.0),
                 brush=pg.mkBrush(_COLOR_MASK),
@@ -592,6 +623,9 @@ class ROIWindow(QWidget):
                 roi_prominence=self._prominence,
                 roi_min_distance_pts=self._distance_pts,
                 chain_model_idx=self._chain_model_idx,
+                rupture_algorithm_idx=self._rupture_algorithm_idx,
+                walk_back_fit_widths=self._walk_back_fit_widths,
+                walk_back_noise_multiple=self._walk_back_noise_multiple,
             )
             ep = event_params_from(committed, detector=self._detector_mode)
 
@@ -617,7 +651,6 @@ class ROIWindow(QWidget):
 
         px = sigs.piezo
         self._raw_curve.setData(x=px.tolist(),  y=sigs.low.tolist())
-        self._mean_curve.setData(x=px.tolist(), y=sigs.mean_dev.tolist())
         self._d1_curve.setData(x=px.tolist(),   y=sigs.d1.tolist())
 
         # Keep draggable threshold lines in sync with stored values.
@@ -657,7 +690,7 @@ class ROIWindow(QWidget):
 
     def _clear(self) -> None:
         """Clear all curves on load error."""
-        for c in (self._raw_curve, self._mean_curve, self._d1_curve):
+        for c in (self._raw_curve, self._d1_curve):
             c.setData(x=[], y=[])
         self._clear_multi()
         self._clear_fx()
@@ -675,7 +708,7 @@ class ROIWindow(QWidget):
     def _draw_multi(self, events) -> None:
         """
         Draw every ROI boundary (onset solid / return dotted, orange) and every
-        rupture across all three panels.  Variable count, so the lines are
+        rupture across both signal panels.  Variable count, so the lines are
         created fresh each redraw and tracked for removal.
 
         roi.ruptures is ascending surface -> baseline (see the ROI docstring in
@@ -687,7 +720,7 @@ class ROIWindow(QWidget):
         two separate outer ROIs sitting side by side.
         """
         self._clear_multi()
-        plots = (self._raw_plot, self._mean_plot, self._d1_plot)
+        plots = (self._raw_plot, self._d1_plot)
         for roi in events.rois:
             n = len(roi.ruptures)
             for plot in plots:
@@ -723,10 +756,11 @@ class ROIWindow(QWidget):
     def _draw_fx(self, events, curve, low_retr, offset: float, inv: float,
                  snap_piezo: float) -> None:
         """
-        Draw the low-frequency retract in force-extension space over the event
-        region, overlay each fitted segment's WLC curve, and mark each rupture's
-        force. Extension is zeroed at snap-off. Data, model, markers and residual
-        coordinates therefore match fit_segments exactly.
+        Draw the retract in force-extension space over the event region,
+        overlay each fitted segment's WLC curve, and mark each rupture's force.
+        Extension is zeroed at snap-off. The signal drawn is the one the rupture
+        algorithm in force fits on, so data, model, markers and residual
+        coordinates match fit_segments exactly.
         """
         self._clear_fx()
         self._last_events = events
@@ -734,9 +768,11 @@ class ROIWindow(QWidget):
             self._fx_data.setData(x=[], y=[])
             return
         k         = curve.spring_constant
-        # These are the exact coordinates supplied to fit_segments.  Using the
-        # raw channel here would compare the low-pass fit with different data.
-        defl_corr = (np.asarray(low_retr, dtype=float) - offset) / inv
+        # These are the exact coordinates supplied to fit_segments.  Drawing any
+        # other signal would compare the fit with data it was not fitted to.
+        defl = fit_deflection(RUPTURE_ALGORITHM_BY_IDX[self._rupture_algorithm_idx],
+                              curve.defl_retr, low_retr)
+        defl_corr = (np.asarray(defl, dtype=float) - offset) / inv
         force     = k * defl_corr
         ext       = (curve.piezo_retr - snap_piezo) - defl_corr
 
@@ -892,7 +928,12 @@ class ROIWindow(QWidget):
                 for s in roi.segments if s.loading_rate_pN_s is not None
             )
             rss = f"  r={rs} pN/s" if rs else ""
-            parts.append(f"ROI{i}[{roi.ordering}] F={fs} pN{rss}{dxs}")
+            # What the rupture algorithm said about each answer, in the same
+            # order as the forces.  Absent for an algorithm that reports none.
+            ps = "/".join(r.point_status for r in roi.ruptures
+                          if r.point_status is not None)
+            pss = f"  point: {ps}" if ps else ""
+            parts.append(f"ROI{i}[{roi.ordering}] F={fs} pN{rss}{dxs}{pss}")
         return (f"detector: {self._detector_mode}   |   "
                 f"{events.n_rois} ROI(s)   |   " + "   ".join(parts))
 
@@ -971,6 +1012,12 @@ class ROIWindow(QWidget):
         self._prominence    = _f("roi_prominence", self._prominence)
         self._distance_pts  = int(_f("roi_min_distance_pts", self._distance_pts))
         self._chain_model_idx = int(_f("chain_model_idx", self._chain_model_idx))
+        self._rupture_algorithm_idx = int(_f("rupture_algorithm_idx",
+                                             self._rupture_algorithm_idx))
+        self._walk_back_fit_widths = int(_f("walk_back_fit_widths",
+                                            self._walk_back_fit_widths))
+        self._walk_back_noise_multiple = _f("walk_back_noise_multiple",
+                                            self._walk_back_noise_multiple)
 
         for w, val in (
             (self._spin_window,    self._window_pts),
@@ -980,6 +1027,8 @@ class ROIWindow(QWidget):
             (self._spin_onset,     self._onset_threshold_nm),
             (self._spin_prom,      self._prominence),
             (self._spin_dist,      self._distance_pts),
+            (self._spin_wb_widths,   self._walk_back_fit_widths),
+            (self._spin_wb_multiple, self._walk_back_noise_multiple),
         ):
             w.blockSignals(True)
             w.setValue(val)
@@ -990,6 +1039,10 @@ class ROIWindow(QWidget):
         self._combo_chain.blockSignals(True)
         self._combo_chain.setCurrentIndex(self._chain_model_idx)
         self._combo_chain.blockSignals(False)
+        self._combo_rupture.blockSignals(True)
+        self._combo_rupture.setCurrentIndex(self._rupture_algorithm_idx)
+        self._combo_rupture.blockSignals(False)
+        self._enable_rupture_settings()
 
         # No mirror into the `settings` table. The parameter set lives in
         # exactly one place - the queue owner's profile - and the pipeline
@@ -1020,6 +1073,9 @@ class ROIWindow(QWidget):
             "roi_prominence":                float(self._prominence),
             "roi_min_distance_pts":          float(self._distance_pts),
             "chain_model_idx":               float(self._chain_model_idx),
+            "rupture_algorithm_idx":         float(self._rupture_algorithm_idx),
+            "walk_back_fit_widths":          float(self._walk_back_fit_widths),
+            "walk_back_noise_multiple":      float(self._walk_back_noise_multiple),
         }, self._db_path)
 
     # ── Controls ──────────────────────────────────────────────────────────────
@@ -1153,6 +1209,36 @@ class ROIWindow(QWidget):
     def _on_chain_model_changed(self, index: int) -> None:
         self._chain_model_idx = int(index)
         _db.update_analysis_param('chain_model_idx', float(index), self._db_path)
+        self._save_user_profile()
+        self._recompute_current()
+
+    def _enable_rupture_settings(self) -> None:
+        """A setting is live only while the algorithm it belongs to is in force."""
+        key = RUPTURE_ALGORITHM_BY_IDX[self._rupture_algorithm_idx]
+        own = RUPTURE_ALGORITHMS[key].settings
+        self._spin_wb_widths.setEnabled("walk_back_fit_widths" in own)
+        self._spin_wb_multiple.setEnabled("walk_back_noise_multiple" in own)
+
+    def _on_rupture_algorithm_changed(self, index: int) -> None:
+        self._rupture_algorithm_idx = int(index)
+        _db.update_analysis_param('rupture_algorithm_idx', float(index),
+                                  self._db_path)
+        self._save_user_profile()
+        self._enable_rupture_settings()
+        self._recompute_current()
+
+    def _commit_walk_back_widths(self) -> None:
+        self._walk_back_fit_widths = int(self._spin_wb_widths.value())
+        _db.update_analysis_param('walk_back_fit_widths',
+                                  int(self._walk_back_fit_widths), self._db_path)
+        self._save_user_profile()
+        self._recompute_current()
+
+    def _commit_walk_back_multiple(self) -> None:
+        self._walk_back_noise_multiple = float(self._spin_wb_multiple.value())
+        _db.update_analysis_param('walk_back_noise_multiple',
+                                  float(self._walk_back_noise_multiple),
+                                  self._db_path)
         self._save_user_profile()
         self._recompute_current()
 

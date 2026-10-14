@@ -10,8 +10,9 @@
 #
 # WlcViewWindow — WLC fit navigator for confirmed events.
 #   left   : raw retract, retained as acquisition context
-#   top    : low-frequency force vs extension (fit data + WLC model overlay)
-#   bottom : low-frequency residuals (fit data − model) vs extension
+#   top    : force vs extension (fit data + WLC model overlay)
+#   bottom : residuals (fit data − model) vs extension
+#   The fit data is the signal the rupture algorithm in force fits on.
 #
 # Accepts an ordered list of event paths and navigates through them with
 # prev/next buttons, autoplay, and a scrollable track list.
@@ -47,6 +48,7 @@ from . import export_utils as _export
 from .curve_loader import LoadError, load_force_curve
 from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
 from .regression import linear_fit
+from .rupture_algorithms import RUPTURE_ALGORITHM_BY_IDX, fit_deflection
 from . import sample_marks
 from . import style
 from .widgets import SampleMarksToggle
@@ -592,9 +594,8 @@ class WlcViewWindow(QMainWindow):
 
     def _load_and_fit(self, file_path: str) -> None:
         """
-        Multi-event only: draw the low-frequency event-region data, each stored
-        segment fit, rupture markers, and its piecewise residual. The raw retract
-        remains in the overview only. No fit is repeated here on a cache hit and
+        Multi-event only: draw the event-region data the fits were made on, each
+        stored segment fit, rupture markers, and its piecewise residual. No fit is repeated here on a cache hit and
         no single full-width fit is computed, plotted, or written.
         """
         try:
@@ -664,8 +665,10 @@ class WlcViewWindow(QMainWindow):
 
         k = curve.spring_constant
         # Match fit_segments exactly: points, markers, and residuals all use
-        # the same low-frequency force envelope and extension coordinate.
-        defl_corr = (res.dc.low_retr - offset) / inv
+        # the signal the fits were made on and the same extension coordinate.
+        defl = fit_deflection(RUPTURE_ALGORITHM_BY_IDX[param_set.rupture_algorithm_idx],
+                              curve.defl_retr, res.dc.low_retr)
+        defl_corr = (defl - offset) / inv
         force = k * defl_corr
         ext   = (curve.piezo_retr - snap) - defl_corr
 

@@ -24,7 +24,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import uniform_filter1d
 from scipy.signal import savgol_filter
 
 
@@ -62,28 +61,6 @@ def signal_d1(
     return d1_per_sample / d_piezo
 
 
-def signal_mean_dev(
-    low_retr:   np.ndarray,
-    window_pts: int,
-) -> np.ndarray:
-    """
-    Sliding window mean, in nm deflection.
-
-    `low_retr` is required to already be baseline-subtracted by the caller
-    (see compute_detection_signals) — so its baseline region should already
-    sit at zero, and this is a plain sliding mean, not a deviation from a
-    second, independently-remeasured reference.  Baseline → near zero; event
-    region → departs.  Not normalised.
-    """
-    low_retr = np.asarray(low_retr, dtype=float)
-    if low_retr.ndim != 1 or low_retr.size == 0:
-        raise ValueError("low_retr must be a non-empty one-dimensional signal")
-    if not np.all(np.isfinite(low_retr)):
-        raise ValueError("low_retr must contain only finite values")
-    wp = _bounded_odd(window_pts, low_retr.size, minimum=1)
-    return uniform_filter1d(low_retr, size=wp, mode='nearest')
-
-
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -94,12 +71,12 @@ class DetectionSignals:
     All arrays share the same length and are indexed 0 → in-contact end,
     last → far baseline.  Plot directly against `piezo`.
 
-    Only d1 and mean_dev are computed.
+    `low` is also the level signal the onset search walks; d1 is the only
+    signal derived from it.
     """
     piezo:    np.ndarray   # forward piezo (nm)
     low:      np.ndarray   # forward low channel (nm), baseline-subtracted
     d1:       np.ndarray   # first derivative (nm deflection / nm piezo)
-    mean_dev: np.ndarray   # sliding mean deviation from baseline (nm)
 
 
 def compute_detection_signals(
@@ -114,8 +91,8 @@ def compute_detection_signals(
     the ONE stored offset characterization (signal_processing.fit_retract_
     baseline, persisted as offset_retr/flatness_slope) — this function does
     NOT independently re-measure that region: a second baseline of the same
-    far-retract stretch is the same answer computed twice.  mean_dev reads
-    directly off the caller's already-corrected signal.
+    far-retract stretch is the same answer computed twice.  The onset search
+    reads the caller's already-corrected signal directly, as `low`.
 
     A requested window longer than the trace is reduced to the largest supported
     odd window. Fewer than three samples cannot support the quadratic derivative
@@ -126,14 +103,10 @@ def compute_detection_signals(
     low   = np.asarray(low_retr,   dtype=float)
     piezo = np.asarray(piezo_retr, dtype=float)
 
-    d1   = signal_d1(low, piezo, window_pts)
-    mdev = signal_mean_dev(low, window_pts)
-
     return DetectionSignals(
-        piezo    = piezo,
-        low      = low,
-        d1       = d1,
-        mean_dev = mdev,
+        piezo = piezo,
+        low   = low,
+        d1    = signal_d1(low, piezo, window_pts),
     )
 
 
@@ -231,9 +204,9 @@ def find_rupture(
 @dataclass
 class OnsetSearchResult:
     """
-    Outcome of the onset search on mean_dev.
+    Outcome of the onset search.
 
-    onset_idx      : index into the forward mean_dev / piezo arrays.  -1 if
+    onset_idx      : index into the forward level / piezo arrays.  -1 if
                      no qualifying crossing was found.
     onset_piezo_nm : piezo value at that index (nan if not found).
     """
@@ -242,33 +215,35 @@ class OnsetSearchResult:
 
 
 def find_onset(
-    mean_dev:              np.ndarray,
+    level:                 np.ndarray,
     piezo:                 np.ndarray,
     rupture_idx:           int,
     post_snapoff_mask_idx: int,
     threshold_nm:          float,
 ) -> OnsetSearchResult:
     """
-    Locate the molecular-event onset by walking mean_dev back-to-front
-    (leftward in forward index) starting from rupture_idx.
+    Locate the molecular-event onset by walking the level signal — the
+    baseline-subtracted, Bessel-filtered deflection — back-to-front (leftward
+    in forward index) starting from rupture_idx.
 
     Two-state scan:
-      1. Walk leftward from rupture_idx.  While mean_dev[i] is still above
+      1. Walk leftward from rupture_idx.  While level[i] is still above
          threshold_nm, we are in the post-rupture / near-baseline region —
          keep walking.
-      2. Once mean_dev[i] drops BELOW threshold_nm, state flips to "inside
+      2. Once level[i] drops BELOW threshold_nm, state flips to "inside
          dip".
-      3. The first index where mean_dev[i] rises back to >= threshold_nm is
+      3. The first index where level[i] rises back to >= threshold_nm is
          the onset.
 
     Threshold is signed (typical default -0.2 nm — deflection is pulled
-    toward the surface during a WLC event).  The window size used upstream
-    provides the hysteresis that keeps us from false-triggering on noise.
+    toward the surface during a WLC event).  The Bessel cutoff sets how much
+    noise the level signal carries, and so how readily noise crosses the
+    threshold early.
 
     Stops at post_snapoff_mask_idx (inclusive lower bound of the search).
     Returns onset_idx = -1 if no qualifying crossing is found.
     """
-    n = len(mean_dev)
+    n = len(level)
     if rupture_idx < 0 or rupture_idx >= n or n != len(piezo):
         return OnsetSearchResult(-1, float('nan'))
 
@@ -276,7 +251,7 @@ def find_onset(
     state_below = False
 
     for i in range(rupture_idx, lo - 1, -1):
-        v = float(mean_dev[i])
+        v = float(level[i])
         if not state_below:
             if v < threshold_nm:
                 state_below = True
