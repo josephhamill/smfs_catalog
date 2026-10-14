@@ -56,6 +56,8 @@ ANA = {
     "roi_post_snapoff_mask_nm": 20.0, "roi_onset_threshold_nm": -0.2,
     "roi_detector_mode_idx": 1.0, "roi_prominence": 1.0,
     "roi_min_distance_pts": 6.0, "chain_model_idx": 4.0,
+    "rupture_algorithm_idx": 1.0, "walk_back_fit_widths": 4.0,
+    "walk_back_noise_multiple": 5.0,
 }
 DYL = {
     "baseline_anchor_nm": 20.0, "spectral_cutoff_hz": 1500.0,
@@ -67,6 +69,8 @@ DYL = {
     "roi_post_snapoff_mask_nm": 15.0, "roi_onset_threshold_nm": 0.0,
     "roi_detector_mode_idx": 2.0, "roi_prominence": 0.5,
     "roi_min_distance_pts": 12.0, "chain_model_idx": 2.0,
+    "rupture_algorithm_idx": 0.0, "walk_back_fit_widths": 2.0,
+    "walk_back_noise_multiple": 7.0,
 }
 ANA_PATH = _db.normalize_path("/x/ana.ibw")
 DYL_PATH = _db.normalize_path("/x/dyl.ibw")

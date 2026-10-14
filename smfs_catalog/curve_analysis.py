@@ -109,6 +109,9 @@ def pipeline_params_from(
     roi_prominence = _ps.roi_prominence
     roi_min_dist_pts = _ps.roi_min_distance_pts
     chain_model_idx = _ps.chain_model_idx
+    rupture_algorithm_idx = _ps.rupture_algorithm_idx
+    walk_back_fit_widths = _ps.walk_back_fit_widths
+    walk_back_noise_multiple = _ps.walk_back_noise_multiple
 
     params_bl = json.dumps({"anchor_nm": float(anchor_nm)}, sort_keys=True,
                            separators=(",", ":"))
@@ -134,6 +137,9 @@ def pipeline_params_from(
         "roi_prominence":           float(roi_prominence),
         "roi_min_distance_pts":     roi_min_dist_pts,
         "chain_model_idx":          chain_model_idx,
+        "rupture_algorithm_idx":    rupture_algorithm_idx,
+        "walk_back_fit_widths":     walk_back_fit_widths,
+        "walk_back_noise_multiple": float(walk_back_noise_multiple),
     }, sort_keys=True, separators=(",", ":"))
     params_invols = json.dumps({
         "cutoff_hz":  float(cutoff_hz),
@@ -520,7 +526,7 @@ def analyse_curve(
                 sigs.piezo, si_roi, float(p.anchor_nm), p.roi_post_mask,
             )
             outer_events = find_outer_events(
-                sigs.d1, sigs.mean_dev, sigs.piezo,
+                sigs.d1, sigs.low, sigs.piezo,
                 lo=lo_band, hi=hi_band, onset_thr=p.roi_onset_thr,
                 outer_threshold=p.roi_d1_thr,
             )

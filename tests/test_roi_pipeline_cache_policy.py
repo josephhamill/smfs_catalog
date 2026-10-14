@@ -19,7 +19,7 @@ def pipeline_stubs(monkeypatch):
         spring_constant=1.0,
     )
     dc = SimpleNamespace(low_retr=_arr(), low_appr=_arr())
-    sigs = SimpleNamespace(piezo=_arr(), d1=_arr(), mean_dev=_arr(), low=_arr())
+    sigs = SimpleNamespace(piezo=_arr(), d1=_arr(), low=_arr())
     events = SimpleNamespace(rois=[])
     calls = {"build": 0, "fit": 0, "write": 0}
 

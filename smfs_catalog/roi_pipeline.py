@@ -34,6 +34,7 @@ from . import db as _db
 from .analysis_params import AnalysisParams
 from .curve_loader import LoadError, load_force_curve
 from .models import CHAIN_MODEL_BY_IDX
+from .rupture_algorithms import RUPTURE_ALGORITHM_BY_IDX
 from .provenance import cache_version
 from .roi_selection import (
     ReportedSegmentChoice,
@@ -88,6 +89,9 @@ class EventParams:
     prominence:        float
     distance_pts:      int
     chain_model:       str       # a models.CHAIN_MODELS key
+    rupture_algorithm: str       # a rupture_algorithms.RUPTURE_ALGORITHMS key
+    walk_back_fit_widths:     int
+    walk_back_noise_multiple: float
     invols_offset_pts: int
     invols_window_pts: int
 
@@ -126,6 +130,9 @@ def event_params_from(
         prominence=params.roi_prominence,
         distance_pts=params.roi_min_distance_pts,
         chain_model=CHAIN_MODEL_BY_IDX[params.chain_model_idx],
+        rupture_algorithm=RUPTURE_ALGORITHM_BY_IDX[params.rupture_algorithm_idx],
+        walk_back_fit_widths=params.walk_back_fit_widths,
+        walk_back_noise_multiple=params.walk_back_noise_multiple,
         invols_offset_pts=params.invols_offset_pts,
         invols_window_pts=params.invols_window_pts,
     )
@@ -214,7 +221,7 @@ def compute_curve_events_coords(
     passes none of this (the historical call shape) behaves exactly as before —
     always fresh — so this is purely additive.
 
-    The decomposed curve and the detection signals (d1/mean_dev) are never
+    The decomposed curve and the detection signals (low/d1) are never
     persisted (large per-sample arrays, cheap to regenerate) — they're only ever
     reused via `stage1`, never via the DB cache.
 
@@ -351,7 +358,7 @@ def compute_curve_events_coords(
         events = _cached_events
     else:
         events = build_curve_events(
-            sigs.d1, sigs.mean_dev, sigs.piezo,
+            sigs.d1, sigs.low, sigs.piezo,
             lo=lo_band, hi=hi_band,
             onset_thr=ep.onset_thr, detector=ep.detector,
             outer_threshold=ep.d1_threshold, inner_threshold=ep.inner_threshold,
@@ -398,7 +405,10 @@ def compute_curve_events_coords(
 
     if _cached_events is None:
         fit_segments(curve, events, offset, inv, snap, low_retr=dc.low_retr,
-                     chain_model=ep.chain_model)
+                     chain_model=ep.chain_model,
+                     rupture_algorithm=ep.rupture_algorithm,
+                     walk_back_fit_widths=ep.walk_back_fit_widths,
+                     walk_back_noise_multiple=ep.walk_back_noise_multiple)
 
         if can_read_cache:
             _db.write_event_map(

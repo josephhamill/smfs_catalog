@@ -11,7 +11,6 @@ def test_detection_window_is_bounded_to_short_odd_trace():
         window_pts=31,
     )
     assert result.d1.shape == (3,)
-    assert result.mean_dev.shape == (3,)
 
 
 def test_detection_rejects_trace_too_short_for_derivative():
