@@ -35,8 +35,12 @@ statistics rather than on bookkeeping.
 
 ## Installing
 
-Requires [conda](https://docs.conda.io/) (Miniconda is enough). The
-environment file is the single dependency list; there is no `requirements.txt`.
+Requires [conda](https://docs.conda.io/) (Miniconda is enough). Two
+environment files hold the dependencies; there is no `requirements.txt`:
+
+- `environment.yml` (`smfs-catalog`): running and building the app.
+- `environment-dev.yml` (`smfs-catalog-dev`): development, tests, studies and
+  reports.
 
 ```bash
 conda env create -f environment.yml
@@ -94,7 +98,8 @@ details per platform.
 ## Tests
 
 ```bash
-conda activate smfs-catalog
+conda env create -f environment-dev.yml    # once
+conda activate smfs-catalog-dev
 python -m pytest -q
 ```
 

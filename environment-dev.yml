@@ -1,0 +1,44 @@
+# SMFS Catalog — the development and analysis environment.
+#
+#     conda env create -f environment-dev.yml
+#     conda activate smfs-catalog-dev
+#
+# The app's runtime packages, the same list and floors as environment.yml,
+# plus the tools for tests, studies and reports.  None of the extras is
+# imported by the app.  Running and building the app use environment.yml
+# (smfs-catalog), so a build never bundles these extras.
+#
+# Hand-written, like environment.yml: never regenerate it with
+# `conda env export`.  A runtime package added to environment.yml is added
+# here too.
+
+name: smfs-catalog-dev
+
+channels:
+  - conda-forge
+
+dependencies:
+  # Keep in step with environment.yml.
+  - python >=3.11,<3.13
+  - pip
+
+  - pip:
+      # ── Runtime: as in environment.yml ──────────────────────────────────
+      - pyqt6 >=6.6
+      - numpy >=1.26
+      - scipy >=1.11
+      - pyqtgraph >=0.13
+      - scikit-learn >=1.4
+      - igor2 >=0.5.6
+
+      # ── Tests ───────────────────────────────────────────────────────────
+      - pytest >=8.0
+
+      # ── Studies ─────────────────────────────────────────────────────────
+      - matplotlib >=3.8     # figures for study reports
+      - pandas >=2.1         # tables of study results
+      - ruptures >=1.1       # change-point cross-checks
+
+      # ── Reports ─────────────────────────────────────────────────────────
+      - jinja2 >=3.1         # fills the report page's HTML template
+      - python-docx >=1.1    # Word documents

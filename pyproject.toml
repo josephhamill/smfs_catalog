@@ -8,10 +8,11 @@ license = { text = "GPL-3.0-or-later" }
 readme = "README.md"
 requires-python = ">=3.11"
 
-# Dependencies are declared ONCE, in environment.yml, which the build workflow
-# and both machines install from.  Deliberately no `dependencies` key here:
-# two lists of the same packages is the one-decision-two-copies fault this
-# codebase has been bitten by for palettes, spin boxes and axis labels.
+# Dependencies are declared in environment.yml (running and building the app)
+# and environment-dev.yml (the same runtime list plus development tools).
+# Deliberately no `dependencies` key here: another list of the same packages
+# is the one-decision-two-copies fault this codebase has been bitten by for
+# palettes, spin boxes and axis labels.
 #
 # No `version` key either: it lives in smfs_catalog/__init__.py and only there.
 
