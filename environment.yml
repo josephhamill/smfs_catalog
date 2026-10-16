@@ -1,4 +1,6 @@
-# SMFS Catalog — the development and build environment.
+# SMFS Catalog — the run and build environment: the packages the app imports,
+# plus PyInstaller to build it.  Development, tests, studies and reports use
+# environment-dev.yml (smfs-catalog-dev).
 #
 #     conda env create -f environment.yml
 #     conda activate smfs-catalog
@@ -18,12 +20,12 @@
 # packages this app actually imports among ~250 it does not, and pins them to
 # builds that exist on one platform.
 #
-# THIS IS THE ONE DEPENDENCY LIST.  The PyInstaller build workflow creates its
-# environment from this same file on each OS, so there is no second list in a
-# requirements.txt or a workflow step to drift out of step with it — the same
-# one-decision-two-copies fault this codebase has been bitten by for palettes,
-# spin-box precision and axis labels.  pyproject.toml deliberately declares no
-# `dependencies` key for that reason.
+# THIS IS THE APP'S DEPENDENCY LIST.  Standalone builds (pyinstaller.spec, run
+# by hand on each OS) are made in this environment, so a build can bundle only
+# what is declared here.  environment-dev.yml repeats the runtime list and adds
+# the development tools; a runtime package added here is added there too.
+# There is no requirements.txt, and pyproject.toml deliberately declares no
+# `dependencies` key: two more copies of the same list would drift.
 #
 # WHY ALMOST EVERYTHING COMES FROM pip, WHICH LOOKS WRONG IN A CONDA FILE.
 # conda-forge's `pyqt` package is PyQt **5** — it tops out at 5.15.11 and has
@@ -74,6 +76,5 @@ dependencies:
                              # covers everything else and the two do not overlap
       - igor2 >=0.5.6        # the .ibw reader — the only way curves get in
 
-      # ── Development and packaging ───────────────────────────────────────
-      - pytest >=8.0
+      # ── Build ───────────────────────────────────────────────────────────
       - pyinstaller >=6.3    # builds the standalone executables (#111)
