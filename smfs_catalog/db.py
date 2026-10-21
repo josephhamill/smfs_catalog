@@ -434,8 +434,8 @@ def list_directories(db_path: str = DEFAULT_DB_PATH) -> list[sqlite3.Row]:
         SELECT substr(f.path, 1, length(f.path) - length(f.filename) - 1) AS path,
                COUNT(*) AS n_files
         FROM   files f
-        GROUP  BY path
-        ORDER  BY path
+        GROUP  BY 1
+        ORDER  BY 1
     """).fetchall()
     conn.close()
     return rows
