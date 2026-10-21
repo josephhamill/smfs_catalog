@@ -152,6 +152,12 @@ check("(f) describe changed nothing — all 3 files still present",
 check("(f) describe changed nothing — event_map intact",
       len(rows("SELECT file_id FROM event_map")) == 3)
 
+# -- a folder lists once, however many files it holds -------------------------
+seed()
+check("list_directories names the folder once, with all three of its files",
+      [(r["path"], r["n_files"]) for r in _db.list_directories(DB)]
+      == [(_db.normalize_path(DATA_DIR), 3)])
+
 # -- (a)(b)(d) level 2: erase analysis ---------------------------------------
 seed()
 out = _db.erase_analysis_for_files(COHORT, DB)

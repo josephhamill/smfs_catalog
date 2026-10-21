@@ -141,39 +141,10 @@ class AddDataDialog(QDialog):
         if path:
             self._dir_edit.setText(path)
 
-    def _confirm_no_overlap(self, path: str) -> bool:
-        """
-        Warn when `path` nests with a folder that already holds catalogued
-        files, either way round: scanning a parent re-walks its children, and
-        scanning a child already covered by a parent is redundant.
-
-        Returns False — caller should abort — only if the user declines.
-        """
-        overlaps = _db.find_overlapping_directories(path, self._db_path)
-        if not overlaps:
-            return True
-        lines = [
-            (f"  - {existing} already covers this folder" if rel == "ancestor"
-             else f"  - {existing} is inside this directory and would be re-scanned")
-            for existing, rel in overlaps
-        ]
-        r = QMessageBox.warning(
-            self, "Directory overlap",
-            "This folder overlaps one already in the catalog:\n\n"
-            + "\n".join(lines)
-            + "\n\nScanning it may re-walk files already catalogued. Proceed anyway?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return r == QMessageBox.StandardButton.Yes
-
     def _on_accept(self) -> None:
         path = self._dir_edit.text().strip()
         if not path:
             QMessageBox.warning(self, "Add data", "Pick a directory first.")
-            return
-
-        if not self._confirm_no_overlap(path):
             return
 
         if self._parent_chk.isChecked():
