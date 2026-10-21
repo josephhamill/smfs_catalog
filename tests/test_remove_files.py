@@ -157,9 +157,6 @@ seed()
 check("list_directories names the folder once, with all three of its files",
       [(r["path"], r["n_files"]) for r in _db.list_directories(DB)]
       == [(_db.normalize_path(DATA_DIR), 3)])
-check("the overlap check names that folder once for its parent",
-      _db.find_overlapping_directories(tmp, DB)
-      == [(_db.normalize_path(DATA_DIR), "descendant")])
 
 # -- (a)(b)(d) level 2: erase analysis ---------------------------------------
 seed()

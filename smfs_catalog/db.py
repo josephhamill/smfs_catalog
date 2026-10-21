@@ -410,23 +410,6 @@ def directory_of(path: str) -> str:
     return str(Path(normalize_path(path)).parent)
 
 
-def find_overlapping_directories(
-    path: str, db_path: str = DEFAULT_DB_PATH,
-) -> list[tuple[str, str]]:
-    """Folders already holding catalogued files that nest with `path` either way — scanning a parent after its children re-walks them."""
-    new_p = Path(normalize_path(path))
-    out: list[tuple[str, str]] = []
-    for row in list_directories(db_path):
-        existing = Path(row["path"])
-        if existing == new_p:
-            continue
-        if new_p.is_relative_to(existing):
-            out.append((str(existing), "ancestor"))
-        elif existing.is_relative_to(new_p):
-            out.append((str(existing), "descendant"))
-    return out
-
-
 def list_directories(db_path: str = DEFAULT_DB_PATH) -> list[sqlite3.Row]:
     """Every folder the catalog holds files in, with how many, read off files.path itself."""
     conn = get_connection(db_path)
