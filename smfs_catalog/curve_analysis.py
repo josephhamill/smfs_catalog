@@ -112,6 +112,9 @@ def pipeline_params_from(
     rupture_algorithm_idx = _ps.rupture_algorithm_idx
     walk_back_fit_widths = _ps.walk_back_fit_widths
     walk_back_noise_multiple = _ps.walk_back_noise_multiple
+    muggeo_fit_window_multiplier = _ps.muggeo_fit_window_multiplier
+    muggeo_tolerance_idx = _ps.muggeo_tolerance_idx
+    muggeo_restarts_idx = _ps.muggeo_restarts_idx
 
     params_bl = json.dumps({"anchor_nm": float(anchor_nm)}, sort_keys=True,
                            separators=(",", ":"))
@@ -140,6 +143,9 @@ def pipeline_params_from(
         "rupture_algorithm_idx":    rupture_algorithm_idx,
         "walk_back_fit_widths":     walk_back_fit_widths,
         "walk_back_noise_multiple": float(walk_back_noise_multiple),
+        "muggeo_fit_window_multiplier": muggeo_fit_window_multiplier,
+        "muggeo_tolerance_idx":     muggeo_tolerance_idx,
+        "muggeo_restarts_idx":      muggeo_restarts_idx,
     }, sort_keys=True, separators=(",", ":"))
     params_invols = json.dumps({
         "cutoff_hz":  float(cutoff_hz),

@@ -39,6 +39,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -47,6 +48,7 @@ from scipy.signal import find_peaks
 
 from .drawdown_walk_back import drawdown_walk_back
 from .models import CHAIN_MODELS, ChainFit, ChainModel, fit_model, wlc
+from .muggeo_segmented import muggeo_segmented
 from .rupture_algorithms import RUPTURE_ALGORITHMS
 from .regression import linear_fit
 from .roi_detection import find_onset
@@ -896,6 +898,9 @@ def fit_segments(
     rupture_algorithm: str = "low_pass_max",
     walk_back_fit_widths: int = 3,
     walk_back_noise_multiple: float = 5.0,
+    muggeo_fit_window_multiplier: int = 3,
+    muggeo_tolerance: float = 1e-3,
+    muggeo_restarts: bool = True,
 ) -> None:
     """
     Fill each Segment's `chain_model` fit and each Rupture's force_pN IN PLACE.
@@ -928,7 +933,11 @@ def fit_segments(
         and the loading slopes run on the raw signal too, so the fit does not
         take in the corner the filter rounds at the fall.  The isoforce
         crossing and x_max are still read off the low-pass envelope.
-    Either way the answer's own account of itself is kept on
+      • "muggeo_segmented": muggeo_segmented on the RAW force, with
+        muggeo_fit_window_multiplier, muggeo_tolerance and muggeo_restarts;
+        its window stops at the next rupture's left crossing anywhere on the
+        curve.  Its answer is used as the walk-back's is.
+    Whichever it is, the answer's own account of itself is kept on
     Rupture.point_status.
 
     Segments refused before their force peak is located are left with None fits
@@ -959,6 +968,10 @@ def fit_segments(
         point_ext   = (curve.piezo_retr - snapoff_piezo_nm) - raw_corr
     else:
         point_force, point_ext = force, extension
+    # Every rupture's left crossing on the curve, in order: where a Muggeo
+    # window must stop.
+    left_crossings = sorted(r.rise_idx if r.rise_idx is not None else r.idx
+                            for roi in events.rois for r in roi.ruptures)
 
     for roi in events.rois:
         # segments[i] ends on ruptures[i] (see _segments_from_ruptures).  Tracks
@@ -986,13 +999,23 @@ def fit_segments(
             # magnitude comparison between sub-regions is done.  Fit from the ramp
             # start (index 0) to where the rupture algorithm in force puts the
             # rupture; the force there is the rupture force.
-            if rupture_algorithm == "drawdown_walk_back":
-                found = drawdown_walk_back(
-                    point_force, a,
-                    rup.rise_idx if rup.rise_idx is not None else rup.idx,
-                    rup.fall_idx if rup.fall_idx is not None else rup.idx,
-                    walk_back_fit_widths, walk_back_noise_multiple,
-                )
+            if rupture_algorithm in ("drawdown_walk_back", "muggeo_segmented"):
+                rise = rup.rise_idx if rup.rise_idx is not None else rup.idx
+                fall = rup.fall_idx if rup.fall_idx is not None else rup.idx
+                if rupture_algorithm == "drawdown_walk_back":
+                    found = drawdown_walk_back(
+                        point_force, a, rise, fall,
+                        walk_back_fit_widths, walk_back_noise_multiple,
+                    )
+                else:
+                    later = bisect_right(left_crossings, fall)
+                    window_end = (left_crossings[later] if later < len(left_crossings)
+                                  else len(point_force) - 1)
+                    found = muggeo_segmented(
+                        point_force, a, rise, fall, window_end,
+                        muggeo_fit_window_multiplier, muggeo_tolerance,
+                        muggeo_restarts,
+                    )
                 rup.point_status = found.status
                 peak_abs = found.idx
                 if peak_abs is not None:

@@ -70,6 +70,7 @@ from .curve_loader import ForceCurve, LoadError, load_force_curve
 from . import db as _db
 from . import quantities as _quant
 from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
+from .muggeo_segmented import TOLERANCES as MUGGEO_TOLERANCES
 from .rupture_algorithms import (
     RUPTURE_ALGORITHM_BY_IDX, RUPTURE_ALGORITHMS, fit_deflection,
 )
@@ -184,6 +185,9 @@ class ROIWindow(QWidget):
         self._rupture_algorithm_idx    = int(_ps['rupture_algorithm_idx'])
         self._walk_back_fit_widths     = int(_ps['walk_back_fit_widths'])
         self._walk_back_noise_multiple = float(_ps['walk_back_noise_multiple'])
+        self._muggeo_fit_window_multiplier = int(_ps['muggeo_fit_window_multiplier'])
+        self._muggeo_tolerance_idx = int(_ps['muggeo_tolerance_idx'])
+        self._muggeo_restarts_idx  = int(_ps['muggeo_restarts_idx'])
         # Must mirror roi_pipeline.event_params_from's default: this window is
         # supposed to SHOW what the worker STORES, so a drop_frac that differs
         # from the worker's means the markers on screen are not the ones going
@@ -336,6 +340,56 @@ class ROIWindow(QWidget):
         self._spin_wb_multiple.editingFinished.connect(
             self._commit_walk_back_multiple)
         ctrl2.addWidget(LabeledControl("Noise multiple:", self._spin_wb_multiple))
+
+        # Muggeo segmented regression's own settings, live only while it is
+        # the algorithm in force.  The combo positions are the stored indices.
+        self._spin_mg_multiplier = QSpinBox()
+        self._spin_mg_multiplier.setRange(1, 20)
+        _quant.configure_spinbox(self._spin_mg_multiplier,
+                                 "muggeo_fit_window_multiplier")
+        self._spin_mg_multiplier.setValue(self._muggeo_fit_window_multiplier)
+        self._spin_mg_multiplier.setToolTip(
+            "How far Muggeo's fit reaches on each side of the fall, as a "
+            "multiple of the d¹-peak width: the number of samples where d¹ "
+            "stays above the detection threshold. The window starts this many "
+            "widths before the peak's left crossing and ends this many widths "
+            "after its right crossing, and stops early at the segment start or "
+            "at the next rupture. Example: a d¹ peak 46 samples wide, at a "
+            "multiplier of 3, gives a window reaching 138 samples each side. "
+            "Larger takes in more of the ramp and the baseline, but stops early "
+            "on more curves (test set: 8 of 107 ruptures at 3, 49 at 20).")
+        self._spin_mg_multiplier.editingFinished.connect(
+            self._commit_muggeo_multiplier)
+        ctrl2.addWidget(LabeledControl("Fit window multiplier:",
+                                       self._spin_mg_multiplier))
+
+        self._combo_mg_tolerance = QComboBox()
+        for tol in MUGGEO_TOLERANCES:
+            self._combo_mg_tolerance.addItem(f"{tol:.0e}")
+        self._combo_mg_tolerance.setCurrentIndex(self._muggeo_tolerance_idx)
+        self._combo_mg_tolerance.setToolTip(
+            "Muggeo segmented regression: when a fit stops. Looser is faster, "
+            "less exact. Test set, restarts on: 1e-1 72 ms per rupture, rupture "
+            "point off by more than 2 samples on 3 of 107; 1e-2 85 ms, 1; 1e-3 "
+            "to 1e-5 the same result, 1e-3 fastest (95 ms). 1e-5 is Muggeo's "
+            "default.")
+        self._combo_mg_tolerance.currentIndexChanged.connect(
+            self._on_muggeo_tolerance_changed)
+        ctrl2.addWidget(LabeledControl("Tolerance:", self._combo_mg_tolerance))
+
+        self._combo_mg_restarts = QComboBox()
+        self._combo_mg_restarts.addItems(["off", "on"])
+        self._combo_mg_restarts.setCurrentIndex(self._muggeo_restarts_idx)
+        self._combo_mg_restarts.setToolTip(
+            "Muggeo segmented regression: refits from shaken starting points "
+            "and keeps the best fit. Off is about 4 times faster but put the "
+            "rupture point off by more than 2 samples on 11 of 107 test "
+            "ruptures; on, 0. At most 10 restarts; they stop after 5 unchanged "
+            "results; the random draws are set from the data, so a rerun "
+            "repeats.")
+        self._combo_mg_restarts.currentIndexChanged.connect(
+            self._on_muggeo_restarts_changed)
+        ctrl2.addWidget(LabeledControl("Restarts:", self._combo_mg_restarts))
         self._enable_rupture_settings()
 
         self._spin_prom = QDoubleSpinBox()
@@ -626,6 +680,9 @@ class ROIWindow(QWidget):
                 rupture_algorithm_idx=self._rupture_algorithm_idx,
                 walk_back_fit_widths=self._walk_back_fit_widths,
                 walk_back_noise_multiple=self._walk_back_noise_multiple,
+                muggeo_fit_window_multiplier=self._muggeo_fit_window_multiplier,
+                muggeo_tolerance_idx=self._muggeo_tolerance_idx,
+                muggeo_restarts_idx=self._muggeo_restarts_idx,
             )
             ep = event_params_from(committed, detector=self._detector_mode)
 
@@ -1018,6 +1075,12 @@ class ROIWindow(QWidget):
                                             self._walk_back_fit_widths))
         self._walk_back_noise_multiple = _f("walk_back_noise_multiple",
                                             self._walk_back_noise_multiple)
+        self._muggeo_fit_window_multiplier = int(_f(
+            "muggeo_fit_window_multiplier", self._muggeo_fit_window_multiplier))
+        self._muggeo_tolerance_idx = int(_f("muggeo_tolerance_idx",
+                                            self._muggeo_tolerance_idx))
+        self._muggeo_restarts_idx = int(_f("muggeo_restarts_idx",
+                                           self._muggeo_restarts_idx))
 
         for w, val in (
             (self._spin_window,    self._window_pts),
@@ -1029,6 +1092,7 @@ class ROIWindow(QWidget):
             (self._spin_dist,      self._distance_pts),
             (self._spin_wb_widths,   self._walk_back_fit_widths),
             (self._spin_wb_multiple, self._walk_back_noise_multiple),
+            (self._spin_mg_multiplier, self._muggeo_fit_window_multiplier),
         ):
             w.blockSignals(True)
             w.setValue(val)
@@ -1042,6 +1106,11 @@ class ROIWindow(QWidget):
         self._combo_rupture.blockSignals(True)
         self._combo_rupture.setCurrentIndex(self._rupture_algorithm_idx)
         self._combo_rupture.blockSignals(False)
+        for combo, val in ((self._combo_mg_tolerance, self._muggeo_tolerance_idx),
+                           (self._combo_mg_restarts, self._muggeo_restarts_idx)):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(val)
+            combo.blockSignals(False)
         self._enable_rupture_settings()
 
         # No mirror into the `settings` table. The parameter set lives in
@@ -1076,6 +1145,9 @@ class ROIWindow(QWidget):
             "rupture_algorithm_idx":         float(self._rupture_algorithm_idx),
             "walk_back_fit_widths":          float(self._walk_back_fit_widths),
             "walk_back_noise_multiple":      float(self._walk_back_noise_multiple),
+            "muggeo_fit_window_multiplier":  float(self._muggeo_fit_window_multiplier),
+            "muggeo_tolerance_idx":          float(self._muggeo_tolerance_idx),
+            "muggeo_restarts_idx":           float(self._muggeo_restarts_idx),
         }, self._db_path)
 
     # ── Controls ──────────────────────────────────────────────────────────────
@@ -1218,6 +1290,9 @@ class ROIWindow(QWidget):
         own = RUPTURE_ALGORITHMS[key].settings
         self._spin_wb_widths.setEnabled("walk_back_fit_widths" in own)
         self._spin_wb_multiple.setEnabled("walk_back_noise_multiple" in own)
+        self._spin_mg_multiplier.setEnabled("muggeo_fit_window_multiplier" in own)
+        self._combo_mg_tolerance.setEnabled("muggeo_tolerance_idx" in own)
+        self._combo_mg_restarts.setEnabled("muggeo_restarts_idx" in own)
 
     def _on_rupture_algorithm_changed(self, index: int) -> None:
         self._rupture_algorithm_idx = int(index)
@@ -1238,6 +1313,28 @@ class ROIWindow(QWidget):
         self._walk_back_noise_multiple = float(self._spin_wb_multiple.value())
         _db.update_analysis_param('walk_back_noise_multiple',
                                   float(self._walk_back_noise_multiple),
+                                  self._db_path)
+        self._save_user_profile()
+        self._recompute_current()
+
+    def _commit_muggeo_multiplier(self) -> None:
+        self._muggeo_fit_window_multiplier = int(self._spin_mg_multiplier.value())
+        _db.update_analysis_param('muggeo_fit_window_multiplier',
+                                  int(self._muggeo_fit_window_multiplier),
+                                  self._db_path)
+        self._save_user_profile()
+        self._recompute_current()
+
+    def _on_muggeo_tolerance_changed(self, index: int) -> None:
+        self._muggeo_tolerance_idx = int(index)
+        _db.update_analysis_param('muggeo_tolerance_idx', float(index),
+                                  self._db_path)
+        self._save_user_profile()
+        self._recompute_current()
+
+    def _on_muggeo_restarts_changed(self, index: int) -> None:
+        self._muggeo_restarts_idx = int(index)
+        _db.update_analysis_param('muggeo_restarts_idx', float(index),
                                   self._db_path)
         self._save_user_profile()
         self._recompute_current()

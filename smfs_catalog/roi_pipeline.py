@@ -34,6 +34,8 @@ from . import db as _db
 from .analysis_params import AnalysisParams
 from .curve_loader import LoadError, load_force_curve
 from .models import CHAIN_MODEL_BY_IDX
+from .muggeo_segmented import RESTARTS as MUGGEO_RESTARTS
+from .muggeo_segmented import TOLERANCES as MUGGEO_TOLERANCES
 from .rupture_algorithms import RUPTURE_ALGORITHM_BY_IDX
 from .provenance import cache_version
 from .roi_selection import (
@@ -92,6 +94,9 @@ class EventParams:
     rupture_algorithm: str       # a rupture_algorithms.RUPTURE_ALGORITHMS key
     walk_back_fit_widths:     int
     walk_back_noise_multiple: float
+    muggeo_fit_window_multiplier: int
+    muggeo_tolerance:  float     # a muggeo_segmented.TOLERANCES value
+    muggeo_restarts:   bool
     invols_offset_pts: int
     invols_window_pts: int
 
@@ -133,6 +138,9 @@ def event_params_from(
         rupture_algorithm=RUPTURE_ALGORITHM_BY_IDX[params.rupture_algorithm_idx],
         walk_back_fit_widths=params.walk_back_fit_widths,
         walk_back_noise_multiple=params.walk_back_noise_multiple,
+        muggeo_fit_window_multiplier=params.muggeo_fit_window_multiplier,
+        muggeo_tolerance=MUGGEO_TOLERANCES[params.muggeo_tolerance_idx],
+        muggeo_restarts=MUGGEO_RESTARTS[params.muggeo_restarts_idx],
         invols_offset_pts=params.invols_offset_pts,
         invols_window_pts=params.invols_window_pts,
     )
@@ -408,7 +416,10 @@ def compute_curve_events_coords(
                      chain_model=ep.chain_model,
                      rupture_algorithm=ep.rupture_algorithm,
                      walk_back_fit_widths=ep.walk_back_fit_widths,
-                     walk_back_noise_multiple=ep.walk_back_noise_multiple)
+                     walk_back_noise_multiple=ep.walk_back_noise_multiple,
+                     muggeo_fit_window_multiplier=ep.muggeo_fit_window_multiplier,
+                     muggeo_tolerance=ep.muggeo_tolerance,
+                     muggeo_restarts=ep.muggeo_restarts)
 
         if can_read_cache:
             _db.write_event_map(

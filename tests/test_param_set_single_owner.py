@@ -57,7 +57,8 @@ ANA = {
     "roi_detector_mode_idx": 1.0, "roi_prominence": 1.0,
     "roi_min_distance_pts": 6.0, "chain_model_idx": 4.0,
     "rupture_algorithm_idx": 1.0, "walk_back_fit_widths": 4.0,
-    "walk_back_noise_multiple": 5.0,
+    "walk_back_noise_multiple": 5.0, "muggeo_fit_window_multiplier": 9.0,
+    "muggeo_tolerance_idx": 4.0, "muggeo_restarts_idx": 0.0,
 }
 DYL = {
     "baseline_anchor_nm": 20.0, "spectral_cutoff_hz": 1500.0,
@@ -70,7 +71,8 @@ DYL = {
     "roi_detector_mode_idx": 2.0, "roi_prominence": 0.5,
     "roi_min_distance_pts": 12.0, "chain_model_idx": 2.0,
     "rupture_algorithm_idx": 0.0, "walk_back_fit_widths": 2.0,
-    "walk_back_noise_multiple": 7.0,
+    "walk_back_noise_multiple": 7.0, "muggeo_fit_window_multiplier": 11.0,
+    "muggeo_tolerance_idx": 1.0, "muggeo_restarts_idx": 1.0,
 }
 ANA_PATH = _db.normalize_path("/x/ana.ibw")
 DYL_PATH = _db.normalize_path("/x/dyl.ibw")

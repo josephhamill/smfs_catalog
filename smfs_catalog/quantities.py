@@ -267,6 +267,9 @@ QUANTITIES: dict[str, Quantity] = {
     # Both count something that has no unit: d1-peak widths, noise widths.
     "walk_back_fit_widths":          INTEGER,
     "walk_back_noise_multiple":      Quantity(RATIO, 1),
+    "muggeo_fit_window_multiplier":  INTEGER,
+    "muggeo_tolerance_idx":          INTEGER,
+    "muggeo_restarts_idx":           INTEGER,
 
     # ── 2DH grid settings ────────────────────────────────────────────────────
     # Normalized axes x/l_c and F·l_p/kT are dimensionless.
