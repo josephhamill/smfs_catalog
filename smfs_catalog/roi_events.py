@@ -762,6 +762,20 @@ RAMP_SLOPE_MIN_PTS = 5
 # ramp carries the WLC's curvature, and including it biases the slope low.
 RAMP_SLOPE_FORCE_FRAC = 0.5
 
+# What a user needs to know before trusting a loading rate or stiffness:
+# shown wherever those slopes are shown or used.
+LOADING_SLOPE_NOTE = (
+    "Loading rate and loading stiffness: the slopes of force against time "
+    "(pN/s) and against piezo displacement (pN/nm), both fitted over the same "
+    "stretch of the ramp, from the rupture point back to the last sample at or "
+    "above half the rupture force, or to the segment start. When the rupture "
+    "force is not well above the noise, one noisy sample can end that stretch "
+    "after a few samples, and both slopes are poorly determined, often with a "
+    "± larger than the value. Filter those ruptures out. The effect is larger "
+    "under rupture algorithms that read the unsmoothed signal (Drawdown "
+    "walk-back, Muggeo segmented regression)."
+)
+
 
 def ramp_slope_window(
     force: np.ndarray, lo: int, peak_idx: int, frac: float,
