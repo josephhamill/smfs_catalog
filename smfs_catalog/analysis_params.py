@@ -35,6 +35,9 @@ class AnalysisParams(Mapping[str, float]):
     rupture_algorithm_idx: int = 0
     walk_back_fit_widths: int = 3
     walk_back_noise_multiple: float = 5.0
+    muggeo_fit_window_multiplier: int = 3
+    muggeo_tolerance_idx: int = 2
+    muggeo_restarts_idx: int = 1
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object]) -> "AnalysisParams":
@@ -45,6 +48,8 @@ class AnalysisParams(Mapping[str, float]):
             "turnaround_trim_pts", "invols_offset_pts", "invols_window_pts",
             "roi_window_pts", "roi_detector_mode_idx", "roi_min_distance_pts",
             "chain_model_idx", "rupture_algorithm_idx", "walk_back_fit_widths",
+            "muggeo_fit_window_multiplier", "muggeo_tolerance_idx",
+            "muggeo_restarts_idx",
         }
         for item in fields(cls):
             raw = values.get(item.name, getattr(defaults, item.name))

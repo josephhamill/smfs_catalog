@@ -48,6 +48,7 @@ from . import export_utils as _export
 from .curve_loader import LoadError, load_force_curve
 from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
 from .regression import linear_fit
+from .roi_events import LOADING_SLOPE_NOTE
 from .rupture_algorithms import RUPTURE_ALGORITHM_BY_IDX, fit_deflection
 from . import sample_marks
 from . import style
@@ -231,7 +232,8 @@ class WlcViewWindow(QMainWindow):
         self._view_combo.setToolTip(
             "Chain fit: force against extension, with the per-segment models.\n"
             "Loading rate: force against time over the fitted ramp window, "
-            "with the linear fit and its confidence band."
+            "with the linear fit and its confidence band.\n\n"
+            + LOADING_SLOPE_NOTE
         )
         self._view_combo.currentIndexChanged.connect(
             lambda _i: self._on_view_mode_changed())

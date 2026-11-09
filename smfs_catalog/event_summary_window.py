@@ -89,6 +89,7 @@ from . import style
 from . import clustering as _clustering
 from . import regression as _reg
 from . import variables as _vars
+from .roi_events import LOADING_SLOPE_NOTE
 from .widgets import ClusterColourBar, FlowLayout, LabeledControl, VariableCombo
 from .qt_utils import _DateAxis, _make_session_header, set_si_label, fit_on_screen
 from .quantities import format_value as _q   # ONE formatter: unit and
@@ -406,7 +407,8 @@ class EventSummaryWindow(QMainWindow):
         self._spectrum_btn = QPushButton("Force spectrum…")
         self._spectrum_btn.setToolTip(
             "Rupture force against ln(loading rate) for this population, "
-            "fitted with Bell-Evans and DHS."
+            "fitted with Bell-Evans and DHS.\n\n"
+            + LOADING_SLOPE_NOTE
         )
         self._spectrum_btn.clicked.connect(self._on_force_spectrum)
         action_row.addWidget(self._spectrum_btn)

@@ -35,6 +35,10 @@ RUPTURE_ALGORITHMS: dict[str, RuptureAlgorithm] = {a.key: a for a in (
     RuptureAlgorithm("drawdown_walk_back", "Drawdown walk-back",
                      ("walk_back_fit_widths", "walk_back_noise_multiple"),
                      raw_signal=True),
+    RuptureAlgorithm("muggeo_segmented", "Muggeo segmented regression",
+                     ("muggeo_fit_window_multiplier", "muggeo_tolerance_idx",
+                      "muggeo_restarts_idx"),
+                     raw_signal=True),
 )}
 RUPTURE_ALGORITHM_BY_IDX: tuple[str, ...] = tuple(RUPTURE_ALGORITHMS)
 
