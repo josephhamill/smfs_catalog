@@ -532,6 +532,8 @@ def test_a_modality_with_no_pipeline_is_not_recorded_as_damage(tmp_path):
             "unusable_reason, unusable_detail, first_seen, last_seen) "
             "VALUES ('/d/fc.ibw', 'fc.ibw', 'force_clamp', 'unusable', "
             "'not_force_extension', 'wrong shape', 'x', 'x')")
+        # An older catalog carries no version number.
+        conn.execute("PRAGMA user_version = 0")
     conn.close()
 
     _db.initialise(db)

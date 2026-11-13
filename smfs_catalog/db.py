@@ -67,7 +67,8 @@ def check_db_machine(db_path: str = DEFAULT_DB_PATH) -> Optional[str]:
         return None
     host, os_name = _this_machine()
     try:
-        conn = get_connection(db_path)
+        # Read-only: this runs before the catalog's version is checked.
+        conn = connect_read_only(db_path)
         rows = dict(conn.execute(
             "SELECT key, value FROM meta WHERE key IN ('built_host','built_os')"
         ).fetchall())
@@ -94,6 +95,148 @@ def get_connection(db_path: str = DEFAULT_DB_PATH, timeout: float = 30.0) -> sql
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.create_function("path_matches", 2, path_matches, deterministic=True)
     return conn
+
+
+# ── The catalog's version ─────────────────────────────────────────────────────
+#
+# The layout this code writes and reads, stored in each catalog as
+# PRAGMA user_version.  A catalog made before the number existed reads 0.
+# Changing the layout raises this by one and adds the step in _UPGRADES that
+# carries a catalog from the number before; tests/test_catalog_version.py fails
+# when the layout changes and this does not.
+CATALOG_VERSION = 1
+
+
+class CatalogTooNew(RuntimeError):
+    """The catalog was written by a newer version of the app than this one."""
+
+
+class NotACatalog(sqlite3.DatabaseError):
+    """A SQLite database that is not an SMFS catalog."""
+
+
+def connect_read_only(db_path: str) -> sqlite3.Connection:
+    """Open an existing catalog for reading only: nothing can be written through it.
+
+    The path is made absolute but not resolved: resolving turns a Windows
+    mapped drive into a \\\\server\\share path, whose URI SQLite refuses.
+    """
+    conn = sqlite3.connect(Path(os.path.abspath(db_path)).as_uri() + "?mode=ro",
+                           uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def catalog_version(db_path: str) -> Optional[int]:
+    """The version stored in the catalog at `db_path`, read without writing.
+
+    None when there is no catalog there yet: no file, or a file with no tables.
+    0 for a catalog made before the number existed.  A file that is not a
+    SQLite database raises sqlite3.DatabaseError; a SQLite database with no
+    files table, or with a negative number no version writes, raises
+    NotACatalog.
+    """
+    if not os.path.exists(db_path):
+        return None
+    conn = connect_read_only(db_path)
+    try:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if not tables:
+            return None
+        if "files" not in tables:
+            raise NotACatalog(f"{db_path} is a SQLite database with no files table")
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < 0:
+            raise NotACatalog(f"{db_path} stores version {version}, which no "
+                              f"version of SMFS Catalog writes")
+        return version
+    finally:
+        conn.close()
+
+
+def too_new_message(db_path: str, found: int) -> str:
+    """Why a catalog newer than this code is refused, and what to do instead."""
+    return (
+        f"{db_path} is catalog version {found}, written by a newer version of "
+        f"SMFS Catalog.  This version reads catalogs up to version "
+        f"{CATALOG_VERSION}.\n\nThe catalog has not been changed.  Open it with "
+        f"the version that wrote it, or a newer one."
+    )
+
+
+def backup_path(db_path: str) -> str:
+    """Where `db_path` is backed up before an upgrade.  One file: each upgrade
+    replaces the backup before it."""
+    return db_path + ".backup"
+
+
+# The backup copies this many database pages per step: about 4 MB at SQLite's
+# standard 4 KB page, so a progress bar moves several times a second while the
+# number of steps stays too small to slow the copy.
+BACKUP_PAGES_PER_STEP = 1000
+
+
+class BackupCancelled(Exception):
+    """The backup was cancelled: the catalog is unchanged, and the last backup kept."""
+
+
+def _remove_partial(partial: str) -> None:
+    for leftover in (partial, partial + "-journal"):
+        if os.path.exists(leftover):
+            os.remove(leftover)
+
+
+def backup_catalog(db_path: str, dest: Optional[str] = None, progress=None) -> str:
+    """Copy the catalog at `db_path` to `dest` (default: backup_path), whole.
+
+    SQLite's own backup, so the copy is the database as a reader sees it,
+    including anything still in its write-ahead log.  The copy is then set to
+    keep no write-ahead log of its own, so it is one self-contained file, and
+    any log left beside the backup it replaces is removed: SQLite would
+    otherwise replay that old log onto the new backup.  Written under a
+    temporary name and moved into place, so an interrupted backup never
+    replaces the last good one.
+
+    `progress(done, total)` is called after each step of BACKUP_PAGES_PER_STEP
+    pages, with the pages copied so far and the total.  When it returns False
+    the copy stops, the half-written copy is deleted, the last backup is kept,
+    and BackupCancelled is raised.
+    """
+    dest = dest or backup_path(db_path)
+    partial = dest + ".partial"
+    _remove_partial(partial)
+
+    def step(_status, remaining, total):
+        if progress is not None and progress(total - remaining, total) is False:
+            raise BackupCancelled(f"the backup of {db_path} was cancelled")
+
+    src = sqlite3.connect(db_path)
+    try:
+        out = sqlite3.connect(partial)
+        try:
+            src.backup(out, pages=BACKUP_PAGES_PER_STEP, progress=step)
+            out.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            out.close()
+    except BackupCancelled:
+        _remove_partial(partial)
+        raise
+    finally:
+        src.close()
+    for stale in (dest + "-wal", dest + "-shm"):
+        if os.path.exists(stale):
+            os.remove(stale)
+    os.replace(partial, dest)
+    return dest
+
+
+def _set_version(db_path: str, version: int) -> None:
+    conn = get_connection(db_path)
+    try:
+        conn.execute(f"PRAGMA user_version = {int(version)}")
+    finally:
+        conn.close()
 
 
 _ANALYSIS_RESULTS_SQL = """
@@ -165,8 +308,8 @@ def _add_missing_columns(conn, table: str, columns: dict) -> None:
     """Give an existing table the declared columns it does not have yet.
 
     ``CREATE TABLE IF NOT EXISTS`` leaves a catalog that already exists
-    untouched, so a column added to a declaration reaches new catalogs only.
-    Every descriptive column added from here on needs an entry here too.
+    untouched, so a column added to a declaration reaches new catalogs only;
+    the upgrade step that comes with it adds it to the rest.
     """
     known = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
     for name, declaration in columns.items():
@@ -174,8 +317,80 @@ def _add_missing_columns(conn, table: str, columns: dict) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
 
+def _upgrade_to_1(conn: sqlite3.Connection) -> None:
+    """Version 0 to 1: what a catalog made before the number existed may lack.
+
+    Such a catalog may be anything from v1.3.0 to the last build without the
+    number, so each change is made only where it is still needed.
+    """
+    _add_missing_columns(conn, "files", {
+        "substrate":   "TEXT",
+        "sample_prep": "TEXT",
+    })
+
+    # The column references the table, so it must go first.
+    if "directory_id" in {r["name"] for r in
+                          conn.execute("PRAGMA table_info(files)")}:
+        conn.execute("DROP INDEX IF EXISTS idx_files_directory_id")
+        conn.execute("ALTER TABLE files DROP COLUMN directory_id")
+    conn.execute("DROP TABLE IF EXISTS watched_directories")
+
+    # An acquisition modality the analysis has no pipeline for is not a
+    # damaged file.  Clear the label where a catalog holds one; the string is
+    # spelled out because curve_loader imports this module, not the other way
+    # round.
+    conn.execute(
+        "UPDATE files SET event = NULL, unusable_reason = NULL, "
+        "unusable_detail = NULL WHERE unusable_reason = 'not_force_extension'"
+    )
+
+
+# Step n carries a catalog from version n - 1 to version n.  Each takes the
+# connection _run_step holds its transaction on, and commits nothing itself.
+_UPGRADES = {1: _upgrade_to_1}
+
+
+def _run_step(db_path: str, step: int) -> None:
+    """Run one upgrade step and record its number, as one transaction.
+
+    The sqlite3 module commits a schema change the moment it runs unless a
+    transaction is already open, so this opens one itself.  An interrupted
+    step then leaves the catalog exactly as it was before the step, still
+    carrying the number before it, and its backup is a backup of the original.
+    """
+    conn = get_connection(db_path)
+    conn.isolation_level = None              # the transaction is opened here
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _UPGRADES[step](conn)
+        conn.execute(f"PRAGMA user_version = {int(step)}")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
 def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
-    """Create all tables if they do not already exist."""
+    """Create a catalog, or bring an existing one up to CATALOG_VERSION.
+
+    The stored version is read before anything is written.  A catalog newer
+    than this code raises CatalogTooNew and is left exactly as it was.  An
+    older one is upgraded in place, one numbered step at a time; the app
+    writes its backup first (run_dashboard.open_catalog).
+    """
+    found = catalog_version(db_path)
+    if found is not None and found > CATALOG_VERSION:
+        raise CatalogTooNew(too_new_message(db_path, found))
+
+    # An older catalog is brought up to date first, one numbered step at a
+    # time, before anything below touches it.
+    if found is not None:
+        for step in range(found + 1, CATALOG_VERSION + 1):
+            _run_step(db_path, step)
+
     import json
     db_dir = os.path.dirname(db_path)
     if db_dir:
@@ -248,27 +463,6 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
                 tags                TEXT    DEFAULT '{}'
             )
         """)
-
-        _add_missing_columns(conn, "files", {
-            "substrate":   "TEXT",
-            "sample_prep": "TEXT",
-        })
-
-        # The column references the table, so it must go first.
-        if "directory_id" in {r["name"] for r in
-                              conn.execute("PRAGMA table_info(files)")}:
-            conn.execute("DROP INDEX IF EXISTS idx_files_directory_id")
-            conn.execute("ALTER TABLE files DROP COLUMN directory_id")
-        conn.execute("DROP TABLE IF EXISTS watched_directories")
-
-        # An acquisition modality the analysis has no pipeline for is not a
-        # damaged file.  Clear the label where a catalog holds one; the string
-        # is spelled out because curve_loader imports this module, not the
-        # other way round.
-        conn.execute(
-            "UPDATE files SET event = NULL, unusable_reason = NULL, "
-            "unusable_detail = NULL WHERE unusable_reason = 'not_force_extension'"
-        )
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS meta (
@@ -396,6 +590,10 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
 
 
     conn.close()
+
+    # A new catalog is made in this version's layout and needs no step.
+    if found is None:
+        _set_version(db_path, CATALOG_VERSION)
 
     # After the schema is settled and this connection's write transaction is
     # done: reconciling the criteria needs its own connection, and it reads

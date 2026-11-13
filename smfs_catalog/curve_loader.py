@@ -174,10 +174,10 @@ class Qualification:
     """
     The verdict of the qualification stage for one wave.
 
-    curve_type : what the file IS — the acquisition modality.  Independent of
-                 whether it is usable, so an aborted force-extension curve is
-                 still labelled 'force_extension' and not turned into a
-                 modality of its own.
+    curve_type : what the file IS — the acquisition modality, one of
+                 CURVE_TYPES.  Independent of whether it is usable, so an
+                 aborted continuous-stretch curve is still labelled
+                 'continuous_stretch' and not turned into a modality of its own.
     reason     : None when usable; otherwise an UNUSABLE_* code.
     detail     : human-readable specifics ("deflection: 13,685 of 41,962
                  samples are NaN/inf"), for the tooltip and the error message.
@@ -241,6 +241,13 @@ def _hold_z_sensor(note: bytes) -> int | None:
     """
     m = re.search(rb"(?:\A|\r)FCPHoldZSensor: ?([0-1])\r", note)
     return int(m.group(1)) if m else None
+
+
+# Every curve type _modality returns.  A stored type outside this list was
+# written by an older version, and only re-reading the file can say what it is
+# today (scanner.requalify_catalog).
+CURVE_TYPES = ("continuous_stretch", "stretch_hold", "force_clamp", "indentation",
+               "image_ac", "image_contact", "unknown")
 
 
 def _modality(
