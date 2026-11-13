@@ -958,8 +958,7 @@ class DashboardWindow(QMainWindow):
             QMessageBox.information(self, "Re-check catalogued files",
                                     "The catalog is empty.")
             return
-        n_missing = len([r for r in _db.list_files(db_path=self._db_path)
-                         if r["content_sha256"] is None])
+        n_missing = _scanner.count_needing_recheck(self._db_path)
 
         box = QMessageBox(self)
         box.setWindowTitle("Re-check catalogued files")
@@ -968,7 +967,8 @@ class DashboardWindow(QMainWindow):
                     "today's qualification checks?")
         box.setInformativeText(
             f"Fill in what's missing — {n_missing:,} of {n_all:,} files have no "
-            f"fingerprint yet. Free to repeat; skips files already done.\n\n"
+            f"fingerprint yet, or a curve type from an older version. Free to "
+            f"repeat; skips files already done.\n\n"
             f"Re-check everything — re-reads all {n_all:,}. Use after a "
             f"qualification rule changes, or if a file may have been replaced "
             f"on disk without its timestamp changing.\n\n"

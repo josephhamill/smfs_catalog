@@ -25,8 +25,8 @@ from igor2.binarywave import load as load_ibw
 
 from . import db
 from .curve_loader import (
-    _hold_z_sensor, _note_key_pattern, _retract_velocity, _spring_constant,
-    qualify_wave, retract_deflection_nm,
+    CURVE_TYPES, _hold_z_sensor, _note_key_pattern, _retract_velocity,
+    _spring_constant, qualify_wave, retract_deflection_nm,
 )
 from .event_processor import compute_deflection_histogram, defl_grid_params
 
@@ -236,7 +236,7 @@ def _parse_ibw(path: str) -> dict:
         header   = wave["wave"]["wave_header"]
 
         # Spring constant in pN/nm, via the ONE parser curve_loader owns — the
-        # column below and the force_extension/unknown call in qualify_wave
+        # column below and the curve-type call in qualify_wave
         # must be the same number, not two regexes that resemble each other.
         result["spring_constant_pn_nm"] = _spring_constant(note)
         # One resolver for both modules — the column and a loaded curve must
@@ -680,6 +680,38 @@ def scan_directory(
     return n_found, n_updated, n_errors, False
 
 
+# What "Fill in what's missing" visits: a file with no fingerprint yet, or one
+# whose stored curve type is not one today's qualification produces.  That
+# second kind was typed by an older version, and its stored name cannot simply
+# be renamed: v1.3.0's force_extension covered stretch-hold runs too.
+_NEEDS_RECHECK = ("content_sha256 IS NULL OR curve_type NOT IN (%s)"
+                  % ", ".join("'%s'" % t for t in CURVE_TYPES))
+
+
+def count_needing_recheck(db_path: str = db.DEFAULT_DB_PATH) -> int:
+    """How many files "Fill in what's missing" would visit.  Read-only."""
+    conn = db.connect_read_only(db_path)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM files WHERE " + _NEEDS_RECHECK).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def count_outdated_curve_types(db_path: str = db.DEFAULT_DB_PATH) -> int:
+    """How many files carry a curve type today's qualification does not produce.
+
+    Read-only, so it can be asked of a catalog before it is upgraded.
+    """
+    conn = db.connect_read_only(db_path)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM files WHERE curve_type NOT IN (%s)"
+            % ", ".join("?" * len(CURVE_TYPES)), CURVE_TYPES).fetchone()[0]
+    finally:
+        conn.close()
+
+
 def requalify_catalog(
     db_path:    str  = db.DEFAULT_DB_PATH,
     progress_cb=None,
@@ -687,18 +719,19 @@ def requalify_catalog(
 ) -> dict:
     """
     Re-read catalogued files to fill in what the scanner did not know when they
-    were first imported: their content hash, and any qualification check added
-    since.
+    were first imported: their content hash, any qualification check added
+    since, and today's curve type where an older version stored another.
 
     Needed because scan_directory deliberately does NOT re-open a file whose
     mtime is unchanged — the right call for an ordinary scan, but it means a
     new check reaches old files only when they happen to be re-analysed. This
     is the explicit, once-off alternative to making every scan slow.
 
-    only_missing=True (the default) visits just the files with no hash yet, so
-    running it twice costs nothing and an interrupted run resumes where it
-    stopped: progress IS the hash column, not a separate bookmark. Pass False
-    to re-read everything, e.g. after changing a qualification rule.
+    only_missing=True (the default) visits just the files with no hash yet or
+    with a curve type today's qualification does not produce, so running it
+    twice costs nothing and an interrupted run resumes where it stopped:
+    progress IS those two columns, not a separate bookmark. Pass False to
+    re-read everything, e.g. after changing a qualification rule.
 
     Reads at ~40 ms/file, dominated by disk; 140k files is roughly two hours.
     progress_cb(done, total, label) -> cancelled, exactly as scan_directory's.
@@ -710,7 +743,7 @@ def requalify_catalog(
     try:
         sql = "SELECT id, path, curve_type, unusable_reason, content_sha256 FROM files"
         if only_missing:
-            sql += " WHERE content_sha256 IS NULL"
+            sql += " WHERE " + _NEEDS_RECHECK
         rows = conn.execute(sql + " ORDER BY id").fetchall()
     finally:
         conn.close()

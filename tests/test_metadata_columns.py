@@ -33,6 +33,8 @@ def test_a_catalog_made_before_a_column_existed_gains_it(tmp_path):
     conn = db.get_connection(path)
     with conn:
         conn.execute("ALTER TABLE files DROP COLUMN sample_prep")
+        # An older catalog carries no version number.
+        conn.execute("PRAGMA user_version = 0")
     conn.close()
     assert "sample_prep" not in _columns(path)
 

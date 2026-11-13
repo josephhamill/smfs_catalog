@@ -28,16 +28,19 @@ from pathlib import Path
 import os
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from smfs_catalog import crashlog as _crashlog
 from smfs_catalog import db as _db
 from smfs_catalog import sample_marks as _sample_marks
+from smfs_catalog import scanner as _scanner
 from smfs_catalog.dashboard_window import DashboardWindow
 
 XPRA_DISPLAY = ":100"
@@ -152,6 +155,134 @@ def _ensure_display() -> None:
     )
 
 
+def _size_text(n_bytes: int) -> str:
+    if n_bytes >= 1e9:
+        return f"{n_bytes / 1e9:.1f} GB"
+    return f"{n_bytes / 1e6:.1f} MB"
+
+
+def _catalog_size(db_path: str) -> int:
+    """The catalog's size on disk, its write-ahead log included."""
+    return sum(os.path.getsize(p) for p in (db_path, db_path + "-wal")
+               if os.path.exists(p))
+
+
+def open_catalog(db_path: str, confirm_upgrade, refuse, progress=None) -> bool:
+    """
+    Bring the catalog at `db_path` to this app's version, or say why not.
+
+    Nothing is written before the stored version is read.  A catalog newer
+    than this app, or a file that is not a catalog, is refused and left as it
+    was.  An older catalog is upgraded only once `confirm_upgrade(text)` has
+    returned True and its backup is written; with no room on the disk for the
+    backup it is refused unchanged.  A new or current catalog opens as before.
+
+    The dialogs come in as `confirm_upgrade(text) -> bool` and `refuse(text)`,
+    so the decision runs the same with or without a display, and in a frozen
+    build exactly as from a checkout.  `progress(done, total) -> bool` follows
+    the backup; returning False cancels it, and the catalog is left unchanged.
+    Returns True when the catalog may open.
+    """
+    try:
+        found = _db.catalog_version(db_path)
+    except sqlite3.DatabaseError as exc:
+        refuse(f"{db_path} cannot be read as a catalog ({exc}).\n\n"
+               f"It has not been changed.")
+        return False
+    if found is not None and found > _db.CATALOG_VERSION:
+        refuse(_db.too_new_message(db_path, found))
+        return False
+
+    if found is not None and found < _db.CATALOG_VERSION:
+        backup = _db.backup_path(db_path)
+        size = _catalog_size(db_path)
+        free = shutil.disk_usage(os.path.dirname(os.path.abspath(db_path))).free
+        if free < size:
+            refuse(f"{db_path} needs upgrading, and its backup needs "
+                   f"{_size_text(size)}, but only {_size_text(free)} is free on "
+                   f"that disk.\n\nThe catalog has not been changed.")
+            return False
+        n_outdated = _scanner.count_outdated_curve_types(db_path)
+        text = (
+            f"{db_path} was written by an older version of SMFS Catalog "
+            f"(catalog version {found}; this version uses "
+            f"{_db.CATALOG_VERSION}).\n\n"
+            f"Upgrade first copies it to\n{backup}\n({_size_text(size)}, "
+            f"replacing any backup already there), then brings the catalog up "
+            f"to date.  Quit leaves it unchanged."
+        )
+        if n_outdated:
+            text += (
+                f"\n\n{n_outdated:,} "
+                f"{'curve carries' if n_outdated == 1 else 'curves carry'} a "
+                f"curve type from the older "
+                f"version.  After the upgrade, the dashboard's \"Re-check "
+                f"catalogued files…\" button, then \"Fill in what's missing\", "
+                f"re-reads those files and puts their type right."
+            )
+        if not confirm_upgrade(text):
+            return False
+        # Read again: while the dialog was open another window may have
+        # upgraded it, and its backup must not be replaced by an upgraded copy.
+        if _db.catalog_version(db_path) == found:
+            try:
+                _db.backup_catalog(db_path, backup, progress=progress)
+            except _db.BackupCancelled:
+                return False
+
+    _db.initialise(db_path)
+    return True
+
+
+class _BackupProgress:
+    """The backup's progress window, with a Cancel button, opened at its first step.
+
+    It is shown from the first step, however short the copy, so the person who
+    clicked Upgrade always sees what is happening.
+    """
+
+    def __init__(self, db_path: str):
+        self._text = (f"Copying {os.path.basename(db_path)} to "
+                      f"{os.path.basename(_db.backup_path(db_path))}")
+        self.box = None
+
+    def __call__(self, done: int, total: int) -> bool:
+        if self.box is None:
+            self.box = QProgressDialog(self._text, "Cancel", 0, 100)
+            self.box.setWindowTitle("Backing up catalog")
+            self.box.setWindowModality(Qt.WindowModality.ApplicationModal)
+            self.box.setMinimumDuration(0)
+        self.box.setValue(round(100 * done / total) if total else 100)
+        QApplication.processEvents()
+        return not self.box.wasCanceled()
+
+    def close(self) -> None:
+        if self.box is not None:
+            self.box.close()
+
+
+def _upgrade_box(text: str):
+    """The upgrade question, and its Upgrade button."""
+    box = QMessageBox(QMessageBox.Icon.Question, "Upgrade catalog", text)
+    upgrade = box.addButton("Upgrade", QMessageBox.ButtonRole.AcceptRole)
+    quit_button = box.addButton("Quit", QMessageBox.ButtonRole.RejectRole)
+    # Enter and Escape both press Quit: a stray keystroke changes nothing, and
+    # the app asks again at the next start.
+    box.setDefaultButton(quit_button)
+    box.setEscapeButton(quit_button)
+    return box, upgrade
+
+
+def _confirm_upgrade_dialog(text: str) -> bool:
+    box, upgrade = _upgrade_box(text)
+    box.exec()
+    return box.clickedButton() is upgrade
+
+
+def _refuse_dialog(text: str) -> None:
+    QMessageBox.critical(None, "Catalog not opened", text)
+
+
 def main(db_path: str = _db.DEFAULT_DB_PATH) -> None:
     # First of everything, so a fault in initialise()'s migrations or in
     # QApplication's own startup is still written down.  A silent death is
@@ -162,15 +293,24 @@ def main(db_path: str = _db.DEFAULT_DB_PATH) -> None:
     # Check BEFORE initialise() stamps a fresh DB with this machine — otherwise a
     # DB copied from another machine would look native the instant we open it.
     machine_warning = _db.check_db_machine(db_path)
-    _db.initialise(db_path)
-    # Before any window builds a plot, so the first curve drawn is already in
-    # the mode this catalog was left in.
-    _sample_marks.load(db_path)
+    # Before the catalog is opened: an older or newer one is decided in a dialog.
     app = QApplication(sys.argv)
     _crashlog.connect_clean_exit(app)
     icon_path = resource_path("smfs_catalog", "assets", "icons", "icon.png")
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
+    backup_progress = _BackupProgress(db_path)
+    opened = open_catalog(db_path, _confirm_upgrade_dialog, _refuse_dialog,
+                          backup_progress)
+    backup_progress.close()
+    if not opened:
+        # Stopping here is a decision, not a crash; the event loop that would
+        # otherwise say so never starts.
+        _crashlog.mark_clean_exit()
+        return
+    # Before any window builds a plot, so the first curve drawn is already in
+    # the mode this catalog was left in.
+    _sample_marks.load(db_path)
     if machine_warning:
         QMessageBox.warning(None, "Catalog built on a different machine", machine_warning)
     win = DashboardWindow(db_path)
