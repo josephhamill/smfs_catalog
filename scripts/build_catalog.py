@@ -23,8 +23,8 @@ What it does, in order:
     basename checked, because a path written down elsewhere goes stale.
  2. Extracts the chosen version's code from git into a temporary folder.
  3. Runs the build in a child process with that code first on its path:
-    create the catalog, copy the parameter sets, register the curves, analyse
-    them.
+    create the catalog, copy the parameter sets and write them in that
+    version's form, register the curves, analyse them.
  4. Writes the result to ~/.local/share/smfs_catalog/test_<version>.db and
     deletes the temporary folder.
 
@@ -33,6 +33,13 @@ file, so two builds of the same version hold the same curves whatever has since
 appeared on disk.  The `known` column records which curves the rupture study
 identified as events.  The build never reads it; it is there for whoever reads
 the catalog afterwards.
+
+The parameter sets are today's, from the live catalog, written in the chosen
+version's form: the profile keys that version does not declare are removed,
+and for a version that gated a criterion only when it was ticked, every
+criterion with a bound is ticked.  They are not the values anyone used when
+that version was current, so results from a built catalog show that version's
+code at work on today's settings.
 
 The live catalog is opened read-only and is never copied.
 
@@ -216,6 +223,57 @@ def copy_param_tables(live_db, out_db):
     return report
 
 
+def fit_profiles_to_version(_db, _gate, out_db):
+    """The copied profiles, written in this version's form.
+
+    What is copied from the live catalog is today's.  Two steps make it mean to
+    this version what it means to today's code:
+
+    - Each profile keeps only the keys this version declares in
+      `db.profile_defaults()`, so the catalog holds what the version itself
+      could have written, and a later upgrade meets the keys it has to add.
+    - A version with `criteria_gate.set_criterion` gates a criterion only when
+      the owner's profile ticks it.  Today a bound is the criterion, so every
+      criterion with a bound in force for an owner is ticked, through that
+      version's own `set_criterion`.  The gate is then the one today's code
+      applies, and today's upgrade keeps every bound.
+
+    Before the scan, so every curve is analysed under the profiles as written.
+    """
+    declared = set(_db.profile_defaults())
+    report = {"declared": sorted(declared), "removed": {}, "ticked": {}}
+    con = sqlite3.connect(out_db)
+    try:
+        owners = []
+        for owner, params_json in con.execute(
+                "SELECT experimentalist, params_json FROM experimentalist_profiles"
+                ).fetchall():
+            owners.append(owner)
+            params = json.loads(params_json)
+            removed = sorted(k for k in params if k not in declared)
+            if removed:
+                con.execute(
+                    "UPDATE experimentalist_profiles SET params_json = ? "
+                    "WHERE experimentalist = ?",
+                    (json.dumps({k: v for k, v in params.items() if k in declared}),
+                     owner))
+                report["removed"][owner] = removed
+        con.commit()
+    finally:
+        con.close()
+
+    if _gate is None or not hasattr(_gate, "set_criterion"):
+        return report
+    for owner in owners:
+        bounded = sorted(
+            r["analysis_type"] for r in _db.get_thresholds(owner, out_db)
+            if (r["lower_bound"], r["upper_bound"]) != (None, None))
+        for key in bounded:
+            _gate.set_criterion(key, True, owner, out_db)
+        report["ticked"][owner] = bounded
+    return report
+
+
 def copy_overrides(overrides, out_db):
     """Each chosen curve's own per-file parameter overrides."""
     if not overrides:
@@ -298,6 +356,10 @@ def _runner(payload_path):
     from smfs_catalog import db as _db
     from smfs_catalog import scanner as _scanner
     from smfs_catalog import curve_analysis as _ca
+    try:
+        from smfs_catalog import criteria_gate as _gate
+    except ImportError:
+        _gate = None
 
     where = os.path.dirname(os.path.abspath(_db.__file__))
     if not where.startswith(job["src"]):
@@ -312,6 +374,7 @@ def _runner(payload_path):
 
     t0 = time.time()
     result["parameters"] = copy_param_tables(job["live"], job["out"])
+    result["profiles"] = fit_profiles_to_version(_db, _gate, job["out"])
     result["seconds"]["parameters"] = round(time.time() - t0, 1)
 
     t0 = time.time()
@@ -439,6 +502,13 @@ def main(argv=None):
         print("  no column for %s.%s" % (table, ", ".join(cols)))
     for table in report["parameters"]["absent_tables"]:
         print("  no table      %s in this version" % table)
+    removed = sorted({k for keys in report["profiles"]["removed"].values() for k in keys})
+    print("  profiles      %s not declared by this version, removed"
+          % (", ".join(removed) if removed else "no key"))
+    if report["profiles"]["ticked"]:
+        print("  ticked        %d criteria with a bound, across %d profiles" % (
+            sum(len(v) for v in report["profiles"]["ticked"].values()),
+            len(report["profiles"]["ticked"])))
     print("  curves        %d registered, %d owned, %d with overrides"
           % (report["n_files"], report["owned"], report["overrides"]))
     print("  verdicts      %s  (%d written onto the file)" % (", ".join(

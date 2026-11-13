@@ -23,7 +23,9 @@ Run with the smfs-catalog-dev env, from the repo root:
     python -m pytest tests/test_build_catalog.py -q
 """
 import csv
+import json
 import os
+import shutil
 import sqlite3
 import sys
 import types
@@ -172,6 +174,80 @@ def test_staging_mirrors_each_path_and_copies_no_data(tmp_path):
     assert os.path.realpath(staged) == os.path.realpath(str(curve))
 
 
+# ── The copied profiles, written in the version's form ────────────────────────
+
+def _profiles_catalog(path, profiles, thresholds):
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE experimentalist_profiles (experimentalist TEXT "
+                "PRIMARY KEY, params_json TEXT, updated_at TEXT)")
+    con.execute("CREATE TABLE thresholds (experimentalist TEXT, analysis_type "
+                "TEXT, lower_bound REAL, upper_bound REAL)")
+    con.executemany("INSERT INTO experimentalist_profiles VALUES (?, ?, '')",
+                    [(o, json.dumps(p)) for o, p in profiles.items()])
+    con.executemany("INSERT INTO thresholds VALUES (?, ?, ?, ?)", thresholds)
+    con.commit()
+    con.close()
+
+
+def _a_version(declared, ticks=None):
+    """A stand-in for a version's db and criteria_gate modules.
+
+    `ticks` is the list its set_criterion records into; None means the version
+    has no set_criterion, as every version since a bound became the criterion.
+    """
+    def get_thresholds(owner, db_path):
+        con = sqlite3.connect(db_path)
+        con.row_factory = sqlite3.Row
+        try:
+            return con.execute("SELECT * FROM thresholds WHERE experimentalist = ?",
+                               (owner,)).fetchall()
+        finally:
+            con.close()
+    db = types.SimpleNamespace(profile_defaults=lambda: dict.fromkeys(declared, 0.0),
+                               get_thresholds=get_thresholds)
+    if ticks is None:
+        return db, types.SimpleNamespace()
+    return db, types.SimpleNamespace(
+        set_criterion=lambda key, on, owner, db_path: ticks.append((owner, key, on)))
+
+
+def test_profile_keys_the_version_does_not_declare_are_removed(tmp_path):
+    cat = str(tmp_path / "built.db")
+    _profiles_catalog(cat, {"Alexandre": {"seg_window": 5.0, "added_later": 1.0}}, [])
+    db, gate = _a_version(declared=["seg_window"])
+    report = bc.fit_profiles_to_version(db, gate, cat)
+    con = sqlite3.connect(cat)
+    stored = json.loads(con.execute("SELECT params_json FROM experimentalist_profiles"
+                                    ).fetchone()[0])
+    con.close()
+    assert stored == {"seg_window": 5.0}
+    assert report["removed"] == {"Alexandre": ["added_later"]}
+
+
+def test_a_version_that_gates_by_ticks_gets_a_tick_for_every_bound(tmp_path):
+    cat = str(tmp_path / "built.db")
+    _profiles_catalog(cat, {"Alexandre": {"seg_window": 5.0}}, [
+        ("Alexandre", "baseline_rms", 0.001, 0.4),
+        ("Alexandre", "seg_l_c_err", None, 10.0),
+        ("Alexandre", "invols_rms", None, None),     # no bound: not a criterion
+    ])
+    ticks = []
+    db, gate = _a_version(declared=["seg_window"], ticks=ticks)
+    report = bc.fit_profiles_to_version(db, gate, cat)
+    assert sorted(ticks) == [("Alexandre", "baseline_rms", True),
+                             ("Alexandre", "seg_l_c_err", True)]
+    assert report["ticked"] == {"Alexandre": ["baseline_rms", "seg_l_c_err"]}
+
+
+def test_a_version_where_the_bound_is_the_criterion_gets_no_ticks(tmp_path):
+    cat = str(tmp_path / "built.db")
+    _profiles_catalog(cat, {"Alexandre": {"seg_window": 5.0}},
+                      [("Alexandre", "baseline_rms", 0.001, 0.4)])
+    db, gate = _a_version(declared=["seg_window"])
+    report = bc.fit_profiles_to_version(db, gate, cat)
+    assert report["ticked"] == {}
+
+
 # ── A real build, once per era ────────────────────────────────────────────────
 
 def _short_list(out_dir, n=3):
@@ -224,15 +300,106 @@ def _assert_a_real_catalog(report, out):
     assert queued == 0, "the build left rows in the analysis queue"
 
 
+def _n_bounds(path):
+    con = sqlite3.connect(path)
+    try:
+        return con.execute("SELECT COUNT(*) FROM thresholds WHERE lower_bound IS "
+                           "NOT NULL OR upper_bound IS NOT NULL").fetchone()[0]
+    finally:
+        con.close()
+
+
+def _bounded_and_ticked(path, default_owner):
+    """Per owner: the criteria with a bound in force, and the criteria ticked.
+
+    The bound in force is the owner's own row over the default owner's, as
+    db.get_thresholds merges them.
+    """
+    con = sqlite3.connect(path)
+    try:
+        rows = con.execute("SELECT experimentalist, analysis_type, lower_bound, "
+                           "upper_bound FROM thresholds").fetchall()
+        profiles = dict(con.execute(
+            "SELECT experimentalist, params_json FROM experimentalist_profiles"))
+    finally:
+        con.close()
+    out = {}
+    for owner, params_json in profiles.items():
+        merged = {key: (lo, hi) for who, key, lo, hi in rows if who == default_owner}
+        merged.update({key: (lo, hi) for who, key, lo, hi in rows if who == owner})
+        bounded = {key for key, b in merged.items() if b != (None, None)}
+        ticked = {key[len("criteria_use:"):]
+                  for key, on in json.loads(params_json).items()
+                  if key.startswith("criteria_use:") and on}
+        out[owner] = (bounded, ticked)
+    return out
+
+
 @needs_data
 def test_build_with_current_code(tmp_path):
     report = _built("main", str(tmp_path))
     assert report["entry_point"] == "analyse_file"
     _assert_a_real_catalog(report, os.path.join(str(tmp_path), "test_main.db"))
+    # A bound is the criterion in this era: nothing to tick.
+    assert report["profiles"]["ticked"] == {}
 
 
 @needs_data
 def test_build_with_v130_code(tmp_path):
+    from smfs_catalog import db as today
+
     report = _built("v1.3.0", str(tmp_path))
+    out = os.path.join(str(tmp_path), "test_v1.3.0.db")
     assert report["entry_point"] == "analyse_and_classify"
-    _assert_a_real_catalog(report, os.path.join(str(tmp_path), "test_v1.3.0.db"))
+    _assert_a_real_catalog(report, out)
+
+    # v1.3.0 gated a criterion only when ticked: every bound in force is ticked.
+    per_owner = _bounded_and_ticked(out, today.DEFAULT_EXPERIMENTALIST)
+    assert any(bounded for bounded, _ in per_owner.values())
+    for owner, (bounded, ticked) in per_owner.items():
+        assert bounded == ticked, owner
+
+    # Every profile key is one v1.3.0 declares, or one of its ticks.
+    con = sqlite3.connect(out)
+    keys = set()
+    for (params_json,) in con.execute("SELECT params_json FROM experimentalist_profiles"):
+        keys |= set(json.loads(params_json))
+    con.close()
+    declared = set(report["profiles"]["declared"])
+    assert {k for k in keys if not k.startswith("criteria_use:")} <= declared
+
+    # Today's setup, run on a copy, keeps every bound: the gate carries over.
+    copy = os.path.join(str(tmp_path), "upgraded.db")
+    shutil.copy(out, copy)
+    before = _n_bounds(copy)
+    today.initialise(copy)
+    assert before > 0
+    assert _n_bounds(copy) == before
+
+
+@needs_data
+def test_build_with_labograph_baseline_code(tmp_path):
+    from smfs_catalog import db as today
+
+    report = _built("labograph-baseline", str(tmp_path))
+    out = os.path.join(str(tmp_path), "test_labograph-baseline.db")
+    assert report["entry_point"] == "analyse_file"
+    _assert_a_real_catalog(report, out)
+    # A bound is the criterion in this era: nothing to tick.
+    assert report["profiles"]["ticked"] == {}
+
+    # Every profile key is one this version declares.
+    con = sqlite3.connect(out)
+    keys = set()
+    for (params_json,) in con.execute("SELECT params_json FROM experimentalist_profiles"):
+        keys |= set(json.loads(params_json))
+    con.close()
+    assert keys <= set(report["profiles"]["declared"])
+
+    # Today's setup, run on a copy, keeps every bound.
+    copy = os.path.join(str(tmp_path), "upgraded.db")
+    shutil.copy(out, copy)
+    before = _n_bounds(copy)
+    today.initialise(copy)
+    assert before > 0
+    assert _n_bounds(copy) == before
