@@ -499,3 +499,52 @@ def test_the_v130_built_catalog_upgrades_with_its_bounds_kept(tmp_path):
     con.close()
     assert scanner.count_needing_recheck(path) == n_files
     assert len(db.list_files(db_path=path)) == n_files
+
+
+# ── Which code and which catalog are open ─────────────────────────────────────
+
+def test_the_upgrade_message_names_the_app_version_and_branch(tmp_path, monkeypatch):
+    from smfs_catalog import __version__
+    monkeypatch.setattr(rd._provenance, "code_branch", lambda: "some-branch")
+    dialogs = _Dialogs(answer=False)
+    rd.open_catalog(_unnumbered_v130_layout(tmp_path), dialogs.confirm, dialogs.refuse)
+    assert f"This is SMFS Catalog {__version__}, on branch some-branch." in dialogs.asked[0]
+
+
+def test_the_upgrade_message_from_a_built_app_names_no_branch(tmp_path, monkeypatch):
+    from smfs_catalog import __version__
+    monkeypatch.setattr(rd._provenance, "code_branch", lambda: None)
+    dialogs = _Dialogs(answer=False)
+    rd.open_catalog(_unnumbered_v130_layout(tmp_path), dialogs.confirm, dialogs.refuse)
+    assert f"This is SMFS Catalog {__version__}.\n" in dialogs.asked[0]
+
+
+def test_the_window_title_shows_version_catalog_and_any_branch_but_main(
+        tmp_path, monkeypatch):
+    from smfs_catalog import __version__
+    from smfs_catalog import dashboard_window as dw
+    path = _new(tmp_path, "smfs_catalog.db")
+    on_main = (f"SMFS Catalog {__version__} — smfs_catalog.db, "
+               f"catalog version {db.CATALOG_VERSION}")
+    for branch, expected in (("main", on_main),
+                             (None, on_main),
+                             ("121-invols", on_main + " — branch 121-invols")):
+        monkeypatch.setattr(dw._provenance, "code_branch", lambda b=branch: b)
+        assert dw.window_title(path) == expected
+
+
+def test_code_branch_reads_the_checkout_and_is_none_in_a_built_app(monkeypatch):
+    from smfs_catalog import provenance
+    on = subprocess.run(["git", "branch", "--show-current"], cwd=ROOT,
+                        capture_output=True, text=True).stdout.strip()
+    if not on:
+        on = subprocess.run(["git", "describe", "--tags", "--always"], cwd=ROOT,
+                            capture_output=True, text=True).stdout.strip()
+    provenance.code_branch.cache_clear()
+    assert provenance.code_branch() == on
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    provenance.code_branch.cache_clear()
+    assert provenance.code_branch() is None
+    monkeypatch.undo()
+    provenance.code_branch.cache_clear()

@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from smfs_catalog import crashlog as _crashlog
 from smfs_catalog import db as _db
+from smfs_catalog import provenance as _provenance
 from smfs_catalog import sample_marks as _sample_marks
 from smfs_catalog import scanner as _scanner
 from smfs_catalog.dashboard_window import DashboardWindow
@@ -203,10 +204,13 @@ def open_catalog(db_path: str, confirm_upgrade, refuse, progress=None) -> bool:
                    f"that disk.\n\nThe catalog has not been changed.")
             return False
         n_outdated = _scanner.count_outdated_curve_types(db_path)
+        branch = _provenance.code_branch()
+        on_branch = f", on branch {branch}" if branch else ""
         text = (
             f"{db_path} was written by an older version of SMFS Catalog "
             f"(catalog version {found}; this version uses "
             f"{_db.CATALOG_VERSION}).\n\n"
+            f"This is SMFS Catalog {_provenance.app_version()}{on_branch}.\n\n"
             f"Upgrade first copies it to\n{backup}\n({_size_text(size)}, "
             f"replacing any backup already there), then brings the catalog up "
             f"to date.  Quit leaves it unchanged."

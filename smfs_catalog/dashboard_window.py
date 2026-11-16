@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html
+import os
 import sqlite3
 import time
 from collections import deque
@@ -29,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import db as _db
+from . import provenance as _provenance
 from . import criteria_gate as _gate
 from . import export_utils as _export
 from . import quantities as _quant
@@ -300,6 +302,21 @@ class FilesTableModel(QAbstractTableModel):
         self.endResetModel()
 
 
+def window_title(db_path: str) -> str:
+    """The dashboard's title: which code is running and which catalog it has open.
+
+    The app's version, the catalog's file name and its version number, and the
+    branch when the code is not on main.
+    """
+    title = (f"SMFS Catalog {_provenance.app_version()} — "
+             f"{os.path.basename(db_path)}, catalog version "
+             f"{_db.catalog_version(db_path)}")
+    branch = _provenance.code_branch()
+    if branch and branch != "main":
+        title += f" — branch {branch}"
+    return title
+
+
 class DashboardWindow(QMainWindow):
     """Single-window dashboard."""
 
@@ -308,7 +325,7 @@ class DashboardWindow(QMainWindow):
 
     def __init__(self, db_path: str = _db.DEFAULT_DB_PATH, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("SMFS Catalog — Dashboard")
+        self.setWindowTitle(window_title(db_path))
         fit_on_screen(self, 1400, 900)
         self._db_path = db_path
         self._scope = new_scope()

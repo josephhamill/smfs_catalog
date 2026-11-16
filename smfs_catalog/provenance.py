@@ -88,6 +88,35 @@ def code_version() -> str | None:
     return f"{commit}-dirty" if status else commit
 
 
+@lru_cache(maxsize=1)
+def code_branch() -> str | None:
+    """Return the branch a source checkout is on.
+
+    A checkout on no branch reports what it is on instead: its tag, or its
+    short commit. A frozen build has no branch and returns ``None``, as does a
+    checkout git cannot read. Cached for the process lifetime, like
+    ``code_version``.
+    """
+    if getattr(sys, "frozen", False):
+        return None
+    root = _checkout_root()
+    if root is None:
+        return None
+    try:
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=root, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        if not branch:
+            branch = subprocess.run(
+                ["git", "describe", "--tags", "--always"],
+                cwd=root, check=True, capture_output=True, text=True,
+            ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return branch or None
+
+
 def _package_source_digest(root: Path) -> str | None:
     """Digest the package source that differs from HEAD.
 
