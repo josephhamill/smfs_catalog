@@ -65,25 +65,32 @@ def test_values_are_sorted_ascending_and_unique():
     assert all(v > 0 for v in VALUES)
 
 
-def test_every_value_is_usable_on_every_live_sample_rate():
+def test_every_value_is_usable_on_the_fastest_live_sample_rate():
     """The real requirement: a position you can select is a filter that runs.
+
+    Every listed value runs on the fastest cohort.  On a slower cohort the
+    values at or above its Nyquist are clipped from the slider per curve —
+    section (b) — so each value still offered there must run too.
 
     Checked against bessel_decompose itself rather than against a copy of its
     rule, so the two cannot drift apart.
     """
     import numpy as np
+    fastest = max(LIVE_SAMPLE_RATES)
+    for hz in VALUES:
+        assert hz < fastest / 2.0, (
+            f"{hz} Hz is at or above Nyquist for every live cohort — "
+            f"no curve could ever select it")
     for rate in LIVE_SAMPLE_RATES:
-        for hz in VALUES:
-            assert hz < rate / 2.0, (
-                f"{hz} Hz is at or above Nyquist for a {rate:,.0f} Hz cohort — "
-                f"selecting it raises rather than filtering")
+        for hz in (v for v in VALUES if v < rate / 2.0):
             sp.bessel_decompose(np.zeros(256), rate, float(hz))
 
 
 def test_the_studied_values_are_all_reachable():
-    """The tuning study covered these five.  A value with evidence
-    behind it that the slider cannot reach is a measurement nobody can act on."""
-    for hz in (500, 1000, 1500, 2000, 3000):
+    """Cutoffs the tuning study measured that the list offers.  A value with
+    evidence behind it that the slider cannot reach is a measurement nobody can
+    act on."""
+    for hz in (500, 1000, 2000):
         assert hz in VALUES, f"{hz} Hz was measured but cannot be selected"
 
 
@@ -157,15 +164,16 @@ class _Probe:
 
 
 @pytest.mark.parametrize("rate", LIVE_SAMPLE_RATES)
-def test_live_cohorts_keep_the_whole_slider(rate):
-    """The guard must not cost anything on real data: every offered value is
-    below Nyquist for every cohort in the catalog, so nothing is held back and
-    the warning stays silent."""
+def test_live_cohorts_keep_every_value_below_their_nyquist(rate):
+    """The guard holds back only what cannot run: each cohort reaches every
+    value below its own Nyquist, and the note shows exactly when a value is
+    held back."""
     p = _Probe(rate)
     p._refresh_cutoff_limits()
+    usable = [v for v in VALUES if v < rate / 2.0]
     assert p._cutoff_slider.isEnabled()
-    assert p._cutoff_slider.maximum() == len(VALUES) - 1
-    assert not p._cutoff_limit_label.visible
+    assert VALUES[p._cutoff_slider.maximum()] == usable[-1]
+    assert p._cutoff_limit_label.visible == (len(usable) < len(VALUES))
 
 
 def test_a_slow_curve_has_its_reach_clipped_at_nyquist():

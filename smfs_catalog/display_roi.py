@@ -232,7 +232,8 @@ class ROIWindow(QWidget):
         ctrl = FlowLayout(margin=0, h_spacing=14, v_spacing=4)
 
         self._spin_window = QSpinBox()
-        self._spin_window.setRange(11, 501)
+        # Floor: the fewest samples the quadratic derivative can use.
+        self._spin_window.setRange(3, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._spin_window, "roi_window_pts")
         self._spin_window.setValue(self._window_pts)
         self._spin_window.editingFinished.connect(self._commit_window)
@@ -244,7 +245,7 @@ class ROIWindow(QWidget):
         # the right answer, and a clamp would snap the dragged line back with
         # nothing on screen saying why.  +-1e6 is a spin-box necessity (a
         # QDoubleSpinBox must have SOME range), not a claim about the science.
-        self._spin_threshold.setRange(-1e6, 1e6)
+        self._spin_threshold.setRange(-_quant.SPIN_REAL_MAX, _quant.SPIN_REAL_MAX)
         _quant.configure_spinbox(self._spin_threshold, "roi_threshold_nm_per_nm")
         self._spin_threshold.setValue(self._threshold_nm_per_nm)
         self._spin_threshold.setMinimumWidth(88)
@@ -252,14 +253,14 @@ class ROIWindow(QWidget):
         ctrl.addWidget(LabeledControl("d¹ outer thr:", self._spin_threshold))
 
         self._spin_mask = QDoubleSpinBox()
-        self._spin_mask.setRange(0.0, 2000.0)
+        self._spin_mask.setRange(0.0, _quant.SPIN_REAL_MAX)
         _quant.configure_spinbox(self._spin_mask, "roi_post_snapoff_mask_nm")
         self._spin_mask.setValue(self._post_snapoff_mask_nm)
         self._spin_mask.editingFinished.connect(self._commit_mask)
         ctrl.addWidget(LabeledControl("Post-snap mask:", self._spin_mask))
 
         self._spin_onset = QDoubleSpinBox()
-        self._spin_onset.setRange(-1e6, 1e6)
+        self._spin_onset.setRange(-_quant.SPIN_REAL_MAX, _quant.SPIN_REAL_MAX)
         _quant.configure_spinbox(self._spin_onset, "roi_onset_threshold_nm")
         self._spin_onset.setValue(self._onset_threshold_nm)
         self._spin_onset.setMinimumWidth(88)
@@ -277,7 +278,7 @@ class ROIWindow(QWidget):
         ctrl2 = FlowLayout(margin=0, h_spacing=14, v_spacing=4)
 
         self._spin_inner = QDoubleSpinBox()
-        self._spin_inner.setRange(-1e6, 1e6)
+        self._spin_inner.setRange(-_quant.SPIN_REAL_MAX, _quant.SPIN_REAL_MAX)
         _quant.configure_spinbox(self._spin_inner, "roi_inner_threshold_nm_per_nm")
         self._spin_inner.setValue(self._inner_threshold_nm_per_nm)
         self._spin_inner.setMinimumWidth(88)
@@ -320,7 +321,7 @@ class ROIWindow(QWidget):
         ctrl2.addWidget(LabeledControl("Rupture algorithm:", self._combo_rupture))
 
         self._spin_wb_widths = QSpinBox()
-        self._spin_wb_widths.setRange(1, 50)
+        self._spin_wb_widths.setRange(1, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._spin_wb_widths, "walk_back_fit_widths")
         self._spin_wb_widths.setValue(self._walk_back_fit_widths)
         self._spin_wb_widths.setToolTip(
@@ -331,7 +332,7 @@ class ROIWindow(QWidget):
                                        self._spin_wb_widths))
 
         self._spin_wb_multiple = QDoubleSpinBox()
-        self._spin_wb_multiple.setRange(0.0, 50.0)
+        self._spin_wb_multiple.setRange(0.0, _quant.SPIN_REAL_MAX)
         _quant.configure_spinbox(self._spin_wb_multiple, "walk_back_noise_multiple")
         self._spin_wb_multiple.setValue(self._walk_back_noise_multiple)
         self._spin_wb_multiple.setToolTip(
@@ -344,7 +345,7 @@ class ROIWindow(QWidget):
         # Muggeo segmented regression's own settings, live only while it is
         # the algorithm in force.  The combo positions are the stored indices.
         self._spin_mg_multiplier = QSpinBox()
-        self._spin_mg_multiplier.setRange(1, 20)
+        self._spin_mg_multiplier.setRange(1, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._spin_mg_multiplier,
                                  "muggeo_fit_window_multiplier")
         self._spin_mg_multiplier.setValue(self._muggeo_fit_window_multiplier)
@@ -393,14 +394,14 @@ class ROIWindow(QWidget):
         self._enable_rupture_settings()
 
         self._spin_prom = QDoubleSpinBox()
-        self._spin_prom.setRange(0.0, 10.0)
+        self._spin_prom.setRange(0.0, _quant.SPIN_REAL_MAX)
         _quant.configure_spinbox(self._spin_prom, "roi_prominence")
         self._spin_prom.setValue(self._prominence)
         self._spin_prom.editingFinished.connect(self._commit_prominence)
         ctrl2.addWidget(LabeledControl("Prominence:", self._spin_prom))
 
         self._spin_dist = QSpinBox()
-        self._spin_dist.setRange(1, 2000)
+        self._spin_dist.setRange(1, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._spin_dist, "roi_min_distance_pts")
         self._spin_dist.setValue(self._distance_pts)
         self._spin_dist.editingFinished.connect(self._commit_distance)

@@ -422,6 +422,14 @@ def quantize(key: str, stored_value: float) -> float:
     return round(q.to_stored(round(q.to_display(v), q.decimals)), 12)
 
 
+# The top of a range the user owns.  A spin box must have a maximum, so these
+# are the values that never bind: the largest a QSpinBox holds, and the value
+# the real-valued boxes already use for "unbounded".  The bottom of a range is
+# the method's own floor, set where the box is built.
+SPIN_INT_MAX = 2**31 - 1
+SPIN_REAL_MAX = 1e12
+
+
 def configure_spinbox(spin, key: str | None = None, *,
                       decimals: int | None = None,
                       suffix: bool = True) -> None:

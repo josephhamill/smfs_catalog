@@ -6,7 +6,7 @@
 # (at your option) any later version. See the LICENSE file in the
 # repository root, or <https://www.gnu.org/licenses/>.
 
-"""Focused guards for decomposition-window drag interactions."""
+"""Focused guards for decomposition-window interactions and control ranges."""
 
 from __future__ import annotations
 
@@ -101,3 +101,31 @@ def test_threshold_guides_remain_editable_without_landmarks():
     assert probe._thresh_retr.value() == dw._to_shown(0.75)
     assert probe._thresh_appr.visible
     assert probe._thresh_retr.visible
+
+
+def test_fit_and_baseline_regions_have_no_fixed_cap(tmp_path):
+    """The invOLS region and baseline width take any size their methods can use.
+
+    Each floor is the method's own: an offset of 0, a two-point line, a width
+    above 0 nm.  The top is the largest value the box can hold, so a long dwell
+    at full sample rate fits.
+    """
+    from PyQt6.QtWidgets import QApplication
+    _app = QApplication.instance() or QApplication([])  # named, so it outlives the window
+    db_path = str(tmp_path / "catalog.sqlite")
+    dw._db.initialise(db_path)
+    win = dw.DecompositionWindow(db_path)
+    try:
+        cases = [
+            (win._invols_offset_spinbox, "invols_offset_pts", 0, 60_000),
+            (win._invols_window_spinbox, "invols_window_pts", 2, 60_000),
+            (win._anchor_spinbox, "baseline_anchor_nm", 1, 5_000),
+        ]
+        for box, key, floor, above_old_cap in cases:
+            assert box.minimum() == floor, key
+            assert box.maximum() == dw._quant.SPIN_INT_MAX, key
+            box.setValue(above_old_cap)
+            assert box.value() == above_old_cap, key
+            assert dw._db.load_analysis_params(db_path)[key] == above_old_cap, key
+    finally:
+        win.close()

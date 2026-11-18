@@ -373,7 +373,8 @@ class PCAWindow(QMainWindow):
         ctrl = QHBoxLayout()
         ctrl.addWidget(QLabel("k:"))
         self._k_spin = QSpinBox()
-        self._k_spin.setRange(2, min(n, 10))
+        # K-means cannot have more clusters than curves.
+        self._k_spin.setRange(2, n)
         _quant.configure_spinbox(self._k_spin)
         self._k_spin.setValue(min(3, n))
         ctrl.addWidget(self._k_spin)

@@ -299,10 +299,9 @@ class _PlotPane(QWidget):
         ctrl = QHBoxLayout()
         ctrl.addWidget(QLabel("Bins:"))
         self._bins_spin = QSpinBox()
-        # The ceiling is deliberately huge. Whenever the range is
-        # automatic, bin count is the ONLY resolution knob, so a low cap caps
-        # the only control there is.
-        self._bins_spin.setRange(1, _hb.MAX_USER_BINS)
+        # No ceiling. Whenever the range is automatic, bin count is the ONLY
+        # resolution knob, so any cap caps the only control there is.
+        self._bins_spin.setRange(1, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._bins_spin)
         self._bins_spin.setValue(20)
         self._bins_spin.setToolTip(

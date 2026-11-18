@@ -95,15 +95,18 @@ class _PhysicalGridDialog(_GridDialog):
         return "F range:"
 
     def _range_spec(self) -> tuple[tuple[float, float, str], ...]:
-        # Real units on both axes, so one wide range and the phys_* keys —
-        # no widget code here, that lives once in _GridDialog.
-        return tuple((-5000.0, 5000.0, k) for k in
+        # Real units on both axes, so the phys_* keys — no widget code here,
+        # that lives once in _GridDialog.
+        lo, hi = -_quant.SPIN_REAL_MAX, _quant.SPIN_REAL_MAX
+        return tuple((lo, hi, k) for k in
                      ("phys_x_min", "phys_x_max", "phys_f_min", "phys_f_max"))
 
     def _add_extra_rows(self) -> None:
         self._f_star = QDoubleSpinBox()
-        self._f_star.setRange(1.0, 500.0)
         _quant.configure_spinbox(self._f_star, "phys_f_star")
+        # Floor: the smallest positive value the box shows.
+        self._f_star.setRange(10.0 ** -self._f_star.decimals(),
+                              _quant.SPIN_REAL_MAX)
         self._f_star.setValue(self._f_star_init)
 
         self._align = QComboBox()

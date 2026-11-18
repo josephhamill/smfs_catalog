@@ -58,7 +58,7 @@ _SMALL_FONT_PT = style.FONT_CAPTION_PT
 # Low cutoffs remain selectable because over-smoothing is a scientific choice
 # to report, not an invalid computation. Nyquist is a mathematical constraint
 # and is enforced by _refresh_cutoff_limits.
-_CUTOFF_VALUES: list[int] = [100, 200, 500, 1000, 1500, 2000, 3000, 4000, 5000]
+_CUTOFF_VALUES: list[int] = [100, 200, 300, 400, 500, 1000, 2000, 5000, 10000]
 
 # Detection-threshold display and storage conversions are defined by
 # quantities.py so controls, plots, profiles, and exports use the same units.
@@ -240,7 +240,7 @@ class DecompositionWindow(QWidget):
             self._acq_filter_label))
 
         self._trim_spinbox = QSpinBox()
-        self._trim_spinbox.setRange(0, 9999)   # upper bound set dynamically per curve
+        self._trim_spinbox.setRange(0, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._trim_spinbox, "turnaround_trim_pts")
         self._trim_spinbox.setValue(self._trim_pts)
         self._trim_spinbox.setToolTip(
@@ -253,8 +253,11 @@ class DecompositionWindow(QWidget):
         ctrl_layout.addWidget(LabeledControl("Trim:", self._trim_spinbox))
 
         self._var_win_spinbox = QDoubleSpinBox()
-        self._var_win_spinbox.setRange(0.1, 50.0)
         _quant.configure_spinbox(self._var_win_spinbox, "var_window_ms")
+        # Floor: the smallest positive value the box shows; the method itself
+        # never uses fewer than three samples.
+        self._var_win_spinbox.setRange(
+            10.0 ** -self._var_win_spinbox.decimals(), _quant.SPIN_REAL_MAX)
         self._var_win_spinbox.setValue(self._var_window_ms)
         self._var_win_spinbox.setToolTip(
             "Length of the moving-variance window that finds contact and "
@@ -268,7 +271,7 @@ class DecompositionWindow(QWidget):
             LabeledControl("Var. win:", self._var_win_spinbox))
 
         self._thresh_appr_spinbox = QDoubleSpinBox()
-        self._thresh_appr_spinbox.setRange(_to_shown(1e-4), _to_shown(1e3))
+        self._thresh_appr_spinbox.setRange(0.0, _quant.SPIN_REAL_MAX)
         _seed_threshold_box(self._thresh_appr_spinbox, "detection_threshold_appr",
                             self._thresh_appr_val)
         # Wide enough for a widened box: a threshold written by a drag
@@ -286,7 +289,7 @@ class DecompositionWindow(QWidget):
             "Thr. appr:", self._thresh_appr_spinbox))
 
         self._thresh_retr_spinbox = QDoubleSpinBox()
-        self._thresh_retr_spinbox.setRange(_to_shown(1e-4), _to_shown(1e3))
+        self._thresh_retr_spinbox.setRange(0.0, _quant.SPIN_REAL_MAX)
         _seed_threshold_box(self._thresh_retr_spinbox, "detection_threshold_retr",
                             self._thresh_retr_val)
         self._thresh_retr_spinbox.setToolTip(
@@ -301,7 +304,7 @@ class DecompositionWindow(QWidget):
             "Thr. retr:", self._thresh_retr_spinbox))
 
         self._anchor_spinbox = QSpinBox()
-        self._anchor_spinbox.setRange(10, 2000)
+        self._anchor_spinbox.setRange(1, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._anchor_spinbox, "baseline_anchor_nm")
         self._anchor_spinbox.setValue(int(round(self._anchor_nm)))
         self._anchor_spinbox.setToolTip(
@@ -311,7 +314,8 @@ class DecompositionWindow(QWidget):
             "begins at its inner boundary.\n\n"
             "It must sit entirely after the molecule has let go. Too short and "
             "the baseline statistics are noisy; too long and the region starts "
-            "including real signal. The fitted offset and RMS are shown beside it.")
+            "including real signal. The fitted offset and RMS are shown beside it. "
+            "A width longer than the retract uses the whole retract.")
         self._anchor_spinbox.valueChanged.connect(self._on_anchor_spinbox)
 
         self._baseline_label = QLabel("")
@@ -324,20 +328,23 @@ class DecompositionWindow(QWidget):
             "Baseline width:", self._anchor_spinbox, self._baseline_label))
 
         self._invols_offset_spinbox = QSpinBox()
-        self._invols_offset_spinbox.setRange(0, 9999)
+        self._invols_offset_spinbox.setRange(0, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._invols_offset_spinbox, "invols_offset_pts")
         self._invols_offset_spinbox.setValue(self._invols_offset_pts)
         self._invols_offset_spinbox.setToolTip(
             "Samples skipped back from the turnaround before the invOLS fit "
             "window begins. The deepest-contact samples carry piezo ringing and "
             "any sample deformation at peak load, both of which bend the line "
-            "that converts deflection into force.")
+            "that converts deflection into force.\n\n"
+            "If the offset and window together reach past the start of the "
+            "approach, no slope can be fitted and the curve is not analysed: "
+            "its readouts show \"—\".")
         self._invols_offset_spinbox.valueChanged.connect(self._on_invols_offset_spinbox)
         ctrl_layout.addWidget(LabeledControl(
             "invOLS off:", self._invols_offset_spinbox))
 
         self._invols_window_spinbox = QSpinBox()
-        self._invols_window_spinbox.setRange(10, 9999)
+        self._invols_window_spinbox.setRange(2, _quant.SPIN_INT_MAX)
         _quant.configure_spinbox(self._invols_window_spinbox, "invols_window_pts")
         self._invols_window_spinbox.setValue(self._invols_window_pts)
         self._invols_window_spinbox.setToolTip(
@@ -345,7 +352,8 @@ class DecompositionWindow(QWidget):
             "from the offset above toward shallower contact.\n\n"
             "This slope is what turns raw deflection into force, so it scales "
             "every force in the app. The fitted slope and RMS residual are shown "
-            "beside it.")
+            "beside it. If the window reaches past the start of the approach, "
+            "no slope can be fitted and the curve is not analysed.")
         self._invols_window_spinbox.valueChanged.connect(self._on_invols_window_spinbox)
 
         self._invols_label = QLabel("")
@@ -812,15 +820,16 @@ class DecompositionWindow(QWidget):
             return
         n_retr     = len(self._current_curve.piezo_retr)
         pos        = self._anchor_line.value()
-        # Clamp to valid retract range (leave at least 10 pts on each side)
-        pos        = max(self._n_appr + 1, min(self._n_appr + n_retr - 10, pos))
+        # Keep the line on the retract, with the two samples the baseline's
+        # line fit needs inside the region.
+        pos        = max(self._n_appr + 1, min(self._n_appr + n_retr - 2, pos))
         n_anchor   = (self._n_appr + n_retr) - int(round(pos))
-        n_anchor   = max(10, min(n_retr - 1, n_anchor))
+        n_anchor   = max(2, min(n_retr - 1, n_anchor))
 
         piezo_retr  = self._current_curve.piezo_retr
         retr_range  = abs(float(piezo_retr[-1]) - float(piezo_retr[0]))
         anchor_nm   = (n_anchor / n_retr) * retr_range if n_retr > 0 else 150.0
-        anchor_nm   = max(10.0, min(2000.0, anchor_nm))
+        anchor_nm   = max(1.0, anchor_nm)   # the box's whole-nanometre floor
 
         self._anchor_nm = anchor_nm
         self._anchor_spinbox.blockSignals(True)
@@ -988,8 +997,6 @@ class DecompositionWindow(QWidget):
         idx_appr      = np.arange(n_appr)
         idx_retr      = np.arange(n_appr, n_appr + n_retr)
         _trim_pts     = self._trim_pts
-
-        self._trim_spinbox.setMaximum(min(n_appr, n_retr))
 
         win_pts  = _ms_to_pts(self._var_window_ms, dc.sample_rate_hz)
         var_appr = _moving_variance(dc.high_appr, win_pts)

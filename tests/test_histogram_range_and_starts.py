@@ -115,14 +115,13 @@ def test_saved_fit_preserves_non_numeric_gof_provenance_and_configuration():
 
 # ── Histogram (c) ceilings ──────────────────────────────────────────────────────
 
-def test_the_user_bin_ceiling_is_single_sourced_and_large():
-    assert hb.MAX_USER_BINS >= 20_000
-    assert hb.MAX_AUTO_BINS < hb.MAX_USER_BINS, (
-        "the automatic rule's taste limit and the user's ceiling are different "
-        "questions and must not collapse into one number"
+def test_a_person_may_ask_for_any_number_of_bins():
+    assert not hasattr(hb, "MAX_USER_BINS"), (
+        "the automatic rule's taste limit is not a ceiling on what a person "
+        "may ask for"
     )
-    assert "_hb.MAX_USER_BINS" in SRC["dist_fit_window.py"], (
-        "the spin box must take its ceiling from the constant, not retype one"
+    assert "_quant.SPIN_INT_MAX" in SRC["dist_fit_window.py"], (
+        "the bins box must take its top from the shared no-limit value"
     )
 
 

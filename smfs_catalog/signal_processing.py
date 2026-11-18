@@ -157,7 +157,8 @@ def fit_retract_baseline(
 
     total_range = abs(float(piezo[-1]) - float(piezo[0]))
     frac     = min(anchor_nm / total_range, 1.0) if total_range > 0 else 0.15
-    n_anchor = min(n, max(10, int(round(frac * n))))
+    # Two samples: the fewest the diagnostic line fit below can use.
+    n_anchor = min(n, max(2, int(round(frac * n))))
 
     lo, hi = n - n_anchor, n
     anchor_defl  = defl[lo:hi]
@@ -373,8 +374,12 @@ def _moving_variance(signal: np.ndarray, window_pts: int) -> np.ndarray:
 
 # ── 1e. _ms_to_pts ────────────────────────────────────────────────────────────
 
-def _ms_to_pts(ms: float, sample_rate_hz: float, min_pts: int = 5) -> int:
-    """Convert a duration in ms to an odd number of samples (>= min_pts)."""
+def _ms_to_pts(ms: float, sample_rate_hz: float, min_pts: int = 3) -> int:
+    """Convert a duration in ms to an odd number of samples (>= min_pts).
+
+    The default floor is 3: the smallest odd, centred window whose variance is
+    not zero by construction.
+    """
     if not np.isfinite(ms) or ms <= 0:
         raise ValueError(f"ms must be positive and finite, got {ms}")
     if not np.isfinite(sample_rate_hz) or sample_rate_hz <= 0:

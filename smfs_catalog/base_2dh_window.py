@@ -177,8 +177,9 @@ class _GridDialog(QDialog):
         """(lo, hi, quantities_key) for the x-min/x-max/F-min/F-max spins, in
         that order.  A subclass whose axes carry different units overrides ONLY
         this, leaving widget construction shared."""
-        return ((-10.0, 10.0, "wlc_x_min"), (-10.0, 10.0, "wlc_x_max"),
-                (-50.0, 200.0, "wlc_f_min"), (-50.0, 200.0, "wlc_f_max"))
+        lo, hi = -_quant.SPIN_REAL_MAX, _quant.SPIN_REAL_MAX
+        return tuple((lo, hi, k) for k in
+                     ("wlc_x_min", "wlc_x_max", "wlc_f_min", "wlc_f_max"))
 
     def _make_range_spins(self, x_min, x_max, f_min, f_max):
         """The only place a 2DH range spin box is constructed."""

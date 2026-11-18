@@ -49,21 +49,18 @@ ROBUST_LO_PCT = 1.0     # lower percentile for the robust axis range
 ROBUST_HI_PCT = 99.0    # upper percentile for the robust axis range
 MIN_BINS      = 10
 
-# Two ceilings answer two different questions.
-#
 # MAX_AUTO_BINS is how many bins the AUTOMATIC rule may choose for itself.  It
 # is a taste limit on a heuristic: past this the Freedman-Diaconis width is
 # resolving noise, and nobody asked for it.
 #
-# MAX_USER_BINS is how many a PERSON may ask for, and it is deliberately huge.
-# Bin count is the only resolution knob whenever the range is chosen
-# automatically, so capping it low caps the only control the user has: "if it
-# decides way too wide and I need resolution, I can only get this with more
-# bins — my only knob."  Binning finely, exporting, and zooming into the range
-# that matters afterwards is a legitimate way to work.
+# A PERSON may ask for any number of bins.  Bin count is the only resolution
+# knob whenever the range is chosen automatically, so any cap caps the only
+# control the user has: "if it decides way too wide and I need resolution, I
+# can only get this with more bins — my only knob."  Binning finely,
+# exporting, and zooming into the range that matters afterwards is a
+# legitimate way to work.
 #
 MAX_AUTO_BINS = 60
-MAX_USER_BINS = 20_000
 
 
 @dataclass(frozen=True)
@@ -157,7 +154,7 @@ def user_bins(values: np.ndarray, n_bins: int,
     if v.size == 0:
         return None
 
-    n_bins = int(np.clip(int(n_bins), 1, MAX_USER_BINS))
+    n_bins = max(1, int(n_bins))
     lo = float(v.min()) if lo is None else float(lo)
     hi = float(v.max()) if hi is None else float(hi)
     if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:

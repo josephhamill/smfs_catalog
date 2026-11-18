@@ -226,7 +226,8 @@ class _ModelPane(QWidget):
         k_row = QHBoxLayout()
         k_row.addWidget(QLabel("Components K:"))
         self._k_spin = QSpinBox()
-        self._k_spin.setRange(1, 10)
+        # A mixture cannot have more components than data points.
+        self._k_spin.setRange(1, max(1, len(self._xy)))
         _quant.configure_spinbox(self._k_spin)
         self._k_spin.setValue(2)
         self._k_spin.setToolTip(
