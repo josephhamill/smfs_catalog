@@ -540,6 +540,7 @@ def find_outer_events(
     hi: int,
     onset_thr: float,
     outer_threshold: float,
+    onset_window_nm: float = 0.0,
 ) -> list[OuterEventBoundary]:
     """Find coarse onset→terminal-rupture events, scanning baseline→surface.
 
@@ -566,7 +567,7 @@ def find_outer_events(
         terminal_idx = run_lo + int(np.argmax(d1[run_lo:run_hi + 1]))
 
         onset_idx = find_onset(
-            level, piezo, terminal_idx, lo, onset_thr,
+            level, piezo, terminal_idx, lo, onset_thr, onset_window_nm,
         ).onset_idx
         if onset_idx < 0:
             i = run_lo - 1
@@ -598,6 +599,7 @@ def build_curve_events(
     prominence:      float = 0.1,
     distance_pts:    int   = 25,
     outer_events:    list[OuterEventBoundary] | None = None,
+    onset_window_nm: float = 0.0,
 ) -> CurveEvents:
     """
     Assemble the full ROI/rupture/segment geometry for one curve.
@@ -631,7 +633,7 @@ def build_curve_events(
 
     boundaries = outer_events if outer_events is not None else find_outer_events(
         d1, level, piezo, lo=lo, hi=hi, onset_thr=onset_thr,
-        outer_threshold=outer,
+        outer_threshold=outer, onset_window_nm=onset_window_nm,
     )
     for boundary in boundaries:
         onset_idx = boundary.onset_idx

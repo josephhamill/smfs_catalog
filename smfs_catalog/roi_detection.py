@@ -220,6 +220,7 @@ def find_onset(
     rupture_idx:           int,
     post_snapoff_mask_idx: int,
     threshold_nm:          float,
+    window_nm:             float = 0.0,
 ) -> OnsetSearchResult:
     """
     Locate the molecular-event onset by walking the level signal — the
@@ -235,6 +236,14 @@ def find_onset(
       3. The first index where level[i] rises back to >= threshold_nm is
          the onset.
 
+    ONSET WINDOW.  With window_nm == 0 the threshold is one strict line (the
+    two states above flip at the same level).  With window_nm > 0 the line
+    becomes the band [threshold_nm, threshold_nm + window_nm]: the scan enters
+    the dip when level < threshold_nm, and the onset is the first index, going
+    leftward, where level has climbed out through the TOP of the band
+    (>= threshold_nm + window_nm).  A noisy level that wanders up into the band
+    and back down no longer ends the dip early; only leaving the band does.
+
     Threshold is signed (typical default -0.2 nm — deflection is pulled
     toward the surface during a WLC event).  The Bessel cutoff sets how much
     noise the level signal carries, and so how readily noise crosses the
@@ -247,6 +256,10 @@ def find_onset(
     if rupture_idx < 0 or rupture_idx >= n or n != len(piezo):
         return OnsetSearchResult(-1, float('nan'))
 
+    window_nm = float(window_nm)
+    if not (window_nm >= 0.0 and np.isfinite(window_nm)):
+        raise ValueError(f"onset window must be a finite, non-negative width, got {window_nm}")
+    upper_nm = threshold_nm + window_nm
     lo = max(0, post_snapoff_mask_idx)
     state_below = False
 
@@ -256,7 +269,7 @@ def find_onset(
             if v < threshold_nm:
                 state_below = True
         else:
-            if v >= threshold_nm:
+            if v >= upper_nm:
                 return OnsetSearchResult(
                     onset_idx      = i,
                     onset_piezo_nm = float(piezo[i]),

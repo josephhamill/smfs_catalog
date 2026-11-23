@@ -12,6 +12,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDoubleSpinBox,
+    QPushButton,
     QSpinBox,
     QHBoxLayout,
     QLabel,
@@ -150,6 +151,7 @@ class DecompositionWindow(QWidget):
         self._anchor_nm         = _ps['baseline_anchor_nm']
         self._invols_offset_pts = int(_ps['invols_offset_pts'])
         self._invols_window_pts = int(_ps['invols_window_pts'])
+        self._invols_override = float(_ps['invols_override_nm_per_v'])
 
         self.setWindowTitle("SMFS — decomposition")
         self.setWindowFlag(Qt.WindowType.Window)
@@ -348,6 +350,30 @@ class DecompositionWindow(QWidget):
             "beside it.")
         self._invols_window_spinbox.valueChanged.connect(self._on_invols_window_spinbox)
 
+        # One user-entered sensitivity for EVERY curve (profile parameter).
+        # 0 keeps the default: fit the slope per curve from the window above.
+        self._invols_nmv_spinbox = QDoubleSpinBox()
+        self._invols_nmv_spinbox.setRange(0.0, 100000.0)
+        _quant.configure_spinbox(self._invols_nmv_spinbox, "invols_override_nm_per_v")
+        self._invols_nmv_spinbox.setSpecialValueText("fit per curve")
+        self._invols_nmv_spinbox.setValue(self._invols_override)
+        self._invols_nmv_spinbox.setToolTip(
+            "Deflection sensitivity (invOLS) in nm/V, applied to ALL curves.\n\n"
+            "Leave at 'fit per curve' (0) to fit the sensitivity on each curve's "
+            "approach contact region. Any value above 0 replaces that fit for "
+            "every curve: deflection is rescaled by this value relative to the "
+            "instrument invOLS recorded in the file.")
+        self._invols_nmv_spinbox.valueChanged.connect(self._on_invols_nmv_spinbox)
+        ctrl_layout.addWidget(LabeledControl("invOLS (nm/V):", self._invols_nmv_spinbox))
+
+        # Per-curve window: drag the shaded band on the approach plot; it is
+        # stored for THIS curve only and the profile window stays the default.
+        self._invols_reset_btn = QPushButton("Reset invOLS window (this curve)")
+        self._invols_reset_btn.setToolTip(
+            "Drop this curve's manual invOLS window and use the profile window.")
+        self._invols_reset_btn.clicked.connect(self._on_invols_window_reset)
+        ctrl_layout.addWidget(self._invols_reset_btn)
+
         self._invols_label = QLabel("")
         _iol_font = self._invols_label.font()
         _iol_font.setPointSize(_SMALL_FONT_PT)
@@ -478,6 +504,15 @@ class DecompositionWindow(QWidget):
         self._invols_fit_line = self._plt_low.plot(
             [], [], pen=style.model_pen(style.INK, alpha=255)
         )
+
+        # Draggable fit window for THIS curve (approach side, sample indices).
+        self._invols_region = pg.LinearRegionItem(
+            values=(0, 1), movable=True,
+            brush=pg.mkBrush(128, 128, 128, 40))
+        self._invols_region.setZValue(-5)
+        self._invols_region.setVisible(False)
+        self._invols_region.sigRegionChangeFinished.connect(self._on_invols_region_moved)
+        self._plt_low.addItem(self._invols_region)
 
         # ── Baseline fit overlay — low plot, retract anchor region ──────────
         # Same idea as the invOLS line above: bold black segment through the
@@ -790,6 +825,45 @@ class DecompositionWindow(QWidget):
             self.update_curve(self._current_curve)
         self.analysis_params_changed.emit()
 
+    def _on_invols_nmv_spinbox(self, value: float) -> None:
+        self._invols_override = float(value)
+        _db.update_analysis_param('invols_override_nm_per_v', float(value), self._db_path)
+        self._save_user_profile()
+        if self._current_curve is not None:
+            self.update_curve(self._current_curve)
+        self.analysis_params_changed.emit()
+
+    def _current_file_id(self):
+        if self._current_curve is None:
+            return None
+        return _db.get_file_id(self._current_curve.path, self._db_path)
+
+    def _on_invols_region_moved(self) -> None:
+        """Store the dragged band as this curve's own invOLS fit window."""
+        fid = self._current_file_id()
+        n = self._n_appr
+        if fid is None or n <= 0 or self._invols_override:
+            return
+        r0, r1 = self._invols_region.getRegion()
+        lo = max(0, int(round(min(r0, r1))))
+        hi = min(n, int(round(max(r0, r1))) + 1)
+        if hi - lo < 10:        # same floor as the window spin box
+            lo = max(0, hi - 10)
+            hi = lo + 10
+            if hi > n:
+                return
+        _db.set_invols_window_override(fid, n - hi, hi - lo, self._db_path)
+        self.update_curve(self._current_curve)
+        self.analysis_params_changed.emit()
+
+    def _on_invols_window_reset(self) -> None:
+        fid = self._current_file_id()
+        if fid is None:
+            return
+        _db.set_invols_window_override(fid, None, None, self._db_path)
+        self.update_curve(self._current_curve)
+        self.analysis_params_changed.emit()
+
     def _on_invols_window_spinbox(self, value: int) -> None:
         self._invols_window_pts = int(value)
         _db.update_analysis_param('invols_window_pts', float(value), self._db_path)
@@ -902,6 +976,7 @@ class DecompositionWindow(QWidget):
         self._anchor_nm         = _f("baseline_anchor_nm", self._anchor_nm)
         self._invols_offset_pts = int(_f("invols_offset_pts", self._invols_offset_pts))
         self._invols_window_pts = int(_f("invols_window_pts", self._invols_window_pts))
+        self._invols_override   = _f("invols_override_nm_per_v", self._invols_override)
 
         self._cutoff_slider.blockSignals(True)
         self._cutoff_slider.setValue(self._cutoff_index(self._cutoff_hz))
@@ -914,6 +989,7 @@ class DecompositionWindow(QWidget):
             (self._anchor_spinbox,        int(round(self._anchor_nm))),
             (self._invols_offset_spinbox, self._invols_offset_pts),
             (self._invols_window_spinbox, self._invols_window_pts),
+            (self._invols_nmv_spinbox,    self._invols_override),
         ):
             w.blockSignals(True)
             w.setValue(val)
@@ -955,6 +1031,7 @@ class DecompositionWindow(QWidget):
             "baseline_anchor_nm":       self._anchor_nm,
             "invols_offset_pts":        float(self._invols_offset_pts),
             "invols_window_pts":        float(self._invols_window_pts),
+            "invols_override_nm_per_v": float(self._invols_override),
         }, self._db_path)
 
     def update_curve(self, curve: "ForceCurve") -> None:
@@ -1031,6 +1108,7 @@ class DecompositionWindow(QWidget):
                 detection_threshold_retr=self._thresh_retr_val,
                 invols_offset_pts=self._invols_offset_pts,
                 invols_window_pts=self._invols_window_pts,
+                invols_override_nm_per_v=self._invols_override,
             )
             live_params = pipeline_params_from(preview)
             file_id = _db.get_file_id(curve.path, self._db_path)
@@ -1074,9 +1152,24 @@ class DecompositionWindow(QWidget):
         # a curve whose invols_slope was cached before diagnostics started
         # being persisted; it clears itself the next time that curve is
         # re-analysed under the current params.
-        if result is not None and not np.isnan(result.invols_slope) \
+        self._invols_region.setVisible(False)
+        self._invols_reset_btn.setEnabled(False)
+        if result is not None and not np.isnan(result.invols_slope) and self._invols_override:
+            # A user value is in force: the slope is I/U, not a fit, so there is
+            # no fit line or window to show.
+            self._invols_fit_line.setData([], [])
+            self._invols_label.setText(
+                f"invOLS fixed = {_q('invols_override_nm_per_v', self._invols_override, with_unit=True)}")
+        elif result is not None and not np.isnan(result.invols_slope) \
                 and stage1 is not None and stage1.invols_fit_lo_idx is not None:
             lo, hi = stage1.invols_fit_lo_idx, stage1.invols_fit_hi_idx
+            _own = _db.get_invols_window_override(
+                _db.get_file_id(curve.path, self._db_path) or -1, self._db_path)
+            self._invols_region.blockSignals(True)
+            self._invols_region.setRegion((lo, hi - 1))
+            self._invols_region.blockSignals(False)
+            self._invols_region.setVisible(True)
+            self._invols_reset_btn.setEnabled(_own is not None)
             x_lo_piezo = float(curve.piezo_appr[lo])
             x_hi_piezo = float(curve.piezo_appr[hi - 1])
             y_lo = result.invols_slope * x_lo_piezo + stage1.invols_intercept
@@ -1085,6 +1178,7 @@ class DecompositionWindow(QWidget):
             self._invols_label.setText(
                 f"invOLS slope={_q('invols_slope', result.invols_slope)}  "
                 f"RMS={_q('invols_rms', stage1.invols_rms, with_unit=True)}"
+                + ("  [this curve's window]" if _own is not None else "")
             )
         elif result is not None and not np.isnan(result.invols_slope):
             self._invols_fit_line.setData([], [])
@@ -1161,6 +1255,8 @@ class DecompositionWindow(QWidget):
             self._invols_fit_line, self._baseline_fit_line,
         ):
             item.setData([], [])
+        self._invols_region.setVisible(False)
+        self._invols_reset_btn.setEnabled(False)
         self._invols_label.setText("")
         self._baseline_label.setText("")
         for line in (

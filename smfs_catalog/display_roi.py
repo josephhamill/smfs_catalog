@@ -169,6 +169,7 @@ class ROIWindow(QWidget):
         self._inner_threshold_nm_per_nm = float(_ps['roi_inner_threshold_nm_per_nm'])
         self._post_snapoff_mask_nm      = float(_ps['roi_post_snapoff_mask_nm'])
         self._onset_threshold_nm        = float(_ps['roi_onset_threshold_nm'])
+        self._onset_window_nm           = float(_ps['roi_onset_window_nm'])
 
         # Detector: build_curve_events with the d1-threshold vs find_peaks inner
         # detector — the exact same function the batch worker calls (see
@@ -261,6 +262,21 @@ class ROIWindow(QWidget):
         self._spin_onset.setMinimumWidth(88)
         self._spin_onset.editingFinished.connect(self._commit_onset)
         ctrl.addWidget(LabeledControl("Onset threshold:", self._spin_onset))
+
+        self._spin_onset_win = QDoubleSpinBox()
+        self._spin_onset_win.setRange(0.0, 1e6)
+        _quant.configure_spinbox(self._spin_onset_win, "roi_onset_window_nm")
+        self._spin_onset_win.setValue(self._onset_window_nm)
+        self._spin_onset_win.setMinimumWidth(88)
+        self._spin_onset_win.setToolTip(
+            "Width of the onset window, drawn as a shaded band above the onset "
+            "threshold line.\n\n0 = the strict line: the onset is the first "
+            "point back at or above the threshold.\nAbove 0: the onset is only "
+            "declared once the level climbs out through the TOP of the band "
+            "(threshold + width), so noise that wanders into the band does not "
+            "end the dip early.")
+        self._spin_onset_win.editingFinished.connect(self._commit_onset_window)
+        ctrl.addWidget(LabeledControl("Onset window:", self._spin_onset_win))
 
         _ctrl_bar = QWidget()
         _ctrl_bar.setLayout(ctrl)
@@ -441,6 +457,18 @@ class ROIWindow(QWidget):
         )
         self._raw_plot.addItem(self._thresh_line_onset)
 
+        # The onset WINDOW: a shaded band from the threshold line up to
+        # threshold + width.  The onset is declared where the level climbs out
+        # through the top of it.  Width 0 collapses it to the line.
+        self._onset_band = pg.LinearRegionItem(
+            values=(self._onset_threshold_nm,
+                    self._onset_threshold_nm + self._onset_window_nm),
+            orientation='horizontal', movable=False,
+            brush=pg.mkBrush(*_COLOR_ONSET[:3], 50))
+        self._onset_band.setZValue(-5)
+        self._raw_plot.addItem(self._onset_band)
+        self._refresh_onset_band()
+
         # ── Row 1: d1 (nm deflection per nm piezo) ───────────────────────────
         self._d1_plot = glw.addPlot(row=1, col=0)
         # d¹ is a ratio (nm/nm): not an SI unit, never prefixed — and the two
@@ -619,6 +647,7 @@ class ROIWindow(QWidget):
                 roi_inner_threshold_nm_per_nm=self._inner_threshold_nm_per_nm,
                 roi_post_snapoff_mask_nm=self._post_snapoff_mask_nm,
                 roi_onset_threshold_nm=self._onset_threshold_nm,
+                roi_onset_window_nm=self._onset_window_nm,
                 roi_detector_mode_idx=MODE_TO_STORED_IDX[self._detector_mode],
                 roi_prominence=self._prominence,
                 roi_min_distance_pts=self._distance_pts,
@@ -663,6 +692,7 @@ class ROIWindow(QWidget):
         self._thresh_line_onset.blockSignals(True)
         self._thresh_line_onset.setValue(self._onset_threshold_nm)
         self._thresh_line_onset.blockSignals(False)
+        self._refresh_onset_band()
 
         self._frame_d1(sigs.d1)
 
@@ -1001,6 +1031,7 @@ class ROIWindow(QWidget):
                                              self._inner_threshold_nm_per_nm)
         self._post_snapoff_mask_nm      = _f("roi_post_snapoff_mask_nm", self._post_snapoff_mask_nm)
         self._onset_threshold_nm        = _f("roi_onset_threshold_nm", self._onset_threshold_nm)
+        self._onset_window_nm           = _f("roi_onset_window_nm", self._onset_window_nm)
         # Decode via DETECTOR_BY_IDX (the on-disk scheme shared with the
         # worker), not by _DETECTOR_MODES list position — those are not the
         # same numbering; "single (legacy)" is not in that list.
@@ -1025,6 +1056,7 @@ class ROIWindow(QWidget):
             (self._spin_inner,     self._inner_threshold_nm_per_nm),
             (self._spin_mask,      self._post_snapoff_mask_nm),
             (self._spin_onset,     self._onset_threshold_nm),
+            (self._spin_onset_win, self._onset_window_nm),
             (self._spin_prom,      self._prominence),
             (self._spin_dist,      self._distance_pts),
             (self._spin_wb_widths,   self._walk_back_fit_widths),
@@ -1068,6 +1100,7 @@ class ROIWindow(QWidget):
             "roi_inner_threshold_nm_per_nm": float(self._inner_threshold_nm_per_nm),
             "roi_post_snapoff_mask_nm":      float(self._post_snapoff_mask_nm),
             "roi_onset_threshold_nm":        float(self._onset_threshold_nm),
+            "roi_onset_window_nm":           float(self._onset_window_nm),
             "roi_detector_mode_idx":         float(
                 MODE_TO_STORED_IDX.get(self._detector_mode, 1)),
             "roi_prominence":                float(self._prominence),
@@ -1179,9 +1212,22 @@ class ROIWindow(QWidget):
         self._save_user_profile()
         self._recompute_current()
 
+    def _refresh_onset_band(self) -> None:
+        self._onset_band.setRegion((self._onset_threshold_nm,
+                                    self._onset_threshold_nm + self._onset_window_nm))
+        self._onset_band.setVisible(self._onset_window_nm > 0)
+
+    def _commit_onset_window(self) -> None:
+        self._onset_window_nm = float(self._spin_onset_win.value())
+        _db.update_analysis_param('roi_onset_window_nm', self._onset_window_nm, self._db_path)
+        self._refresh_onset_band()
+        self._save_user_profile()
+        self._recompute_current()
+
     def _preview_onset(self, value: float) -> None:
         self._onset_threshold_nm = float(value)
         self._spin_onset.setValue(value)
+        self._refresh_onset_band()
 
     def _commit_onset(self) -> None:
         self._onset_threshold_nm = float(self._spin_onset.value())

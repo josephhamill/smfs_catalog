@@ -23,11 +23,19 @@ class AnalysisParams(Mapping[str, float]):
     baseline_anchor_nm: float = 150.0
     invols_offset_pts: int = 50
     invols_window_pts: int = 200
+    # User-entered deflection sensitivity (nm/V).  0 = off: fit the invOLS slope
+    # per curve from the approach contact region (offset/window above).  > 0 =
+    # use this one value for EVERY curve instead of the per-curve fit.
+    invols_override_nm_per_v: float = 0.0
     roi_window_pts: int = 31
     roi_threshold_nm_per_nm: float = 10.0
     roi_inner_threshold_nm_per_nm: float = 9.0
     roi_post_snapoff_mask_nm: float = 100.0
     roi_onset_threshold_nm: float = -0.2
+    # Width (nm) of the onset WINDOW above the threshold line.  0 = the strict
+    # single line.  > 0: the excursion is entered below the threshold and the
+    # onset is only declared once the level climbs past threshold + width.
+    roi_onset_window_nm: float = 0.0
     roi_detector_mode_idx: int = 0
     roi_prominence: float = 0.1
     roi_min_distance_pts: int = 25

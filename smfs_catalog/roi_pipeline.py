@@ -85,6 +85,7 @@ class EventParams:
     inner_threshold:   float     # inner sub-event threshold (<= d1_threshold)
     post_mask_nm:      float
     onset_thr:         float
+    onset_window_nm:   float
     detector:          str
     prominence:        float
     distance_pts:      int
@@ -94,6 +95,7 @@ class EventParams:
     walk_back_noise_multiple: float
     invols_offset_pts: int
     invols_window_pts: int
+    invols_override_nm_per_v: float = 0.0
 
 
 def event_params_from(
@@ -126,6 +128,7 @@ def event_params_from(
         ),
         post_mask_nm=params.roi_post_snapoff_mask_nm,
         onset_thr=params.roi_onset_threshold_nm,
+        onset_window_nm=params.roi_onset_window_nm,
         detector          = det,
         prominence=params.roi_prominence,
         distance_pts=params.roi_min_distance_pts,
@@ -135,6 +138,7 @@ def event_params_from(
         walk_back_noise_multiple=params.walk_back_noise_multiple,
         invols_offset_pts=params.invols_offset_pts,
         invols_window_pts=params.invols_window_pts,
+        invols_override_nm_per_v=params.invols_override_nm_per_v,
     )
 
 
@@ -360,7 +364,8 @@ def compute_curve_events_coords(
         events = build_curve_events(
             sigs.d1, sigs.low, sigs.piezo,
             lo=lo_band, hi=hi_band,
-            onset_thr=ep.onset_thr, detector=ep.detector,
+            onset_thr=ep.onset_thr, onset_window_nm=ep.onset_window_nm,
+            detector=ep.detector,
             outer_threshold=ep.d1_threshold, inner_threshold=ep.inner_threshold,
             prominence=ep.prominence, distance_pts=ep.distance_pts,
             outer_events=(stage1.outer_events if stage1 is not None else None),
@@ -376,9 +381,12 @@ def compute_curve_events_coords(
             inv = float(_cv)
         else:
             try:
-                _fit = fit_approach_invols(
-                    dc.low_appr, curve.piezo_appr, ep.invols_offset_pts, ep.invols_window_pts,
-                )
+                from .curve_analysis import compute_invols, invols_window_for
+                _off, _win = invols_window_for(
+                    file_id, ep.invols_offset_pts, ep.invols_window_pts,
+                    db_path, conn=conn)
+                _fit = compute_invols(
+                    curve, dc.low_appr, _off, _win, ep.invols_override_nm_per_v)
                 inv = _fit.slope
                 # This is a real fresh computation (neither stage1 nor the DB
                 # cache had it).  Persist what you compute: write it and

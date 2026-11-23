@@ -68,8 +68,10 @@ class _PipelineParams:
     roi_d1_thr: float
     roi_post_mask: float
     roi_onset_thr: float
+    roi_onset_window: float
     invols_offset_pts: int
     invols_window_pts: int
+    invols_override_nm_per_v: float
     params_bl: str
     params_cd: str
     params_roi: str
@@ -94,10 +96,12 @@ def pipeline_params_from(
     thresh_retr = _ps.detection_threshold_retr
     invols_offset_pts = _ps.invols_offset_pts
     invols_window_pts = _ps.invols_window_pts
+    invols_override = _ps.invols_override_nm_per_v
     roi_win_pts = _ps.roi_window_pts
     roi_d1_thr = _ps.roi_threshold_nm_per_nm
     roi_post_mask = _ps.roi_post_snapoff_mask_nm
     roi_onset_thr = _ps.roi_onset_threshold_nm
+    roi_onset_window = _ps.roi_onset_window_nm
     # These are read by roi_pipeline.event_params_from (the multi-event
     # finder _persist_multi_event_roi runs downstream), so they belong in
     # params_roi: changing one must invalidate the verdict fast-path cache, or
@@ -132,6 +136,7 @@ def pipeline_params_from(
         "roi_threshold_nm_per_nm":  float(roi_d1_thr),
         "roi_post_snapoff_mask_nm": float(roi_post_mask),
         "roi_onset_threshold_nm":   float(roi_onset_thr),
+        "roi_onset_window_nm":      float(roi_onset_window),
         "roi_inner_threshold_nm_per_nm": float(roi_inner_thr),
         "roi_detector_mode_idx":    roi_detector_idx,
         "roi_prominence":           float(roi_prominence),
@@ -145,16 +150,71 @@ def pipeline_params_from(
         "cutoff_hz":  float(cutoff_hz),
         "offset_pts": invols_offset_pts,
         "window_pts": invols_window_pts,
+        "override_nm_per_v": float(invols_override),
     }, sort_keys=True, separators=(",", ":"))
     # Any parameter change changes this half of the cache identity. The
     # registered scientific-method fingerprint is the other half.
     all_params = param_set.revision
     return _PipelineParams(
         anchor_nm, cutoff_hz, trim_pts, var_window_ms, thresh_appr, thresh_retr,
-        roi_win_pts, roi_d1_thr, roi_post_mask, roi_onset_thr,
-        invols_offset_pts, invols_window_pts,
+        roi_win_pts, roi_d1_thr, roi_post_mask, roi_onset_thr, roi_onset_window,
+        invols_offset_pts, invols_window_pts, float(invols_override),
         params_bl, params_cd, params_roi, params_invols, all_params,
     )
+
+
+def invols_window_for(file_id, offset_pts: int, window_pts: int, db_path, conn=None):
+    """
+    The (offset_pts, window_pts) the invOLS fit uses for ONE file: its manual
+    per-curve window when one is stored, else the profile's.  The profile
+    window stays the default; a per-curve pick is only ever an exception.
+    """
+    if file_id is None or db_path is None:
+        return int(offset_pts), int(window_pts)
+    ov = _db.get_invols_window_override(file_id, db_path, conn=conn)
+    return ov if ov is not None else (int(offset_pts), int(window_pts))
+
+
+def compute_invols(curve, low_appr, offset_pts: int, window_pts: int,
+                   override_nm_per_v: float = 0.0):
+    """
+    The ONE implementation of "what invOLS correction does this curve get".
+
+    Returns a signal_processing.InvOLSFit whose `.slope` is the factor the rest
+    of the pipeline divides deflection by (defl_corr = (defl - offset) / slope).
+
+    override_nm_per_v == 0 : the per-curve fit through the approach window.
+    override_nm_per_v  > 0 : the user's sensitivity in nm/V, the same for every
+        curve.  The loaded deflection was already converted nm = V * (the
+        instrument's InvOLS), so entering U instead of I rescales it by U / I,
+        i.e. |slope| = I / U, with the fit's negative sign.  The window fit is still run for its diagnostics
+        but does not set the slope; a degenerate window is not an error here.
+    """
+    from .signal_processing import InvOLSFit, fit_approach_invols
+    if not override_nm_per_v:
+        return fit_approach_invols(low_appr, curve.piezo_appr, offset_pts, window_pts)
+    if not (override_nm_per_v > 0 and np.isfinite(override_nm_per_v)):
+        raise ValueError(f"invOLS override must be a positive number, got {override_nm_per_v}")
+    inst = curve.inv_ols_nm_v
+    if inst is None or not np.isfinite(inst) or inst <= 0:
+        raise ValueError(
+            "this curve's wave note records no instrument InvOLS, so a user "
+            "invOLS in nm/V cannot be applied to it")
+    try:
+        fit = fit_approach_invols(low_appr, curve.piezo_appr, offset_pts, window_pts)
+    except Exception:
+        fit = None
+    if fit is None or not np.isfinite(fit.slope):
+        intercept, rms, lo, hi = 0.0, 0.0, 0, 0
+    else:
+        intercept, rms, lo, hi = fit.intercept, fit.rms, fit.fit_lo_idx, fit.fit_hi_idx
+    # NEGATIVE, like every fitted slope: piezo position is positive away from the
+    # surface while deflection grows on approach, so the contact line slopes
+    # down (-1.68 .. -0.51 in practice).  The pipeline divides by this slope,
+    # and that division is what flips deflection into a positive force; a
+    # positive value here leaves forces negative and every WLC fit refused.
+    return InvOLSFit(-float(inst) / float(override_nm_per_v), float(intercept),
+                     float("nan"), float(rms), int(lo), int(hi))
 
 
 @dataclass(frozen=True)
@@ -432,9 +492,10 @@ def analyse_curve(
         try:
             if _dc is None:
                 _dc = decompose_curve(curve, cutoff_hz=float(p.cutoff_hz))
-            fit = fit_approach_invols(
-                _dc.low_appr, curve.piezo_appr, p.invols_offset_pts, p.invols_window_pts,
-            )
+            _off, _win = invols_window_for(
+                file_id, p.invols_offset_pts, p.invols_window_pts, db_path, conn=conn)
+            fit = compute_invols(
+                curve, _dc.low_appr, _off, _win, p.invols_override_nm_per_v)
             invols_slope = fit.slope
             invols_intercept_val  = fit.intercept
             invols_rms_val        = fit.rms
@@ -529,6 +590,7 @@ def analyse_curve(
                 sigs.d1, sigs.low, sigs.piezo,
                 lo=lo_band, hi=hi_band, onset_thr=p.roi_onset_thr,
                 outer_threshold=p.roi_d1_thr,
+                onset_window_nm=p.roi_onset_window,
             )
             # Scalar compatibility fields describe the right-most validated
             # outer event. Inner segmentation later consumes this exact list.

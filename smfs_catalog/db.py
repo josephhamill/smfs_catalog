@@ -252,6 +252,9 @@ def initialise(db_path: str = DEFAULT_DB_PATH) -> None:
         _add_missing_columns(conn, "files", {
             "substrate":   "TEXT",
             "sample_prep": "TEXT",
+            # Manual per-curve invOLS fit window; NULL = use the profile's.
+            "invols_offset_override_pts": "INTEGER",
+            "invols_window_override_pts": "INTEGER",
         })
 
         # The column references the table, so it must go first.
@@ -2171,6 +2174,61 @@ def get_event_map_provenance_bulk(
     finally:
         conn.close()
     return out
+
+
+def get_invols_window_override(
+    file_id: int,
+    db_path: str = DEFAULT_DB_PATH,
+    conn:    Optional[sqlite3.Connection] = None,
+) -> "Optional[tuple[int, int]]":
+    """This file's manual (offset_pts, window_pts) invOLS fit window, or None."""
+    c = conn or get_connection(db_path)
+    try:
+        row = c.execute(
+            "SELECT invols_offset_override_pts, invols_window_override_pts "
+            "FROM files WHERE id = ?", (file_id,),
+        ).fetchone()
+    finally:
+        if conn is None:
+            c.close()
+    if row is None or row[0] is None or row[1] is None:
+        return None
+    return int(row[0]), int(row[1])
+
+
+def set_invols_window_override(
+    file_id:    int,
+    offset_pts: Optional[int],
+    window_pts: Optional[int],
+    db_path:    str = DEFAULT_DB_PATH,
+) -> None:
+    """
+    Set (or clear, with None) this file's manual invOLS fit window.
+
+    Changing the window changes the invOLS slope, which scales every force on
+    the curve, so the stored invOLS rows and the event map built from them are
+    dropped in the same transaction; the next analysis recomputes them.
+    """
+    if (offset_pts is None) != (window_pts is None):
+        raise ValueError("set both offset_pts and window_pts, or neither")
+    if offset_pts is not None and (int(offset_pts) < 0 or int(window_pts) < 2):
+        raise ValueError("invOLS window needs offset >= 0 and window >= 2 points")
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE files SET invols_offset_override_pts = ?, "
+                "invols_window_override_pts = ? WHERE id = ?",
+                (None if offset_pts is None else int(offset_pts),
+                 None if window_pts is None else int(window_pts), file_id),
+            )
+            conn.execute(
+                "DELETE FROM analysis_results WHERE file_id = ? AND analysis_type IN "
+                "('invols_slope','invols_intercept','invols_rms',"
+                "'invols_fit_lo_idx','invols_fit_hi_idx')", (file_id,))
+            conn.execute("DELETE FROM event_map WHERE file_id = ?", (file_id,))
+    finally:
+        conn.close()
 
 
 def get_segment_override(

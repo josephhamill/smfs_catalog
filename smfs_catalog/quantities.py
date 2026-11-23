@@ -252,6 +252,7 @@ QUANTITIES: dict[str, Quantity] = {
     "baseline_anchor_nm":            Quantity(NM, 0, integer=True),
     "invols_offset_pts":             Quantity(PTS, 0, integer=True),
     "invols_window_pts":             Quantity(PTS, 0, integer=True),
+    "invols_override_nm_per_v":      Quantity(NM_PER_V, 3),
     "roi_window_pts":                Quantity(PTS, 0, integer=True),
     # Stored to full float precision by the draggable line; 4 decimals is what
     # the spin box can show without disagreeing with the drag.
@@ -259,6 +260,7 @@ QUANTITIES: dict[str, Quantity] = {
     "roi_inner_threshold_nm_per_nm": Quantity(NM_PER_NM, 4),
     "roi_post_snapoff_mask_nm":      Quantity(NM, 1),
     "roi_onset_threshold_nm":        Quantity(NM, 3),
+    "roi_onset_window_nm":           Quantity(NM, 3),
     "roi_detector_mode_idx":         INTEGER,
     "roi_prominence":                Quantity(NM_PER_NM, 3),
     "roi_min_distance_pts":          Quantity(PTS, 0, integer=True),
