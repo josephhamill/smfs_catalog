@@ -526,7 +526,7 @@ def numerics(monkeypatch):
     runs against the real catalog.  `builds` counts event builds."""
     arr = np.arange(20, dtype=float)
     curve = SimpleNamespace(piezo_retr=arr, piezo_appr=arr, defl_retr=arr,
-                            spring_constant=1.0)
+                            spring_constant=1.0, inv_ols_nm_v=None)
     dc = SimpleNamespace(low_retr=arr, low_appr=arr)
     sigs = SimpleNamespace(piezo=arr, d1=arr, low=arr)
     builds = []
