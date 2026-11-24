@@ -24,11 +24,12 @@ What these tests rely on:
     tooltip carries the ledger report, "<n> x <reason text>".
 
 The stored event maps carry no fit, so each window's fit test is lifted and
-each grid comes from a patched _compute_from_curve (a distinct matrix per
+each grid comes from patched leaves, _full_xF and _build_histogram (a distinct matrix per
 file, so "unchanged" is checkable).  The upstream Explore Events window is a
 stub that only answers population_ledger.  Every catalog is a temporary file
 passed explicitly.
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -64,13 +65,21 @@ def _pinned(monkeypatch):
     monkeypatch.setattr(store, "cache_version", lambda: synth.CODE, raising=False)
     for cls in WINDOWS:
         monkeypatch.setattr(cls, "_fit_drop_reason", lambda self, fit: None)
-        monkeypatch.setattr(cls, "_compute_from_curve", _grid_of_path)
+        # Only the leaves are replaced: the real _compute_from_curve,
+        # _load_or_compute, add_event and sync run, so the reads they make
+        # (and the divisor calls among them) are the real ones.
+        monkeypatch.setattr(cls, "_full_xF", _xF_of_path)
+        monkeypatch.setattr(cls, "_build_histogram", _grid_of_force)
 
 
-def _grid_of_path(self, path, pre_fetched=None, conn=None):
-    """A matrix that depends on which file it is, so a test can tell them apart."""
+def _xF_of_path(self, path, pre_fetched=None):
+    """A retract whose force is the file's number, so a test can tell files apart."""
     number = int(Path(path).stem[-4:])
-    return np.full((2, 2), number, dtype=np.uint32)
+    return np.arange(100.0), np.full(100, float(number))
+
+
+def _grid_of_force(self, x, F, lo, hi, fit, right_idx):
+    return np.full((2, 2), int(F[0]), dtype=np.uint32)
 
 
 class _Upstream:
@@ -149,7 +158,7 @@ def test_the_reason_is_in_the_export_manifest(tmp_path, cls):
 def test_the_reason_text_says_what_is_happening():
     assert ledger.DROP_REASONS[REASON] == (
         "uses an ensemble InvOLS; the 2D histograms still convert each trace "
-        "with its own fit")
+        "with its own InvOLS fit")
 
 
 @pytest.mark.parametrize("cls", WINDOWS)
@@ -160,7 +169,7 @@ def test_the_window_says_how_many_were_left_out_and_why(tmp_path, cls):
     assert line.startswith("2 events")
     assert "3 left out: ensemble InvOLS" in line
     assert ("3 × uses an ensemble InvOLS; the 2D histograms still convert each "
-            "trace with its own fit") in win._stats_label.toolTip()
+            "trace with its own InvOLS fit") in win._stats_label.toolTip()
     win.close()
 
 
@@ -244,4 +253,27 @@ def test_a_sync_asks_for_the_divisors_once_not_once_per_file(tmp_path, monkeypat
     win = _window(cls, db_path, paths)
     assert len(calls) == 1
     assert sorted(calls[0]) == sorted(ids)
+    win.close()
+
+
+@pytest.mark.parametrize("cls", WINDOWS)
+def test_a_mixed_build_counts_each_file_once_under_its_own_reason(tmp_path, cls):
+    # Files 2, 4, 5 and 7 are ensemble.  Files 6 (own fit) and 7 (ensemble)
+    # have no chosen segment: file 6 is dropped for that, and file 7, which
+    # would be too, is counted once, as ensemble.
+    db_path, ids, paths = _catalog(tmp_path, n=7, assigned=(2, 4, 5, 7))
+    no_segments = json.loads(synth.event_map_doc(1))
+    no_segments["rois"][0]["segments"] = []
+    for number in (6, 7):
+        synth.put_event_map(db_path, ids[number - 1], "P", json.dumps(no_segments))
+    win = _window(cls, db_path, paths)
+    assert _numbers(win) == [1, 3]
+    assert win._ledger.by_reason() == {REASON: 4, "no_segment_chosen": 1}
+    assert win._ledger.n_dropped == 5
+    line = win._stats_label.text()
+    assert "4 left out: ensemble InvOLS" in line
+    assert "5 left out" not in line
+    tip = win._stats_label.toolTip()
+    assert "4 × " + ledger.DROP_REASONS[REASON] in tip
+    assert "1 × " + ledger.DROP_REASONS["no_segment_chosen"] in tip
     win.close()
