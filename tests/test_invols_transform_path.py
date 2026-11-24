@@ -19,7 +19,7 @@ noiseless contact of slope -0.95, one rupture) and checks:
   * analyse_curve no longer treats a failed own fit as fatal under an
     ensemble, and keeps each file's own Transform InvOLS row up to date
     without ever replacing an applied ensemble row;
-  * base_2dh_window.py is untouched by this feature.
+  * the 2DH conversion _full_xF is untouched by this feature.
 
 Expected values are hand calculations: a divisor is -199.14 / T, a force is
 proportional to 1 / |divisor|, so T = 210 against a slope of -0.95 scales
@@ -397,9 +397,19 @@ def test_such_a_file_whose_fit_succeeds_has_its_row_set_to_null(tmp_path, bad):
     assert code_version == CODE
 
 
-# ── the 2DH window is not part of this feature ───────────────────────────────
+# ── the shared 2DH conversion is not part of this feature ────────────────────
 
-def test_base_2dh_window_is_unchanged_from_main():
+def _function_dump(source, name):
+    import ast
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return ast.dump(node)
+    raise AssertionError(f"{name} not found")
+
+
+def test_the_2dh_conversion_full_xF_is_unchanged_from_main():
+    """The 2D histograms leave ensemble traces out instead of converting them;
+    the conversion itself (_full_xF) stays exactly as on main."""
     git = shutil.which("git")
     if git is None:
         pytest.skip("git is not installed")
@@ -408,11 +418,12 @@ def test_base_2dh_window_is_unchanged_from_main():
         cwd=ROOT, capture_output=True, text=True)
     if probe.returncode != 0:
         pytest.skip("no git checkout with a main branch here")
-    diff = subprocess.run(
-        [git, "diff", "main", "--", "smfs_catalog/base_2dh_window.py"],
-        cwd=ROOT, capture_output=True, text=True)
-    assert diff.returncode == 0
-    assert diff.stdout == ""
+    shown = subprocess.run(
+        [git, "show", "main:smfs_catalog/base_2dh_window.py"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+    assert shown.returncode == 0
+    here = (ROOT / "smfs_catalog" / "base_2dh_window.py").read_text(encoding="utf-8")
+    assert _function_dump(here, "_full_xF") == _function_dump(shown.stdout, "_full_xF")
 
 
 # ── no code version: the divisor is still the one applied ────────────────────
