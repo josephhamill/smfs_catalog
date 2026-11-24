@@ -264,9 +264,9 @@ def test_the_queue_table_export_has_the_source_column_right_after_hit(env):
     with open(env.tmp / csv_files[0], newline="", encoding="utf-8") as fh:
         rows = list(csv.reader(fh))
     header = rows[0]
-    assert header[:6] == ["path", "filename", "status", "event", "hit",
-                          "invols_source"]
-    by_path = {r[0]: r[5] for r in rows[1:]}
+    assert header[:7] == ["path", "filename", "status", "freshness", "event",
+                          "hit", "invols_source"]
+    by_path = {r[0]: r[6] for r in rows[1:]}
     assert SOURCE_RE.match(by_path[env.cat.paths[0]])
     assert by_path[env.cat.paths[3]] == "own fit"
     keys = None
@@ -275,8 +275,85 @@ def test_the_queue_table_export_has_the_source_column_right_after_hit(env):
                          "column_keys")
         if keys:
             break
-    assert keys[:6] == ["path", "filename", "status", "event", "hit",
-                        "invols_source"]
+    assert keys[:7] == ["path", "filename", "status", "freshness", "event",
+                        "hit", "invols_source"]
+
+
+def _export_rows(e):
+    """Run the queue-table export; return (header, {path: row dict}, keys)."""
+    before = set(os.listdir(e.tmp))
+    e.dash._on_export_queue_table()
+    g.pump()
+    new = sorted(set(os.listdir(e.tmp)) - before)
+    csv_name = [n for n in new if n.endswith(".csv")][0]
+    with open(e.tmp / csv_name, newline="", encoding="utf-8") as fh:
+        rows = list(csv.reader(fh))
+    header = rows[0]
+    keys = None
+    for name in [n for n in new if n.endswith(".json")]:
+        keys = _find_key(json.loads((e.tmp / name).read_text("utf-8")),
+                         "column_keys")
+        if keys:
+            break
+    return header, {r[0]: dict(zip(header, r)) for r in rows[1:]}, keys
+
+
+WORDS = {"fresh": "up to date", "stale": "stale params", "new": "not analysed"}
+
+
+def _live_freshness(e):
+    from smfs_catalog.curve_analysis import current_signature
+    params_json, code_ver = current_signature(e.cat.db)
+    return db.queue_freshness(params_json, code_ver, e.cat.db)
+
+
+def test_the_export_freshness_equals_the_db_answer_and_the_status_cell(env):
+    win = open_window(env)
+    apply_all(env, win)
+    header, by_path, keys = _export_rows(env)
+    assert keys[3] == "freshness"
+    live = _live_freshness(env)
+    assert set(live.values()) == {"fresh", "stale"}      # the check can tell
+    for file_id, path in zip(env.cat.ids, env.cat.paths):
+        word = by_path[path]["freshness"]
+        assert word == WORDS[live[file_id]]
+        assert cell(env, file_id, 1).startswith(word)
+
+
+def test_after_an_apply_assigned_files_export_stale_and_the_bystander_up_to_date(env):
+    win = open_window(env)
+    apply_all(env, win)
+    _header, by_path, _keys = _export_rows(env)
+    for path in env.cat.paths[:3]:
+        assert by_path[path]["freshness"] == "stale params"
+        assert SOURCE_RE.match(by_path[path]["invols_source"])
+    assert by_path[env.cat.paths[3]]["freshness"] == "up to date"
+    assert by_path[env.cat.paths[3]]["invols_source"] == "own fit"
+
+
+def test_before_any_apply_every_exported_row_is_up_to_date(env):
+    _header, by_path, _keys = _export_rows(env)
+    assert [by_path[p]["freshness"] for p in env.cat.paths] == ["up to date"] * 4
+
+
+def test_a_file_never_analysed_exports_not_analysed(env):
+    conn = db.get_connection(env.cat.db)
+    try:
+        conn.execute("DELETE FROM analysis_results WHERE file_id = ? "
+                     "AND analysis_type = 'event'", (env.cat.ids[3],))
+        conn.commit()
+    finally:
+        conn.close()
+    _header, by_path, _keys = _export_rows(env)
+    assert by_path[env.cat.paths[3]]["freshness"] == "not analysed"
+    assert by_path[env.cat.paths[0]]["freshness"] == "up to date"
+
+
+def test_the_queue_state_column_is_unchanged_beside_the_freshness(env):
+    _header, by_path, _keys = _export_rows(env)
+    queued = {r["path"]: r["status"] or "" for r in db.list_queue(env.cat.db)}
+    for path in env.cat.paths:
+        assert by_path[path]["status"] == queued[path]
 
 
 # ── Open this trace ──────────────────────────────────────────────────────────
