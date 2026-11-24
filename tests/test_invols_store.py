@@ -29,7 +29,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import invols_synth as synth                                 # noqa: E402
-from smfs_catalog import db                                  # noqa: E402
+from smfs_catalog import db, variables                       # noqa: E402
 from smfs_catalog import invols_store as store               # noqa: E402
 
 INSTRUMENT = 199.14
@@ -487,6 +487,18 @@ def test_curve_label_for_an_ensemble_trace_with_no_own_fit(tmp_path):
              "VALUES (4, 1)")
     label = store.curve_label(synth.path_of(4), None, INSTRUMENT, db_path)
     assert "InvOLS in use 210.00 nm/V (ensemble of 3 traces) · own fit —" in label
+
+
+def test_curve_label_takes_the_in_use_name_from_variables(tmp_path, monkeypatch):
+    monkeypatch.setattr(variables, "IN_USE_INVOLS_LABEL", "In-use SENTINEL",
+                        raising=False)
+    db_path, ids = _label_catalog(tmp_path)
+    own = store.curve_label(synth.path_of(1), -0.9852, INSTRUMENT, db_path)
+    synth.add_group(db_path, ids[:3], 210.0)
+    ensemble = store.curve_label(synth.path_of(1), -0.9852, INSTRUMENT, db_path)
+    assert own.startswith("In-use SENTINEL 202.13 nm/V (own fit)")
+    assert ensemble.startswith("In-use SENTINEL 210.00 nm/V (ensemble of 3 traces)")
+    assert "InvOLS in use" not in own + ensemble
 
 
 # ── An assigned file whose instrument value has become unusable ────────────────

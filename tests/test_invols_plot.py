@@ -33,7 +33,7 @@ from PyQt6.QtGui import QMouseEvent                                 # noqa: E402
 from PyQt6.QtTest import QTest                                      # noqa: E402
 from PyQt6.QtWidgets import QApplication                            # noqa: E402
 
-from smfs_catalog import quantities, style                          # noqa: E402
+from smfs_catalog import quantities, style, variables               # noqa: E402
 from smfs_catalog.invols_store import TraceRow                      # noqa: E402
 from smfs_catalog.qt_utils import _DateAxis                         # noqa: E402
 from invols_plot_synth import (  # noqa: E402
@@ -304,6 +304,21 @@ def test_ensemble_row_tooltip_gives_both_values(plot):
     tip = _tip(sc, pt)
     assert "Own-fit InvOLS: 209.62 nm/V" in tip
     assert "InvOLS in use: 199.47 nm/V" in tip
+
+
+def test_in_use_label_is_a_named_constant():
+    assert variables.IN_USE_INVOLS_LABEL == "InvOLS in use"
+
+
+def test_ensemble_tooltip_takes_the_in_use_name_from_variables(plot, monkeypatch):
+    monkeypatch.setattr(variables, "IN_USE_INVOLS_LABEL", "In-use SENTINEL",
+                        raising=False)
+    plot.set_traces([_row(0, 209.62105, source="ensemble", in_use=199.47273)])
+    _settle(plot)
+    (sc, pt), = _spots(plot)
+    tip = _tip(sc, pt)
+    assert "In-use SENTINEL: 199.47 nm/V" in tip
+    assert "InvOLS in use" not in tip
 
 
 def test_ensemble_row_without_in_use_value_invents_no_number(plot):

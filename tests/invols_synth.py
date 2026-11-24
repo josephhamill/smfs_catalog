@@ -70,20 +70,23 @@ def _add_file(con, number, spec):
         con.execute("UPDATE files SET curve_type = ? WHERE id = ?",
                     (spec["curve_type"], file_id))
     if spec.get("slope") is not None:
-        _add_result(con, file_id, "invols_slope", spec["slope"], SLOPE_PARAMS)
+        _add_result(con, file_id, ("invols_slope", spec["slope"], SLOPE_PARAMS))
     if spec.get("event_params") is not None:
-        _add_result(con, file_id, "event", 1.0, spec["event_params"])
+        _add_result(con, file_id, ("event", 1.0, spec["event_params"]))
     if spec.get("queued", True):
         con.execute("INSERT INTO analysis_queue (file_id, enqueued_at) "
                     "VALUES (?, 'x')", (file_id,))
     return file_id
 
 
-def _add_result(con, file_id, analysis_type, value, params_json):
+def _add_result(con, file_id, row, code_version=CODE):
+    """Insert one analysis_results row; `row` is (analysis_type, value,
+    params_json)."""
+    analysis_type, value, params_json = row
     con.execute(
         "INSERT INTO analysis_results (file_id, analysis_type, value, "
         "params_json, code_version, computed_at) VALUES (?, ?, ?, ?, ?, 'x')",
-        (file_id, analysis_type, value, params_json, CODE))
+        (file_id, analysis_type, value, params_json, code_version))
 
 
 def add_group(db_path, file_ids, transform_nm_v, average="arithmetic"):
@@ -136,7 +139,7 @@ def add_result(db_path, file_id, analysis_type, value, params_json="{}"):
     con = sqlite3.connect(db_path)
     try:
         with con:
-            _add_result(con, file_id, analysis_type, value, params_json)
+            _add_result(con, file_id, (analysis_type, value, params_json))
     finally:
         con.close()
 
@@ -161,12 +164,18 @@ def add_other_rows(db_path, file_id):
 def put_result(db_path, file_id, analysis_type, value, params_json="{}"):
     """Write one analysis_results row with plain SQL, replacing any row the file
     already has of that type (the table keeps one per file and type)."""
+    put_result_under(db_path, file_id, (analysis_type, value, params_json), CODE)
+
+
+def put_result_under(db_path, file_id, row, code_version):
+    """put_result under a chosen code version; `row` is (analysis_type, value,
+    params_json)."""
     con = sqlite3.connect(db_path)
     try:
         with con:
             con.execute("DELETE FROM analysis_results WHERE file_id = ? AND "
-                        "analysis_type = ?", (file_id, analysis_type))
-            _add_result(con, file_id, analysis_type, value, params_json)
+                        "analysis_type = ?", (file_id, row[0]))
+            _add_result(con, file_id, row, code_version)
     finally:
         con.close()
 

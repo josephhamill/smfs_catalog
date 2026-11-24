@@ -153,8 +153,9 @@ def _transform_row(c):
 def _seed_applied_row(c, group_id):
     """The row an apply leaves: the group's value under an older code version,
     so any rewrite of it shows."""
-    synth.put_result(c.db, c.fid, TRANSFORM, GROUP_T,
-                     json.dumps({"invols_group": group_id}), "APPLIED")
+    synth.put_result_under(
+        c.db, c.fid, (TRANSFORM, GROUP_T, json.dumps({"invols_group": group_id})),
+        "APPLIED")
 
 
 # ── compute_curve_events_coords: the divisor applied ─────────────────────────
@@ -340,6 +341,42 @@ def test_a_new_fit_window_changes_an_own_fit_files_value_in_the_same_pass(
     value, params_json, _ = _transform_row(c)
     assert INSTRUMENT / 0.95 < value < deep_value
     assert params_json == synth.current_fit_key(c.db)
+
+
+# ── compute_curve_events_coords: a fresh own fit refreshes the own row ────────
+
+def test_a_fresh_own_fit_in_the_event_pass_stores_the_own_transform_row(tmp_path):
+    c = _setup(tmp_path)
+    assert _transform_rows(c) == []
+    _events(synth.make_force_curve(), c)
+    value, params_json, code_version = _transform_row(c)
+    assert value == pytest.approx(209.62105, rel=1e-6)
+    assert params_json == synth.current_fit_key(c.db)
+    assert code_version == CODE
+
+
+def test_a_new_fit_window_in_the_event_pass_moves_the_own_row(tmp_path):
+    c = _setup(tmp_path)
+    curve = synth.make_force_curve(deep_slope=-0.90, deep_pts=200)
+    _set_window(c.db, 100)                  # samples n-150 .. n-50: all deep
+    _analyse(curve, c)
+    deep_value = _transform_row(c)[0]
+    assert deep_value == pytest.approx(INSTRUMENT / 0.90, rel=1e-6)
+    _set_window(c.db, 250)                  # both parts: a fresh fit, a new value
+    _events(curve, c)
+    value, params_json, _ = _transform_row(c)
+    assert INSTRUMENT / 0.95 < value < deep_value
+    assert params_json == synth.current_fit_key(c.db)
+
+
+def test_the_event_pass_leaves_an_ensemble_files_applied_row_alone(tmp_path):
+    c = _setup(tmp_path)
+    group_id = synth.add_group(c.db, [c.fid], GROUP_T)
+    _seed_applied_row(c, group_id)
+    before = _transform_rows(c)
+    _events(synth.make_force_curve(), c)
+    assert _transform_rows(c) == before
+    assert before[0][2] == "APPLIED"
 
 
 def test_an_assigned_file_keeps_its_applied_row_through_a_rerun(tmp_path):
