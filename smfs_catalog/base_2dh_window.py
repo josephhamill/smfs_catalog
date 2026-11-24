@@ -736,7 +736,7 @@ class _TwoDHWindowBase(QMainWindow):
 
     def _load_or_compute(self, file_path: str) -> sparse.csr_array | None:
         file_id = _db.get_file_id(file_path, self._db_path)
-        if file_id is None:
+        if file_id is None or self._ensemble_paths({file_path: file_id}):
             return None
         H = _db.get_event_histogram(file_id, self._grid_key, self._db_path)
         if H is not None:
@@ -827,13 +827,12 @@ class _TwoDHWindowBase(QMainWindow):
         right_idx (the segment's terminating rupture, an index into the
         curve's arrays — used by physical's "rupture" align mode) doesn't
         depend on the fit and is set whenever the segment itself exists.
-        Pure read. Returns None for a file with an ensemble InvOLS in force
-        (see _ensemble_paths), when there is no stored ROI, or the chosen
+        Pure read. Returns None when there is no stored ROI, or the chosen
         segment doesn't exist, or (primary/secondary only) that manual
         pick is unset or stale relative to the current segmentation — see
         roi_pipeline.resolve_segment_override."""
         fid = _db.get_file_id(file_path, self._db_path, conn=conn)
-        if fid is None or self._ensemble_paths({file_path: fid}, conn=conn):
+        if fid is None:
             return None
         doc = _db.get_latest_event_map(fid, self._db_path, conn=conn)
         return self._segment_fit_from_doc(fid, doc, conn=conn)
