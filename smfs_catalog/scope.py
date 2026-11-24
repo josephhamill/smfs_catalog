@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from . import db as _db
+
 
 def new_scope() -> dict:
     """Return an unconstrained scope: every file eligible for normal work."""
@@ -49,3 +51,9 @@ def scope_to_query(scope: dict) -> dict:
     query["usable"] = not bool(scope.get("only_unusable"))
     query["unique"] = not bool(scope.get("only_duplicates"))
     return query
+
+
+def scope_paths(scope: dict, db_path: str) -> list[str]:
+    """The path of every file the scope selects."""
+    rows = _db.list_files(db_path=db_path, **scope_to_query(scope))
+    return [row["path"] for row in rows]

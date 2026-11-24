@@ -725,8 +725,7 @@ class RawCurveWindow(QWidget):
         if code_ver is None:
             return False
 
-        divisor = _db.ensemble_divisors(
-            [file_id], self._db_path).get(file_id)
+        divisor = _db.file_ensemble_divisor(file_id, self._db_path)
         verdict = _db.get_analysis_result(
             file_id, "event", cache_key(p.all_params, divisor), code_ver,
             self._db_path,

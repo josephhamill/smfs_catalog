@@ -12,11 +12,12 @@ from typing import Mapping, Sequence
 from . import db, quantities, variables
 from .curve_analysis import pipeline_params_from
 from .invols_stats import (
-    AVERAGES, TRANSFORM_KEY, Summary, applied_value, own_transform_nm_v,
-    summarise, usable_instrument,
+    AVERAGES, TRANSFORM_KEY, Summary, applied_value, is_finite,
+    own_transform_nm_v, summarise, usable_instrument,
 )
 from .provenance import cache_version
 
+NO_VALUE = "—"
 _AVERAGE_SETTING = "invols_average"
 _METHODS = ("all", "box")
 _FIT_SETTING_KEYS = ("invols_offset_pts", "invols_window_pts", "spectral_cutoff_hz")
@@ -112,8 +113,12 @@ def _own_fit(instrument: float | None, found: dict[str, tuple]) -> tuple:
     return own_transform_nm_v(instrument, slope_row[0]), slope_row[1]
 
 
-def _fit_key(db_path: str) -> str:
-    return pipeline_params_from(db.load_analysis_params(db_path)).params_invols
+def _key_of(params) -> str:
+    return pipeline_params_from(params).params_invols
+
+
+def _fit_key(db_path: str, conn: sqlite3.Connection | None = None) -> str:
+    return _key_of(db.load_analysis_params(db_path, conn=conn))
 
 
 def _trace_row(f: sqlite3.Row, found: dict[str, tuple], group: _Group | None,
@@ -198,24 +203,20 @@ def source_labels(file_ids: Sequence[int], db_path: str) -> dict[int, str]:
     return {fid: _group_label(groups.get(fid)) for fid in file_ids}
 
 
-def _nm_v(value: float | None) -> str:
+def nm_v(value: float | None) -> str:
     if value is None:
-        return "—"
-    return quantities.format_value(TRANSFORM_KEY, value, with_unit=True)
-
-
-def _finite(value: float | None) -> bool:
-    return value is not None and math.isfinite(value)
+        return NO_VALUE
+    return quantities.format_value(TRANSFORM_KEY, value, with_unit=True) or NO_VALUE
 
 
 def _rms_text(own_slope: float | None, own_rms: float | None,
               stored: Mapping) -> str | None:
-    if not _finite(own_slope):
+    if not is_finite(own_slope):
         return None
     rms = own_rms
     if rms is None and stored.get("invols_slope", (None,))[0] == own_slope:
         rms = stored.get("invols_rms", (None,))[0]
-    if not _finite(rms):
+    if not is_finite(rms):
         return None
     return "RMS=" + quantities.format_value("invols_rms", rms, with_unit=True)
 
@@ -234,11 +235,11 @@ def curve_label(path: str, own_slope: float | None,
     own = own_transform_nm_v(instrument_nm_v, own_slope)
     name = variables.IN_USE_INVOLS_LABEL
     if group is None:
-        parts = [f"{name} {_nm_v(own)} (own fit)"]
+        parts = [f"{name} {nm_v(own)} (own fit)"]
     else:
-        parts = [f"{name} {_nm_v(group.value)} (ensemble of {group.n} traces)",
-                 f"own fit {_nm_v(own)}"]
-    if _finite(own_slope):
+        parts = [f"{name} {nm_v(group.value)} (ensemble of {group.n} traces)",
+                 f"own fit {nm_v(own)}"]
+    if is_finite(own_slope):
         parts.append("slope=" + quantities.format_value("invols_slope", own_slope))
     rms_text = _rms_text(own_slope, own_rms, stored)
     if rms_text is not None:
@@ -334,7 +335,7 @@ def _apply_in_transaction(conn: sqlite3.Connection, request: EnsembleRequest,
     # One snapshot of the settings: it gives both the key members are checked
     # against and the settings stored on the group.
     params = db.load_analysis_params(db_path, conn=conn)
-    key = pipeline_params_from(params).params_invols
+    key = _key_of(params)
     members = tuple(dict.fromkeys(request.member_ids))
     targets = tuple(dict.fromkeys(request.target_ids))
     used, left_out = _eligible_members(conn, members, key)
@@ -365,8 +366,7 @@ def apply_own(target_ids: Sequence[int], db_path: str) -> int:
     version = _code_version()
     targets = list(dict.fromkeys(target_ids))
     with _write_transaction(db_path) as conn:
-        key = pipeline_params_from(
-            db.load_analysis_params(db_path, conn=conn)).params_invols
+        key = _fit_key(db_path, conn)
         instruments = _instruments(conn, targets)
         found = _results(conn, targets)
         present = [t for t in targets if t in instruments]

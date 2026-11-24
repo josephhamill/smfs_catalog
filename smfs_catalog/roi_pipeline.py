@@ -317,7 +317,7 @@ def compute_curve_events_coords(
     _divisor = None
     _cached_events = None
     if db_path is not None and file_id is not None:
-        _divisor = _db.ensemble_divisors([file_id], db_path, conn).get(file_id)
+        _divisor = _db.file_ensemble_divisor(file_id, db_path, conn)
     if can_read_cache:
         _pj = event_map_params_json(ep, _divisor)
     if can_read_cache and not force:

@@ -3049,6 +3049,15 @@ def ensemble_divisors(
     }
 
 
+def file_ensemble_divisor(
+    file_id: int,
+    db_path: str = DEFAULT_DB_PATH,
+    conn: Optional[sqlite3.Connection] = None,
+) -> Optional[float]:
+    """The divisor of the ensemble in force for one file, or None."""
+    return ensemble_divisors([file_id], db_path, conn).get(file_id)
+
+
 @dataclass(frozen=True)
 class OwnTransformRow:
     file_id:      int
@@ -3060,7 +3069,7 @@ class OwnTransformRow:
 def _own_transform_is_current(c: sqlite3.Connection, row: OwnTransformRow) -> bool:
     """True when no write is needed: an ensemble is in force for the file, or
     the stored row already equals `row` (NULL equals NULL).  Takes no lock."""
-    if ensemble_divisors([row.file_id], conn=c).get(row.file_id) is not None:
+    if file_ensemble_divisor(row.file_id, conn=c) is not None:
         return True
     stored = c.execute(
         "SELECT value, params_json, code_version FROM analysis_results "
@@ -3088,7 +3097,7 @@ def write_own_transform_unless_ensemble(
             return False
         c.execute("BEGIN IMMEDIATE")
         try:
-            if ensemble_divisors([row.file_id], conn=c).get(row.file_id) is not None:
+            if file_ensemble_divisor(row.file_id, conn=c) is not None:
                 wrote = False
             else:
                 c.execute(
@@ -3115,8 +3124,7 @@ def divisor_for_file(
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[float]:
     """The signed number this file's transform divides by."""
-    ensemble = ensemble_divisors([file_id], db_path, conn).get(file_id)
-    return resolve_divisor(own_slope, ensemble)
+    return resolve_divisor(own_slope, file_ensemble_divisor(file_id, db_path, conn))
 
 
 def file_params_key_for(
@@ -3126,8 +3134,7 @@ def file_params_key_for(
     conn: Optional[sqlite3.Connection] = None,
 ) -> str:
     """The cache key this file's results are stored under."""
-    ensemble = ensemble_divisors([file_id], db_path, conn).get(file_id)
-    return cache_key(all_params, ensemble)
+    return cache_key(all_params, file_ensemble_divisor(file_id, db_path, conn))
 
 
 QUEUE_FRESHNESS = ("fresh", "stale", "new")

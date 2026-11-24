@@ -39,7 +39,7 @@ from . import signal_processing as _sp
 from . import variables as _vars
 from . import style
 from .bandwidth_warning import FILTER_BANDWIDTH_CONSEQUENCE
-from .scope import new_scope, scope_to_query
+from .scope import new_scope, scope_paths, scope_to_query
 from .widgets import CollapsibleSection, FlowLayout, LabeledControl
 from .analysis_worker import AnalysisWorker
 from .navigator_bar import NavigatorBar
@@ -126,6 +126,12 @@ _FRESHNESS_LABEL = {
     "stale": "stale params",
     "new":   "not analysed",
 }
+
+
+def _freshness_text(freshness: dict, file_id) -> str:
+    return _FRESHNESS_LABEL.get(freshness.get(int(file_id)), "not analysed")
+
+
 _QUEUE_COLUMNS_FIXED = [
     ("filename", "Filename"),
     ("status",   "Status"),
@@ -958,9 +964,7 @@ class DashboardWindow(QMainWindow):
 
     def _on_define_metadata(self) -> None:
         """Bulk-write sample metadata onto every file the CURRENT scope expresses — same cohort as "Database — files in scope" and the..."""
-        kw = scope_to_query(self._scope)
-        rows = _db.list_files(db_path=self._db_path, **kw)
-        paths = [row["path"] for row in rows]
+        paths = self._scope_paths()
         if not paths:
             QMessageBox.information(
                 self, "Define metadata", "No files match the current scope.")
@@ -971,8 +975,7 @@ class DashboardWindow(QMainWindow):
             self._refresh_db_and_counts()
 
     def _scope_paths(self) -> list[str]:
-        rows = _db.list_files(db_path=self._db_path, **scope_to_query(self._scope))
-        return [row["path"] for row in rows]
+        return scope_paths(self._scope, self._db_path)
 
     def _open_invols_window(self) -> QWidget | None:
         """The InvOLS window if it is still open; a closed one is discarded."""
@@ -1049,9 +1052,7 @@ class DashboardWindow(QMainWindow):
 
     def _on_remove_files(self) -> None:
         """The undo for Add Data and for an analysis run, over the CURRENT scope — same cohort as "Database — files in scope", "Define metadata..."..."""
-        kw = scope_to_query(self._scope)
-        rows = _db.list_files(db_path=self._db_path, **kw)
-        paths = [row["path"] for row in rows]
+        paths = self._scope_paths()
         if not paths:
             QMessageBox.information(
                 self, "Remove these files", "No files match the current scope.")
@@ -1169,7 +1170,7 @@ class DashboardWindow(QMainWindow):
             cls  = row["event"] or ""
             verdict = ("hit" if path in hit_set else "non_hit") if cls == "event" else ""
             rec = [path, row["filename"] or "", row["status"] or "",
-                   _FRESHNESS_LABEL.get(freshness.get(int(row["file_id"])), "not analysed"),
+                   _freshness_text(freshness, row["file_id"]),
                    cls, verdict, sources[int(row["file_id"])]]
             for key, _label in derived_cols:
                 v = self._queue_cell_value(key, path, col_values)
@@ -1585,7 +1586,7 @@ class DashboardWindow(QMainWindow):
             return "running"
         if status and status.startswith("error: "):
             return "error"
-        return _FRESHNESS_LABEL.get(self._freshness.get(int(file_id)), "not analysed")
+        return _freshness_text(self._freshness, file_id)
 
     def _set_status_cell(self, row: int, file_id: int, status: str | None) -> None:
         """Status cell: what this row NEEDS, plus whether it has been visited."""

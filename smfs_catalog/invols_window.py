@@ -31,9 +31,8 @@ from .invols_stats import (
     in_time_span, is_drawn, points_in_box, summarise, usable_instrument,
 )
 from .qt_utils import fit_on_screen
-from .scope import scope_to_query
+from .scope import scope_paths
 
-_NO_VALUE = "—"
 _CHOICES = (
     ("own", "Each trace's own fit",
      "Use when the contact is deep and clean on every trace, or the value "
@@ -83,16 +82,10 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {_pick(n, one, many)}"
 
 
-def _nm_v(value: float | None) -> str:
-    if value is None:
-        return _NO_VALUE
-    return quantities.format_value(TRANSFORM_KEY, value, with_unit=True) or _NO_VALUE
-
-
 def _instrument_text(values: Sequence[float | None]) -> str:
     shown = [v for v in values if v is not None]
     if not shown:
-        return _NO_VALUE
+        return store.NO_VALUE
     low, high = (quantities.format_value(TRANSFORM_KEY, f(shown)) for f in (min, max))
     unit = quantities.get(TRANSFORM_KEY).shown_unit
     return f"{low} {unit}" if low == high else f"{low} – {high} {unit}"
@@ -101,15 +94,15 @@ def _instrument_text(values: Sequence[float | None]) -> str:
 def _average_lines(summary: Summary, average: str) -> list[str]:
     rows = (("arithmetic", "arithmetic mean", summary.mean),
             ("harmonic", "harmonic mean", summary.harmonic_mean))
-    return [f"{label}: {_nm_v(value)}" + (" (applied)" if key == average else "")
+    return [f"{label}: {store.nm_v(value)}" + (" (applied)" if key == average else "")
             for key, label, value in rows]
 
 
 def _spread_lines(summary: Summary) -> list[str]:
     return [
-        f"standard deviation of the per-trace values: {_nm_v(summary.sd)}",
+        f"standard deviation of the per-trace values: {store.nm_v(summary.sd)}",
         "standard error of the mean of the per-trace values (scatter only; "
-        f"shared calibration errors are not included): {_nm_v(summary.se)}",
+        f"shared calibration errors are not included): {store.nm_v(summary.se)}",
     ]
 
 
@@ -205,11 +198,11 @@ def _selection_text(row: store.TraceRow | None, source: str) -> str:
         return _NO_POINT
     rms = quantities.format_value("invols_rms", row.rms_nm, with_unit=True)
     lines = [Path(row.path).name,
-             f"{variables.OWN_INVOLS_LABEL}: {_nm_v(row.own_nm_v)}",
-             f"{variables.label('invols_rms')}: {rms or _NO_VALUE}",
+             f"{variables.OWN_INVOLS_LABEL}: {store.nm_v(row.own_nm_v)}",
+             f"{variables.label('invols_rms')}: {rms or store.NO_VALUE}",
              f"Source: {source}"]
     if row.source == "ensemble":
-        lines.append(f"{variables.IN_USE_INVOLS_LABEL}: {_nm_v(row.in_use_nm_v)}")
+        lines.append(f"{variables.IN_USE_INVOLS_LABEL}: {store.nm_v(row.in_use_nm_v)}")
     return "\n".join(lines)
 
 
@@ -349,8 +342,7 @@ class InvolsWindow(QMainWindow):
     # -- the public contract ---------------------------------------------
 
     def apply_scope(self, scope: dict) -> None:
-        rows = _db.list_files(db_path=self._db, **scope_to_query(scope))
-        self._paths = [row["path"] for row in rows]
+        self._paths = scope_paths(scope, self._db)
         self._plot.clear_box()
         self._reload()
 
@@ -494,7 +486,7 @@ class InvolsWindow(QMainWindow):
         result = store.apply_ensemble(store.EnsembleRequest(
             selection.member_ids, target_ids, self._method, box,
             store.fit_settings_now(self._db), self._average), self._db)
-        value = _nm_v(applied_value(result.summary, self._average))
+        value = store.nm_v(applied_value(result.summary, self._average))
         message = f"Applied {value} to {_plural(result.n_written, 'trace', 'traces')}."
         return result.summary, message, result.n_written
 

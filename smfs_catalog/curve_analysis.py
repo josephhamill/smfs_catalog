@@ -425,7 +425,7 @@ def analyse_curve(
     # invols_r2 deliberately absent — same reason as baseline_r2 above.
     def _ensemble_in_force() -> bool:
         return (db_path is not None and file_id is not None and
-                _db.ensemble_divisors([file_id], db_path, conn).get(file_id) is not None)
+                _db.file_ensemble_divisor(file_id, db_path, conn) is not None)
 
     _ensemble = _ensemble_in_force()
 
