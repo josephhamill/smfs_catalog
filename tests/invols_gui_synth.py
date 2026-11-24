@@ -91,39 +91,54 @@ class Catalog:
     paths: list
 
 
-def build(tmp_path, slopes=SLOPES, instruments=None, hours="auto",
-          users=None, rms=None) -> Catalog:
-    """The plan's fixture, generalised.  `instruments` is one number or a list
-    (default 199.14); `hours` is a list of acquisition hours, None meaning no
-    acquisition time (default 10, 11, 12, ...); `users` sets
-    files.experimentalist; `rms` is a list of stored invols_rms values.  No
-    file is queued, every file is eligible for a dashboard scope, and the
-    stored slope rows are stamped as made under the fit settings in force."""
-    n = len(slopes)
+def _instrument_list(instruments, n):
+    """One instrument value per file: a number is repeated, None means the
+    default."""
     if instruments is None:
         instruments = INSTRUMENT
-    if not isinstance(instruments, (list, tuple)):
-        instruments = [instruments] * n
+    if isinstance(instruments, (list, tuple)):
+        return list(instruments)
+    return [instruments] * n
+
+
+def _file_specs(slopes, instruments, hours):
+    n = len(slopes)
     if hours == "auto":
         hours = [10 + i for i in range(n)]
-    files = [{"instrument": instruments[i], "slope": slopes[i],
-              "measured_at": None if hours[i] is None else stamp(hours[i]),
-              "queued": False} for i in range(n)]
-    db_path, ids = synth.make_catalog(tmp_path, files)
+    return [{"instrument": instruments[i], "slope": slopes[i],
+             "measured_at": None if hours[i] is None else stamp(hours[i]),
+             "queued": False} for i in range(n)]
+
+
+def _write_users(db_path, ids, users):
     con = sqlite3.connect(db_path)
     try:
         with con:
             con.execute("UPDATE files SET parse_ok = 1")
-            for i, file_id in enumerate(ids):
-                if users is not None:
-                    con.execute("UPDATE files SET experimentalist = ? "
-                                "WHERE id = ?", (users[i], file_id))
+            for file_id, user in zip(ids, users or []):
+                con.execute("UPDATE files SET experimentalist = ? "
+                            "WHERE id = ?", (user, file_id))
     finally:
         con.close()
+
+
+def build(tmp_path, slopes=SLOPES, instruments=None, hours="auto",
+          **extra) -> Catalog:
+    """The plan's fixture, generalised.  `instruments` is one number or a list
+    (default 199.14); `hours` is a list of acquisition hours, None meaning no
+    acquisition time (default 10, 11, 12, ...).  `extra` may give `users`
+    (files.experimentalist) and `rms` (a list of stored invols_rms values).  No
+    file is queued, every file is eligible for a dashboard scope, and the
+    stored slope rows are stamped as made under the fit settings in force."""
+    assert set(extra) <= {"users", "rms"}, f"unknown options {extra}"
+    n = len(slopes)
+    specs = _file_specs(slopes, _instrument_list(instruments, n), hours)
+    db_path, ids = synth.make_catalog(tmp_path, specs)
+    _write_users(db_path, ids, extra.get("users"))
     synth.stamp_fit_key(db_path, ids)
-    for i, value in enumerate(rms or []):
+    for file_id, value in zip(ids, extra.get("rms") or []):
         if value is not None:
-            synth.add_result(db_path, ids[i], "invols_rms", value)
+            synth.add_result(db_path, file_id, "invols_rms", value)
     return Catalog(db_path, ids, [synth.path_of(i + 1) for i in range(n)])
 
 
@@ -156,27 +171,36 @@ def _plain(text: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", text))
 
 
+def _combo_texts(combo, tooltips: bool) -> list[str]:
+    out = []
+    for i in range(combo.count()):
+        out.append(combo.itemText(i))
+        if tooltips:
+            out.append(str(combo.itemData(i, Qt.ItemDataRole.ToolTipRole) or ""))
+    return out
+
+
+def _widget_texts(w, tooltips: bool) -> list[str]:
+    if isinstance(w, (QLabel, QAbstractButton)):
+        out = [w.text()]
+    elif isinstance(w, QGroupBox):
+        out = [w.title()]
+    elif isinstance(w, (QTextEdit, QPlainTextEdit)):
+        out = [w.toPlainText()]
+    elif isinstance(w, QComboBox):
+        out = _combo_texts(w, tooltips)
+    else:
+        out = []
+    return out + [w.toolTip()] if tooltips else out
+
+
 def texts(win, tooltips: bool = False) -> list[str]:
     """Every piece of text a user can read in the window: titles, labels,
     buttons, group titles, text areas and combo items; with `tooltips`, the
     hover texts too."""
     out = [win.windowTitle()]
     for w in [win] + win.findChildren(QWidget):
-        if isinstance(w, QLabel):
-            out.append(w.text())
-        elif isinstance(w, QAbstractButton):
-            out.append(w.text())
-        elif isinstance(w, QGroupBox):
-            out.append(w.title())
-        elif isinstance(w, (QTextEdit, QPlainTextEdit)):
-            out.append(w.toPlainText())
-        elif isinstance(w, QComboBox):
-            for i in range(w.count()):
-                out.append(w.itemText(i))
-                if tooltips:
-                    out.append(str(w.itemData(i, Qt.ItemDataRole.ToolTipRole) or ""))
-        if tooltips:
-            out.append(w.toolTip())
+        out.extend(_widget_texts(w, tooltips))
     return [_plain(t) for t in out if t]
 
 

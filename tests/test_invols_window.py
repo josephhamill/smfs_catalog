@@ -104,13 +104,16 @@ def _group_rows(cat):
                        "ORDER BY id")
 
 
-def _info(summary=None, instrument=(199.14, 199.14, 199.14), method="all",
-          average="arithmetic", n_cut=0, n_old=0):
+def _info(summary=None, instrument=(199.14, 199.14, 199.14), **opts):
+    """A ReadoutInput; `opts` may give method, average, n_cut and n_old."""
+    o = {"method": "all", "average": "arithmetic", "n_cut": 0, "n_old": 0,
+         **opts}
+    assert set(o) == {"method", "average", "n_cut", "n_old"}, f"unknown {opts}"
     summary = (invols_stats.summarise([209.62105, 199.14, 189.65714])
                if summary is None else summary)
     return _iw().ReadoutInput(summary=summary, instrument_nm_v=tuple(instrument),
-                              method=method, average=average, n_cut=n_cut,
-                              n_old_settings=n_old)
+                              method=o["method"], average=o["average"],
+                              n_cut=o["n_cut"], n_old_settings=o["n_old"])
 
 
 def _unitless_decimals(text: str) -> list[str]:

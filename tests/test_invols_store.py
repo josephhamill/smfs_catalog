@@ -75,10 +75,13 @@ def _standard(tmp_path, slopes=(-0.95, -1.0, -1.05, None), **extra):
     return db_path, ids
 
 
-def _request(db_path, members=(1, 2, 3), targets=(1, 2, 3, 4), method="all",
-             box=None, average="arithmetic"):
-    return store.EnsembleRequest(tuple(members), tuple(targets), method, box,
-                                 store.fit_settings_now(db_path), average)
+def _request(db_path, members=(1, 2, 3), targets=(1, 2, 3, 4), **opts):
+    """An EnsembleRequest; `opts` may give method, box and average."""
+    o = {"method": "all", "box": None, "average": "arithmetic", **opts}
+    assert set(o) == {"method", "box", "average"}, f"unknown options {opts}"
+    return store.EnsembleRequest(tuple(members), tuple(targets), o["method"],
+                                 o["box"], store.fit_settings_now(db_path),
+                                 o["average"])
 
 
 def _rows(db_path, table, order="1"):

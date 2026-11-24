@@ -78,7 +78,7 @@ def _xF_of_path(self, path, pre_fetched=None):
     return np.arange(100.0), np.full(100, float(number))
 
 
-def _grid_of_force(self, x, F, lo, hi, fit, right_idx):
+def _grid_of_force(self, x, F, *_window_and_fit):
     return np.full((2, 2), int(F[0]), dtype=np.uint32)
 
 

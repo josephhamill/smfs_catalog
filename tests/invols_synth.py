@@ -79,12 +79,11 @@ def _add_file(con, number, spec):
     return file_id
 
 
-def _add_result(con, file_id, analysis_type, value, params_json,
-                code_version=CODE):
+def _add_result(con, file_id, analysis_type, value, params_json):
     con.execute(
         "INSERT INTO analysis_results (file_id, analysis_type, value, "
         "params_json, code_version, computed_at) VALUES (?, ?, ?, ?, ?, 'x')",
-        (file_id, analysis_type, value, params_json, code_version))
+        (file_id, analysis_type, value, params_json, CODE))
 
 
 def add_group(db_path, file_ids, transform_nm_v, average="arithmetic"):
@@ -159,8 +158,7 @@ def add_other_rows(db_path, file_id):
         con.close()
 
 
-def put_result(db_path, file_id, analysis_type, value, params_json="{}",
-               code_version=CODE):
+def put_result(db_path, file_id, analysis_type, value, params_json="{}"):
     """Write one analysis_results row with plain SQL, replacing any row the file
     already has of that type (the table keeps one per file and type)."""
     con = sqlite3.connect(db_path)
@@ -168,8 +166,7 @@ def put_result(db_path, file_id, analysis_type, value, params_json="{}",
         with con:
             con.execute("DELETE FROM analysis_results WHERE file_id = ? AND "
                         "analysis_type = ?", (file_id, analysis_type))
-            _add_result(con, file_id, analysis_type, value, params_json,
-                        code_version)
+            _add_result(con, file_id, analysis_type, value, params_json)
     finally:
         con.close()
 
