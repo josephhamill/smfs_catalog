@@ -1157,17 +1157,20 @@ class DashboardWindow(QMainWindow):
             [r["path"] for r in rows if r["event"] == "event"])
 
         derived_cols = list(self._queue_derived_cols)
-        header = ["path", "filename", "status", "event", "hit", "invols_source"] + [
+        header = ["path", "filename", "status", "freshness", "event", "hit",
+                  "invols_source"] + [
             label for _key, label in derived_cols]
         sources = _invols_store.source_labels(
             [int(r["file_id"]) for r in rows], self._db_path)
+        freshness = self._compute_freshness()
         out = []
         for row in rows:
             path = row["path"]
             cls  = row["event"] or ""
             verdict = ("hit" if path in hit_set else "non_hit") if cls == "event" else ""
-            rec = [path, row["filename"] or "", row["status"] or "", cls, verdict,
-                   sources[int(row["file_id"])]]
+            rec = [path, row["filename"] or "", row["status"] or "",
+                   _FRESHNESS_LABEL.get(freshness.get(int(row["file_id"])), "not analysed"),
+                   cls, verdict, sources[int(row["file_id"])]]
             for key, _label in derived_cols:
                 v = self._queue_cell_value(key, path, col_values)
                 rec.append("" if v is None else v)
@@ -1181,8 +1184,8 @@ class DashboardWindow(QMainWindow):
                 window="dashboard_queue",
                 segment_select=read_segment_select(self._db_path),
                 columns=header,
-                column_keys=["path", "filename", "status", "event", "hit",
-                             "invols_source"]
+                column_keys=["path", "filename", "status", "freshness",
+                             "event", "hit", "invols_source"]
                             + [k for k, _l in derived_cols],
                 n_rows=len(out),
             )
