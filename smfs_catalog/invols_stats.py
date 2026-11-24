@@ -31,6 +31,16 @@ class DisplayRange:
     side: tuple[int, ...]
 
 
+def is_finite(value: float | None) -> bool:
+    return value is not None and math.isfinite(value)
+
+
+def is_drawn(value: float | None, time_s: float | None) -> bool:
+    """A trace is drawn, and counts toward a mean, only with a finite own value
+    and a finite acquisition time."""
+    return is_finite(value) and is_finite(time_s)
+
+
 def usable_instrument(value: float | None) -> bool:
     return value is not None and math.isfinite(value) and value > 0
 
@@ -112,8 +122,13 @@ def points_in_box(t: Sequence[float], y: Sequence[float],
             & (y_arr >= min(y0, y1)) & (y_arr <= max(y0, y1)))
 
 
+def in_time_span(t: Sequence[float], y: Sequence[float],
+                 box: tuple[float, float, float, float]) -> np.ndarray:
+    t0, t1, _, _ = box
+    return points_in_box(t, y, (t0, t1, -math.inf, math.inf))
+
+
 def box_cut_count(t: Sequence[float], y: Sequence[float],
                   box: tuple[float, float, float, float]) -> int:
-    t0, t1, _, _ = box
-    in_span = points_in_box(t, y, (t0, t1, -math.inf, math.inf))
+    in_span = in_time_span(t, y, box)
     return int(np.count_nonzero(in_span & ~points_in_box(t, y, box)))

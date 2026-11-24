@@ -20,7 +20,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QPointF, Qt, pyqtSignal
 
 from . import quantities, style, variables
-from .invols_stats import TRANSFORM_KEY, display_range
+from .invols_stats import TRANSFORM_KEY, display_range, is_drawn
 from .qt_utils import _DateAxis, set_si_label
 
 if TYPE_CHECKING:
@@ -94,8 +94,7 @@ class _BoxViewBox(pg.ViewBox):
 
 def _drawn(rows: Sequence[TraceRow]) -> list[tuple[int, TraceRow]]:
     return [(i, r) for i, r in enumerate(rows)
-            if r.own_nm_v is not None and math.isfinite(r.own_nm_v)
-            and r.time_s is not None and math.isfinite(r.time_s)]
+            if is_drawn(r.own_nm_v, r.time_s)]
 
 
 def _y_view(values: list[float]) -> tuple[float, float, tuple[int, ...]]:
@@ -122,7 +121,7 @@ def _tip(x, y, data) -> str:
              f"Source: {_SOURCE_TEXT.get(data['source'], data['source'])}"]
     in_use = quantities.format_value(TRANSFORM_KEY, data["in_use"], with_unit=True)
     if data["source"] == "ensemble" and in_use:
-        lines.append(f"InvOLS in use: {in_use}")
+        lines.append(f"{variables.IN_USE_INVOLS_LABEL}: {in_use}")
     if data["side"]:
         lines.append("Outside the plotted range, shown at its edge")
     if not data["current"]:

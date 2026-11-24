@@ -37,7 +37,7 @@ from .models import CHAIN_MODEL_BY_IDX
 from .muggeo_segmented import RESTARTS as MUGGEO_RESTARTS
 from .muggeo_segmented import TOLERANCES as MUGGEO_TOLERANCES
 from .rupture_algorithms import RUPTURE_ALGORITHM_BY_IDX
-from .invols_stats import resolve_divisor
+from .invols_stats import own_transform_nm_v, resolve_divisor
 from .provenance import cache_version
 from .roi_selection import (
     ReportedSegmentChoice,
@@ -423,6 +423,11 @@ def compute_curve_events_coords(
                             "invols_fit_lo_idx": float(_fit.fit_lo_idx),
                             "invols_fit_hi_idx": float(_fit.fit_hi_idx),
                         }, _p1.params_invols, code_ver, db_path, conn=conn)
+                        _db.write_own_transform_unless_ensemble(
+                            _db.OwnTransformRow(
+                                file_id, own_transform_nm_v(curve.inv_ols_nm_v, inv),
+                                _p1.params_invols, code_ver),
+                            db_path, conn)
                 except Exception as exc:
                     raise CurveAnalysisError("approach invOLS", exc) from exc
     inv = resolve_divisor(inv, _divisor)

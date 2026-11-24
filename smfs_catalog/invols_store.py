@@ -232,10 +232,11 @@ def curve_label(path: str, own_slope: float | None,
     finally:
         conn.close()
     own = own_transform_nm_v(instrument_nm_v, own_slope)
+    name = variables.IN_USE_INVOLS_LABEL
     if group is None:
-        parts = [f"InvOLS in use {_nm_v(own)} (own fit)"]
+        parts = [f"{name} {_nm_v(own)} (own fit)"]
     else:
-        parts = [f"InvOLS in use {_nm_v(group.value)} (ensemble of {group.n} traces)",
+        parts = [f"{name} {_nm_v(group.value)} (ensemble of {group.n} traces)",
                  f"own fit {_nm_v(own)}"]
     if _finite(own_slope):
         parts.append("slope=" + quantities.format_value("invols_slope", own_slope))

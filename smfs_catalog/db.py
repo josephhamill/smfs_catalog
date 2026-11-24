@@ -3076,8 +3076,8 @@ def write_own_transform_unless_ensemble(
     conn: Optional[sqlite3.Connection] = None,
 ) -> bool:
     """Upsert a file's own Transform InvOLS row unless an ensemble is in force
-    for it or the row is already stored as given.  The first check takes no
-    lock, so a fully cached view never waits on a writer.  Only when a write
+    for it or the row is already stored as given.  This helper takes no
+    lock when no write is needed.  Only when a write
     is needed does it open its own write transaction, re-check inside it so an
     apply landing in between cannot be overwritten, write and commit.  A
     caller that already has a transaction open gets sqlite3.OperationalError

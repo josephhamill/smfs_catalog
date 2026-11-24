@@ -28,7 +28,7 @@ from .invols_fit_controls import InvolsFitControls
 from .invols_plot import InvolsPlot
 from .invols_stats import (
     AVERAGES, TRANSFORM_KEY, Summary, applied_value, box_cut_count,
-    points_in_box, summarise, usable_instrument,
+    in_time_span, is_drawn, points_in_box, summarise, usable_instrument,
 )
 from .qt_utils import fit_on_screen
 from .scope import scope_to_query
@@ -75,8 +75,12 @@ class ReadoutInput:
     n_old_settings: int
 
 
+def _pick(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many
+
+
 def _plural(n: int, one: str, many: str) -> str:
-    return f"{n} {one if n == 1 else many}"
+    return f"{n} {_pick(n, one, many)}"
 
 
 def _nm_v(value: float | None) -> str:
@@ -110,18 +114,18 @@ def _spread_lines(summary: Summary) -> list[str]:
 
 
 def _cut_line(n_cut: int) -> str:
-    verb = "lies" if n_cut == 1 else "lie"
+    unit = quantities.get(TRANSFORM_KEY).shown_unit
     return (f"{_plural(n_cut, 'trace', 'traces')} inside the box's time span "
-            f"{verb} outside its nm/V limits; the standard deviation and "
-            "standard error describe only the traces inside the limits")
+            f"{_pick(n_cut, 'lies', 'lie')} outside its {unit} limits; the "
+            "standard deviation and standard error describe only the traces "
+            "inside the limits")
 
 
 def _old_settings_line(n_old: int) -> str:
-    if n_old == 1:
-        return ("1 trace has an own fit made under earlier fit settings "
-                "(drawn hollow); it is left out until the queue visits it")
-    return (f"{n_old} traces have an own fit made under earlier fit settings "
-            "(drawn hollow); they are left out until the queue visits them")
+    return (f"{_plural(n_old, 'trace', 'traces')} "
+            f"{_pick(n_old, 'has', 'have')} an own fit made under earlier fit "
+            f"settings (drawn hollow); {_pick(n_old, 'it is', 'they are')} "
+            f"left out until the queue visits {_pick(n_old, 'it', 'them')}")
 
 
 def readout_text(info: ReadoutInput) -> str:
@@ -144,7 +148,6 @@ def readout_text(info: ReadoutInput) -> str:
 class _Selection:
     member_ids: tuple[int, ...]
     summary: Summary
-    instruments: tuple[float | None, ...]
     n_cut: int
     n_old: int
 
@@ -158,38 +161,43 @@ def _in_box(rows: Sequence[store.TraceRow],
             box_cut_count(times, values, box))
 
 
+def _in_span(rows: Sequence[store.TraceRow],
+             box: tuple[float, float, float, float]) -> list:
+    keep = in_time_span([r.time_s for r in rows], [r.own_nm_v for r in rows], box)
+    return [r for r, inside in zip(rows, keep) if inside]
+
+
 def _select(rows: Sequence[store.TraceRow], method: str,
             box: tuple[float, float, float, float] | None) -> _Selection:
     """Members and counts for 'all' or 'box'.  Membership is decided on the
     real own-fit values, never on where a pinned marker is drawn."""
-    drawn = [r for r in rows if r.time_s is not None and r.own_nm_v is not None]
+    drawn = [r for r in rows if is_drawn(r.own_nm_v, r.time_s)]
+    if method == "box":
+        drawn = _in_span(drawn, box)
     current = [r for r in drawn if r.fit_current]
     n_old, n_cut = len(drawn) - len(current), 0
     if method == "box":
         current, n_cut = _in_box(current, box)
     return _Selection(tuple(r.file_id for r in current),
-                      summarise(r.own_nm_v for r in current),
-                      tuple(r.instrument_nm_v for r in current), n_cut, n_old)
+                      summarise(r.own_nm_v for r in current), n_cut, n_old)
 
 
 def _no_instrument_text(n: int) -> str:
     if n == 0:
         return ""
-    if n == 1:
-        return ("1 trace has no instrument InvOLS in its file: it keeps its "
-                "own fit and cannot take an ensemble value.")
-    return (f"{n} traces have no instrument InvOLS in their file: they keep "
-            "their own fit and cannot take an ensemble value.")
+    return (f"{_plural(n, 'trace', 'traces')} {_pick(n, 'has', 'have')} no "
+            f"instrument InvOLS in {_pick(n, 'its', 'their')} file: "
+            f"{_pick(n, 'it keeps its', 'they keep their')} own fit and "
+            "cannot take an ensemble value.")
 
 
 def _no_time_text(n: int) -> str:
     if n == 0:
         return ""
-    if n == 1:
-        return ("1 trace has no acquisition time: it is not drawn and not part "
-                "of the mean, but it receives the applied value.")
-    return (f"{n} traces have no acquisition time: they are not drawn and not "
-            "part of the mean, but they receive the applied value.")
+    return (f"{_plural(n, 'trace', 'traces')} {_pick(n, 'has', 'have')} no "
+            f"acquisition time: {_pick(n, 'it is', 'they are')} not drawn and "
+            f"not part of the mean, but {_pick(n, 'it receives', 'they receive')} "
+            "the applied value.")
 
 
 def _selection_text(row: store.TraceRow | None, source: str) -> str:
@@ -198,19 +206,21 @@ def _selection_text(row: store.TraceRow | None, source: str) -> str:
     rms = quantities.format_value("invols_rms", row.rms_nm, with_unit=True)
     lines = [Path(row.path).name,
              f"{variables.OWN_INVOLS_LABEL}: {_nm_v(row.own_nm_v)}",
-             f"Fit RMS: {rms or _NO_VALUE}",
+             f"{variables.label('invols_rms')}: {rms or _NO_VALUE}",
              f"Source: {source}"]
     if row.source == "ensemble":
-        lines.append(f"InvOLS in use: {_nm_v(row.in_use_nm_v)}")
+        lines.append(f"{variables.IN_USE_INVOLS_LABEL}: {_nm_v(row.in_use_nm_v)}")
     return "\n".join(lines)
 
 
 def _stale_group_text(group_ids: Sequence[int]) -> str:
     if not group_ids:
         return ""
-    named = ", ".join(f"group #{i}" for i in group_ids)
-    return (f"Warning: {named} was applied under different fit settings than "
-            "those in force now.")
+    n = len(group_ids)
+    named = ", ".join(f"#{i}" for i in group_ids)
+    return (f"Warning: {_pick(n, 'group', 'groups')} {named} "
+            f"{_pick(n, 'was', 'were')} applied under different fit settings "
+            "than those in force now.")
 
 
 # ── the window ───────────────────────────────────────────────────────────────
@@ -229,6 +239,7 @@ class InvolsWindow(QMainWindow):
         self._method = "own"
         self._average = store.get_average(db_path)
         self._summary: Summary | None = None
+        self._applied = False
         self._selected_id: int | None = None
         self._build()
         self._reload()
@@ -340,6 +351,7 @@ class InvolsWindow(QMainWindow):
     def apply_scope(self, scope: dict) -> None:
         rows = _db.list_files(db_path=self._db, **scope_to_query(scope))
         self._paths = [row["path"] for row in rows]
+        self._plot.clear_box()
         self._reload()
 
     def refresh_params(self) -> None:
@@ -400,6 +412,7 @@ class InvolsWindow(QMainWindow):
     def _refresh_view(self, summary: Summary | None = None) -> None:
         selection = self._current_selection()
         self._summary = None if selection is None else (summary or selection.summary)
+        self._applied = summary is not None
         self._readout_label.setText(self._readout_message(selection))
         shown = self._summary
         self._plot.set_mean_line(
@@ -407,7 +420,12 @@ class InvolsWindow(QMainWindow):
         self._update_notes()
         self._update_apply(selection)
         self._update_selection()
-        self._status_label.setText("")
+        self._show_status("")
+
+    def _show_status(self, text: str, emphasis: bool = False) -> None:
+        self._status_label.setStyleSheet(
+            style.qss_emphasis() if emphasis else style.qss_text())
+        self._status_label.setText(text)
 
     def _readout_message(self, selection: _Selection | None) -> str:
         if self._method == "own":
@@ -415,7 +433,7 @@ class InvolsWindow(QMainWindow):
         if selection is None:
             return _DRAW_BOX
         return readout_text(ReadoutInput(
-            self._summary, tuple(v for v in selection.instruments if v is not None),
+            self._summary, tuple(r.instrument_nm_v for r in self._targets()),
             self._method, self._average, selection.n_cut, selection.n_old))
 
     def _update_notes(self) -> None:
@@ -438,6 +456,8 @@ class InvolsWindow(QMainWindow):
                     "Choose a mean to apply an ensemble value.")
         if selection is None:
             return "Draw a box on the plot first: click and drag over the traces to include."
+        if self._applied:
+            return "Already applied. Change the method, average, box or scope to apply again."
         if selection.summary.n:
             return None
         if selection.n_old:
@@ -457,10 +477,11 @@ class InvolsWindow(QMainWindow):
         try:
             summary, message, written = self._write()
         except store.InvolsApplyError as exc:
-            self._status_label.setText(str(exc))
+            self._reload()
+            self._show_status(str(exc), emphasis=True)
             return
         self._reload(summary)
-        self._status_label.setText(message)
+        self._show_status(message)
         self.applied.emit(written)
 
     def _write(self) -> tuple[Summary | None, str, int]:

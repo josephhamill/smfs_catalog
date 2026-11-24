@@ -391,6 +391,7 @@ NOT_A_VARIABLE = EXCLUDED_VARIABLE_KEYS
 
 
 OWN_INVOLS_LABEL = "Own-fit InvOLS"   # a name only: not a registry variable
+IN_USE_INVOLS_LABEL = "InvOLS in use"   # a name only: not a registry variable
 
 
 def _label(key: str) -> str:
