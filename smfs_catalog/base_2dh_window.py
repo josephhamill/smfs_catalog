@@ -591,6 +591,16 @@ class _TwoDHWindowBase(QMainWindow):
 
     # ── Incremental update (one new event) ──────────────────────────────────────
 
+    def _ensemble_paths(self, file_ids: dict, conn=None) -> set:
+        """Paths among `file_ids` ({path: file_id}) with an ensemble InvOLS in force.
+
+        The 2DH converts x and F from each trace's own slope but takes the chain
+        fit from an event map made under the ensemble divisor, so such a trace
+        would mix two conversions; it is left out until the conversion is shared.
+        """
+        divisors = _db.ensemble_divisors(list(file_ids.values()), self._db_path, conn=conn)
+        return {p for p, fid in file_ids.items() if fid in divisors}
+
     def add_event(self, path: str) -> None:
         stored = self._stored_segment_fit(path)
         if stored is None:
@@ -662,8 +672,12 @@ class _TwoDHWindowBase(QMainWindow):
                 ["snapoff_piezo_nm", "offset_retr", "invols_slope"], self._db_path)
 
             needs_fit = self._requires_fit()
+            ensemble = self._ensemble_paths(file_ids, conn=conn)
             for i, path in enumerate(valid_paths):
                 key = _db.normalize_path(path)
+                if path in ensemble:
+                    led.drop(path, "invols_ensemble")
+                    continue
                 stored = fits.get(path)
                 if stored is None:
                     led.drop(path, "no_segment_chosen", f"segment: {self._align_segment}")
@@ -813,12 +827,13 @@ class _TwoDHWindowBase(QMainWindow):
         right_idx (the segment's terminating rupture, an index into the
         curve's arrays — used by physical's "rupture" align mode) doesn't
         depend on the fit and is set whenever the segment itself exists.
-        Pure read. Returns None when there is no stored ROI, or the chosen
+        Pure read. Returns None for a file with an ensemble InvOLS in force
+        (see _ensemble_paths), when there is no stored ROI, or the chosen
         segment doesn't exist, or (primary/secondary only) that manual
         pick is unset or stale relative to the current segmentation — see
         roi_pipeline.resolve_segment_override."""
         fid = _db.get_file_id(file_path, self._db_path, conn=conn)
-        if fid is None:
+        if fid is None or self._ensemble_paths({file_path: fid}, conn=conn):
             return None
         doc = _db.get_latest_event_map(fid, self._db_path, conn=conn)
         return self._segment_fit_from_doc(fid, doc, conn=conn)
@@ -903,7 +918,11 @@ class _TwoDHWindowBase(QMainWindow):
         # tooltip carries the per-reason breakdown; the line itself stays one
         # line because it sits directly under the image it describes.
         if self._ledger.n_dropped:
-            self._stats_label.setText(f"{n:,} events   ·   {self._ledger.summary('built')}")
+            line = f"{n:,} events   ·   {self._ledger.summary('built')}"
+            n_ensemble = self._ledger.by_reason().get("invols_ensemble", 0)
+            if n_ensemble:
+                line += f"   ·   {n_ensemble:,} left out: ensemble InvOLS"
+            self._stats_label.setText(line)
             self._stats_label.setToolTip(self._ledger.report())
         else:
             self._stats_label.setText(f"{n} events")

@@ -62,6 +62,7 @@ DROP_REASONS: dict[str, str] = {
     "no_landmarks":       "landmarks missing — no ROI to build from",
     "no_histogram":       "the per-curve histogram could not be built",
     "not_finite":         "the value is missing or not a finite number",
+    "invols_ensemble":    "uses an ensemble InvOLS; the 2D histograms still convert each trace with its own fit",
     "cancelled":          "the build was cancelled before reaching this curve",
 }
 
