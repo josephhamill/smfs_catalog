@@ -65,6 +65,9 @@ agreed, fork this repository on GitHub and open a pull request from your fork.
   experimentalist's curves are analysed under their own profile.
 - **invOLS** — inverse optical lever sensitivity: the factor that converts the
   detector signal to cantilever deflection in nanometres.
+- **Ensemble InvOLS** — one invOLS applied to many traces, taken as the mean of
+  their own fits. The curve's own fit stays stored beside it. See
+  [`INVOLS.md`](INVOLS.md).
 - **Landmarks** — reference points found on each curve, such as contact with
   the surface, snap-off from it, and the onset of loading.
 - **Event / non-event** — the automatic verdict on a curve. An event curve

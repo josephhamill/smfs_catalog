@@ -18,6 +18,9 @@ them:
   extension the worm-like-chain curve is nearly straight, and a straight line
   constrains only the product of the two fitted lengths. If two populations
   disagree on persistence length, compare their `z_max` first.
+- **The InvOLS standard error is scatter only.** The InvOLS window reports the
+  standard error of the mean of the per-trace values. Errors shared by every
+  trace, such as in the instrument value, are not in it.
 - **Nothing is rejected automatically.** An unphysical-looking fit is a real
   answer to what best explains the data under the model; judging it is the
   analyst's job, and the criteria gate makes any exclusion explicit and
