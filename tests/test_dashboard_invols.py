@@ -493,3 +493,16 @@ def test_a_fit_window_built_after_the_invols_window_is_linked_too(
     g.pump()
     assert to_window.n == 1
     assert g.controls_of(win).window_pts() == 160
+
+
+def test_a_second_click_with_an_unchanged_scope_keeps_a_drawn_box(env):
+    win = open_window(env)
+    win.set_method("box")
+    plot = g.plot_of(win)
+    plot.commit_box(g.hour(10) - 60, g.hour(12) + 60, 150.0, 250.0)
+    g.pump()
+    box = plot.box()
+    assert box is not None
+    click_invols_button(env)
+    assert invols_windows() == [win]
+    assert plot.box() == box

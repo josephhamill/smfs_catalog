@@ -519,3 +519,14 @@ def test_a_trace_without_an_instrument_value_is_not_in_the_range(make, tmp_path)
     win.set_method("all")
     g.pump()
     assert "instrument value 199.14 nm/V" in g.screen(win)
+
+
+def test_the_already_applied_tooltip_lists_every_way_to_apply_again(make, cat):
+    win = _applied_under_all(make, cat)
+    g.apply_button(win).click()
+    g.pump()
+    assert not g.apply_button(win).isEnabled()
+    tip = g.apply_button(win).toolTip()
+    assert "Already applied" in tip
+    for word in ("method", "average", "box", "scope", "fit settings"):
+        assert word in tip

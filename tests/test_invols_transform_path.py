@@ -434,6 +434,31 @@ def test_such_a_file_whose_fit_succeeds_has_its_row_set_to_null(tmp_path, bad):
     assert code_version == CODE
 
 
+# ── the event pass: an unusable instrument value, and an unchanged fit ────────
+
+@pytest.mark.parametrize("bad", UNUSABLE, ids=UNUSABLE_IDS)
+def test_a_fresh_own_fit_in_the_event_pass_with_an_unusable_instrument_stores_null(
+        tmp_path, bad):
+    c = _setup(tmp_path, instrument=bad)
+    assert _transform_rows(c) == []
+    _events(synth.make_force_curve(instrument=bad), c)
+    value, params_json, code_version = _transform_row(c)
+    assert value is None
+    assert params_json == synth.current_fit_key(c.db)
+    assert code_version == CODE
+
+
+def test_an_unchanged_fit_run_twice_in_the_event_pass_writes_the_row_once(tmp_path):
+    c = _setup(tmp_path)
+    curve = synth.make_force_curve()
+    _events(curve, c)
+    _stamp_computed_at(c.db, c.fid)
+    before = _transform_rows(c)
+    assert before[0][3] == SENTINEL
+    _events(curve, c)
+    assert _transform_rows(c) == before
+
+
 # ── the shared 2DH conversion is not part of this feature ────────────────────
 
 def _function_dump(source, name):

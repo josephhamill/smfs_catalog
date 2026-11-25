@@ -758,3 +758,26 @@ def test_curve_label_shows_no_rms_for_a_nan_slope_even_with_an_own_rms(tmp_path)
     label = store.curve_label(synth.path_of(1), float("nan"), INSTRUMENT,
                               db_path, own_rms=0.3)
     assert "RMS=" not in label
+
+
+# ── A group of one trace reads in the singular ─────────────────────────────────
+
+def test_source_label_of_a_group_of_one_trace_is_singular(tmp_path):
+    db_path, ids = _standard(tmp_path)
+    synth.add_group(db_path, ids[:1], 210.0)
+    text = store.source_labels(ids[:1], db_path)[ids[0]]
+    assert text.startswith("ensemble of 1 trace,")
+
+
+def test_source_label_of_a_group_of_two_traces_stays_plural(tmp_path):
+    db_path, ids = _standard(tmp_path)
+    synth.add_group(db_path, ids[:2], 210.0)
+    text = store.source_labels(ids[:1], db_path)[ids[0]]
+    assert text.startswith("ensemble of 2 traces,")
+
+
+def test_curve_label_of_a_group_of_one_trace_is_singular(tmp_path):
+    db_path, ids = _label_catalog(tmp_path)
+    synth.add_group(db_path, ids[:1], 210.0)
+    label = store.curve_label(synth.path_of(1), -0.9852, INSTRUMENT, db_path)
+    assert "InvOLS in use 210.00 nm/V (ensemble of 1 trace) · own fit" in label
