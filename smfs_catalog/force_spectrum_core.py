@@ -149,6 +149,7 @@ def _stats(f: np.ndarray, f_fit: np.ndarray, n_params: int) -> dict:
 
 
 def fit_bell_evans(ln_r: np.ndarray, f: np.ndarray, kT: float) -> SpectrumFit | None:
+    """Bell-Evans fit of force against ln(loading rate): a straight line giving x_b and log10 k_off, or None if no positive-slope line fits."""
     lf = regression.linear_fit(ln_r, f)
     if lf is None or lf.slope <= 0.0:
         return None

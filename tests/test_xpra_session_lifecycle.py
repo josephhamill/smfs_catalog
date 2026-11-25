@@ -49,6 +49,12 @@ from pathlib import Path
 
 import pytest
 
+# _ensure_display() only reaches for xpra on Linux, and the fake xpra below is a
+# shell script Windows cannot run, so on any other platform these would fail
+# for reasons that say nothing about the launcher.
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="xpra is Linux-only")
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))

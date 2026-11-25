@@ -217,5 +217,5 @@ class ChainFit:
             if float(self.force(x_hi)) < F_target:
                 return None   # above the pole: unreachable
             return float(_brentq(lambda x: float(self.force(x)) - F_target, x_lo, x_hi))
-        except Exception:
+        except (ValueError, RuntimeError, ZeroDivisionError):
             return None

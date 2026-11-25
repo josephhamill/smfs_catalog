@@ -19,6 +19,7 @@ def _head() -> str:
 
 
 def main() -> None:
+    """Write smfs_catalog/_build_stamp.py with the build commit (--commit, else git HEAD) and print its path."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", help="build commit; defaults to git HEAD")
     args = parser.parse_args()

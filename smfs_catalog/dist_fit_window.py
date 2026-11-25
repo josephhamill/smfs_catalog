@@ -69,7 +69,7 @@ from .dist_fit_core import (
     flatten_constraints,
 )
 from . import dist_fit_core as _dfc
-from .qt_utils import CancelableProgress, set_plot_title, set_si_label, fit_on_screen
+from .qt_utils import CancelableProgress, set_plot_title, set_si_label, fit_on_screen, report_handled, signals_blocked
 
 
 PEAK_COLORS = list(style.SERIES_LABELED)
@@ -229,9 +229,8 @@ class PeakRow(QFrame):
         return None if value == self.AUTO else value
 
     def set_start(self, value: float | None) -> None:
-        self._start.blockSignals(True)
-        self._start.setValue(self.AUTO if value is None else float(value))
-        self._start.blockSignals(False)
+        with signals_blocked(self._start):
+            self._start.setValue(self.AUTO if value is None else float(value))
 
     def _refresh_bounds_btn(self) -> None:
         """The button says whether this component is bounded, because a limit
@@ -473,6 +472,7 @@ class _PlotPane(QWidget):
 
     def show_fit(self, x_fine, y_total, y_components, colors, labels,
                  y_fit_at_bins, ci_band=None):
+        """Draw the fitted components, total curve and optional 95% band over the histogram, with the residual panel below."""
         # Remembered so toggling the CI checkbox can redraw without
         # re-running the fit (the fit is unchanged; only its rendering is).
         self._last_fit = (x_fine, y_total, y_components, colors, labels,
@@ -590,9 +590,8 @@ class _PlotPane(QWidget):
         if not auto and self._edges is not None:
             for spin, v in ((self._range_lo_spin, float(self._edges[0])),
                             (self._range_hi_spin, float(self._edges[-1]))):
-                spin.blockSignals(True)
-                spin.setValue(v)
-                spin.blockSignals(False)
+                with signals_blocked(spin):
+                    spin.setValue(v)
         self._replot()
 
     def _replot(self):
@@ -645,6 +644,11 @@ class _PlotPane(QWidget):
 
 
 # ── Model pane ────────────────────────────────────────────────────────────────
+
+def _set_save_status(label, text: str, colour: str = style.TEXT_GOOD) -> None:
+    label.setStyleSheet(style.qss_text(colour, size_px=10))
+    label.setText(text)
+
 
 class _ModelPane(QWidget):
     """
@@ -852,7 +856,7 @@ class _ModelPane(QWidget):
         self._last_fit = {}
         self._save_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
-        self._save_status.setText("")
+        _set_save_status(self._save_status, "")
 
     # ── Fitting ───────────────────────────────────────────────────────────────
 
@@ -879,11 +883,13 @@ class _ModelPane(QWidget):
             prog.close()
 
         if boot is None:
-            self._save_status.setText(
+            _set_save_status(
+                self._save_status,
                 "No confidence interval — too few resamples converged."
                 if not prog.cancelled else "Confidence interval cancelled.")
         elif boot.n_failed:
-            self._save_status.setText(
+            _set_save_status(
+                self._save_status,
                 f"{boot.n_failed} of {boot.n_draws} resamples did not converge; "
                 f"interval from the {boot.n_ok} that did.")
         return boot
@@ -1040,7 +1046,7 @@ class _ModelPane(QWidget):
                            starts, user_bounds, at_user_bound, constrained)
         self._update_stats(gof)
         self._record_fit(model_label, len(data), gof, saved=False)
-        self._save_status.setText("")
+        _set_save_status(self._save_status, "")
 
         param_labels = [
             f"{labels[i]}/{comp.param_names[j]}"
@@ -1386,8 +1392,9 @@ class _ModelPane(QWidget):
                 })
             if self._fit_history:
                 self._update_comparison_table()
-        except Exception:
-            pass
+        except Exception as exc:
+            _set_save_status(self._save_status, "", style.TEXT_BAD)
+            report_handled(self._save_status.setText, "Loading saved fits", exc)
 
     # ── DB save ───────────────────────────────────────────────────────────────
 
@@ -1552,7 +1559,7 @@ class _ModelPane(QWidget):
                 break
         self._update_comparison_table()
         self._save_btn.setEnabled(False)
-        self._save_status.setText("Saved ✔")
+        _set_save_status(self._save_status, "Saved ✔")
 
 
 # ── Main window ───────────────────────────────────────────────────────────────

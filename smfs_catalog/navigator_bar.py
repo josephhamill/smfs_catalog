@@ -59,6 +59,7 @@ from PyQt6.QtWidgets import (
 
 from . import db as _db
 from . import style
+from .qt_utils import signals_blocked
 
 
 # ── Speed slider math ─────────────────────────────────────────────────────────
@@ -318,9 +319,8 @@ class NavigatorBar(QWidget):
         this is not a DB read in the common case.
         """
         self._queue_ids = list(self._worker.queue_ids())
-        self._scrubber.blockSignals(True)
-        self._scrubber.setRange(0, max(0, len(self._queue_ids) - 1))
-        self._scrubber.blockSignals(False)
+        with signals_blocked(self._scrubber):
+            self._scrubber.setRange(0, max(0, len(self._queue_ids) - 1))
         self._scrubber.setEnabled(bool(self._queue_ids))
         self._sync_position(self._worker.playhead())
 
@@ -340,23 +340,20 @@ class NavigatorBar(QWidget):
         if idx is None:
             self._pos_label.setText(f"— / {total:,}")
             return
-        self._scrubber.blockSignals(True)
-        self._scrubber.setValue(idx)
-        self._scrubber.blockSignals(False)
+        with signals_blocked(self._scrubber):
+            self._scrubber.setValue(idx)
         self._pos_label.setText(f"{idx + 1:,} / {total:,}")
 
     def _sync_transport(self, paused: bool) -> None:
         forward = self._worker.direction() >= 0
         for btn, on in ((self._btn_fwd, not paused and forward),
                         (self._btn_rev, not paused and not forward)):
-            btn.blockSignals(True)
-            btn.setChecked(on)
-            btn.blockSignals(False)
+            with signals_blocked(btn):
+                btn.setChecked(on)
 
     def _sync_throttle(self, ms: int) -> None:
-        self._slider.blockSignals(True)
-        self._slider.setValue(throttle_to_slider(int(ms)))
-        self._slider.blockSignals(False)
+        with signals_blocked(self._slider):
+            self._slider.setValue(throttle_to_slider(int(ms)))
         self._rate_label.setText(throttle_label(int(ms)))
         self._btn_clear.setEnabled(int(ms) > 0)
 
@@ -523,16 +520,15 @@ class WorkerNavBar(QWidget):
         # made every visible diagnostic perform a full queue JOIN per curve.
         self._queue_ids = list(self._worker.queue_ids())
         total = len(self._queue_ids)
-        self._scrubber.blockSignals(True)
-        self._scrubber.setRange(0, max(0, total - 1))
-        self._scrubber.setEnabled(bool(total))
-        pos: int | None = None
-        if file_id is not None:
-            try:
-                idx = self._queue_ids.index(int(file_id))
-                self._scrubber.setValue(idx)
-                pos = idx + 1
-            except ValueError:
-                pass
-        self._scrubber.blockSignals(False)
+        with signals_blocked(self._scrubber):
+            self._scrubber.setRange(0, max(0, total - 1))
+            self._scrubber.setEnabled(bool(total))
+            pos: int | None = None
+            if file_id is not None:
+                try:
+                    idx = self._queue_ids.index(int(file_id))
+                    self._scrubber.setValue(idx)
+                    pos = idx + 1
+                except ValueError:
+                    pass
         self._label.setText(f"{pos} / {total}" if pos is not None else f"— / {total}")

@@ -1280,7 +1280,7 @@ def _fit_wlc_window(
         popt, pcov = fit_model(
             wlc, x, F, p0=[guess_l_p, lc_guess], bounds=bounds
         )
-    except Exception:
+    except (RuntimeError, ValueError):
         return None
     perr = np.sqrt(np.diag(pcov))
     tau  = integrated_autocorr_time(F - wlc(x, *popt))
@@ -1331,7 +1331,7 @@ def _fit_chain_model(
 
     try:
         popt, pcov = fit_model(force, x, F, p0=np.clip(p0, lo, hi), bounds=(lo, hi))
-    except Exception:
+    except (RuntimeError, ValueError):
         return None
     resid = F - force(x, *popt)
     if not (np.all(np.isfinite(popt)) and np.all(np.isfinite(resid))):

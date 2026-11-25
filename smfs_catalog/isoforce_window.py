@@ -53,7 +53,7 @@ from .navigation import build_go_to_row
 from . import db as _db
 from . import export_utils as _export
 from .curve_loader import LoadError, load_force_curve
-from .qt_utils import _make_session_header, set_si_label, fit_on_screen
+from .qt_utils import _make_session_header, set_si_label, fit_on_screen, report_handled, signals_blocked
 from .quantities import format_value as _q   # ONE formatter: unit and
 # meaningful digits come from quantities.py, so the same measurement
 # cannot print as 166, 166.2 and 166.20 in three different windows.
@@ -236,13 +236,12 @@ class IsoforceWindow(QMainWindow):
         else:
             self._index = min(self._index, len(event_paths) - 1) if event_paths else 0
 
-        self._track_list.blockSignals(True)
-        self._track_list.clear()
-        for p in event_paths:
-            self._track_list.addItem(Path(p).name)
-        if event_paths:
-            self._track_list.setCurrentRow(self._index)
-        self._track_list.blockSignals(False)
+        with signals_blocked(self._track_list):
+            self._track_list.clear()
+            for p in event_paths:
+                self._track_list.addItem(Path(p).name)
+            if event_paths:
+                self._track_list.setCurrentRow(self._index)
 
         if not event_paths:
             self._clear_plots()
@@ -389,9 +388,8 @@ class IsoforceWindow(QMainWindow):
         self._prev_btn.setEnabled(self._index > 0)
         self._next_btn.setEnabled(self._index < n - 1)
 
-        self._track_list.blockSignals(True)
-        self._track_list.setCurrentRow(self._index)
-        self._track_list.blockSignals(False)
+        with signals_blocked(self._track_list):
+            self._track_list.setCurrentRow(self._index)
         self._track_list.scrollTo(self._track_list.currentIndex())
 
         path = self._event_paths[self._index]
@@ -438,8 +436,8 @@ class IsoforceWindow(QMainWindow):
                 file_id=file_id, param_set=param_set,
             )
             events, offset, inv, snap = res.events, res.offset, res.invols, res.snap_piezo
-        except Exception:
-            self._plot.setTitle("Multi-event computation failed")
+        except Exception as exc:
+            report_handled(self._plot.setTitle, "Multi-event computation", exc)
             return
         if not events.rois:
             self._plot.setTitle("No ROI found — analyse / adjust thresholds")

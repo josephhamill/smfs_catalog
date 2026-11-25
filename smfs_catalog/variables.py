@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import crashlog
 from . import db as _db
 from . import quantities as _quant
 from .roi_pipeline import (
@@ -444,7 +445,8 @@ def available(paths: list[str], db_path: str = _db.DEFAULT_DB_PATH) -> list[Vari
     ]
     try:
         present = set(_db.get_queue_analysis_types(db_path))
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - any DB failure falls back to the static labels
+        crashlog.log_handled("Load analysis types", exc)
         present = set()
     present |= set(_ANALYSIS_LABELS)
     for k in sorted(present):

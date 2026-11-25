@@ -7,7 +7,6 @@ comments or docstrings as evidence about behaviour.
 from __future__ import annotations
 
 import ast
-from collections import defaultdict
 from pathlib import Path
 
 
@@ -42,6 +41,7 @@ def dotted(node: ast.AST) -> str | None:
 
 
 def package_imports(tree: ast.Module) -> set[str]:
+    """Return the names of the package modules that `tree` imports."""
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.level:
@@ -59,6 +59,7 @@ def package_imports(tree: ast.Module) -> set[str]:
 
 
 def callable_rows(tree: ast.Module):
+    """Return a sorted (start, end, qualified name, kind, role, internal calls) row for every function and method in `tree`."""
     parents: dict[ast.AST, ast.AST] = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
@@ -102,6 +103,7 @@ def callable_rows(tree: ast.Module):
 
 
 def main() -> None:
+    """Parse run_dashboard.py and the package modules and write the architecture map."""
     paths = [ROOT / "run_dashboard.py", *sorted(PKG.glob("*.py"))]
     trees = {module_name(p): ast.parse(p.read_text(encoding="utf-8-sig")) for p in paths}
     lines = [

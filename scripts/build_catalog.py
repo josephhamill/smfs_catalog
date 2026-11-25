@@ -417,6 +417,7 @@ def _clear_output(out, force):
 
 
 def build(version, curves_path, live, out, force, python, keep):
+    """Build the test catalog at `out` with `version`'s own code in a subprocess, and return its report."""
     curves = resolve_curves(read_curve_list(curves_path), live)
     paths = [c["path"] for c in curves]
     people = {}
@@ -464,6 +465,7 @@ def build(version, curves_path, live, out, force, python, keep):
 
 
 def main(argv=None):
+    """Command line: build the catalog for a version and print a summary, or run the build payload when called with --runner."""
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument("version", nargs="?",
                     help="tag or commit whose code builds the catalog")

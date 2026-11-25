@@ -655,7 +655,7 @@ def bootstrap_fit_ci(
                 fn, centres, heights, p0=popt, bounds=bounds,
                 maxfev=20000, method="trf",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001  a failed draw is counted in n_failed
             # A draw that will not converge is a fact about this fit's
             # stability, so it is counted and reported rather than dropped.
             n_failed += 1

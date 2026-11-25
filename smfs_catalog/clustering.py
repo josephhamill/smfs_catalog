@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from . import crashlog
+
 
 @dataclass(frozen=True)
 class Clustering:
@@ -174,10 +176,10 @@ def _notify() -> None:
     for cb in list(_subscribers):
         try:
             cb()
-        except Exception:            # noqa: BLE001
+        except Exception as exc:     # noqa: BLE001 - isolate one failing subscriber
             # One window failing to repaint must not stop the others being
             # told, and must not take down the k-means run that published.
-            pass
+            crashlog.log_handled("Clustering subscriber", exc)
 
 
 def now_stamp() -> str:

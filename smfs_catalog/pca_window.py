@@ -30,6 +30,7 @@ from . import style
 from . import clustering as _clustering
 from . import quantities as _quant
 from . import export_utils as _export
+from .provenance import sklearn_version
 from .mean_curve_window import MeanCurveWindow
 from .qt_utils import FixedDomainPlot, set_plot_title, set_si_label, fit_on_screen
 from PyQt6.QtCore import Qt, QRectF
@@ -61,17 +62,6 @@ _PCA_SEED = 0
 _KMEANS_SEED     = 42
 _KMEANS_N_PCS    = 3     # k-means runs in PC1-_KMEANS_N_PCS space
 _KMEANS_N_INIT   = "auto"
-
-
-def _sklearn_version() -> str:
-    """Recorded in the manifest: k-means' exact labels can depend on the
-    implementation, so "same seed" is only reproducible alongside the version
-    that honoured it."""
-    try:
-        import sklearn
-        return str(sklearn.__version__)
-    except Exception:
-        return "unknown"
 
 
 _N_LOADINGS   = 3    # loading panels shown (PC1, PC2, PC3)
@@ -598,7 +588,7 @@ class PCAWindow(QMainWindow):
             k               = self._kmeans_k,
             seed            = _KMEANS_SEED,
             n_pcs           = self._kmeans_n_pcs,
-            sklearn_version = _sklearn_version(),
+            sklearn_version = sklearn_version(),
             source          = source,
             created_at      = _clustering.now_stamp(),
         ))
@@ -997,7 +987,7 @@ class PCAWindow(QMainWindow):
                     cluster_matrix_x_range=list(self._display_x_range),
                     cluster_matrix_f_range=list(self._display_f_range),
                     cluster_matrix_z_quantity="counts_per_trace",
-                    sklearn_version=_sklearn_version(),
+                    sklearn_version=sklearn_version(),
                 )
             else:
                 g.note(kmeans_k=None,
