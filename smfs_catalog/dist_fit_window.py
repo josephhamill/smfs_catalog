@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import numpy as np
 from scipy import optimize
@@ -58,18 +59,20 @@ from PyQt6.QtWidgets import (
 
 from . import style
 from . import db as _db
+from .fit_records import DistFitRecord
 from . import histogram_binning as _hb
 from . import quantities as _quant
 from . import export_utils as _export
 from .export_utils import slug as _slug
 from .dist_fit_core import (
-    MODELS, MODEL_NAMES, ci_manifest_fields, bootstrap_fit_ci, CI_N_DRAWS,
+    MODELS, MODEL_NAMES, ci_manifest_fields, bootstrap_fit_ci, CiSettings,
     centre_permutation, composite_bounds, composite_guess, fit_stats,
     make_composite, sort_components_by_centre, at_bound_flags,
     flatten_constraints,
 )
 from . import dist_fit_core as _dfc
-from .qt_utils import CancelableProgress, set_plot_title, set_si_label, fit_on_screen
+from .plot_context import FitContext
+from .qt_utils import CancelableProgress, set_plot_title, set_si_label, fit_on_screen, report_handled, signals_blocked
 
 
 PEAK_COLORS = list(style.SERIES_LABELED)
@@ -229,9 +232,8 @@ class PeakRow(QFrame):
         return None if value == self.AUTO else value
 
     def set_start(self, value: float | None) -> None:
-        self._start.blockSignals(True)
-        self._start.setValue(self.AUTO if value is None else float(value))
-        self._start.blockSignals(False)
+        with signals_blocked(self._start):
+            self._start.setValue(self.AUTO if value is None else float(value))
 
     def _refresh_bounds_btn(self) -> None:
         """The button says whether this component is bounded, because a limit
@@ -473,6 +475,7 @@ class _PlotPane(QWidget):
 
     def show_fit(self, x_fine, y_total, y_components, colors, labels,
                  y_fit_at_bins, ci_band=None):
+        """Draw the fitted components, total curve and optional 95% band over the histogram, with the residual panel below."""
         # Remembered so toggling the CI checkbox can redraw without
         # re-running the fit (the fit is unchanged; only its rendering is).
         self._last_fit = (x_fine, y_total, y_components, colors, labels,
@@ -590,9 +593,8 @@ class _PlotPane(QWidget):
         if not auto and self._edges is not None:
             for spin, v in ((self._range_lo_spin, float(self._edges[0])),
                             (self._range_hi_spin, float(self._edges[-1]))):
-                spin.blockSignals(True)
-                spin.setValue(v)
-                spin.blockSignals(False)
+                with signals_blocked(spin):
+                    spin.setValue(v)
         self._replot()
 
     def _replot(self):
@@ -646,6 +648,27 @@ class _PlotPane(QWidget):
 
 # ── Model pane ────────────────────────────────────────────────────────────────
 
+def _set_save_status(label, text: str, colour: str = style.TEXT_GOOD) -> None:
+    label.setStyleSheet(style.qss_text(colour, size_px=10))
+    label.setText(text)
+
+
+def _fit_config_json(f: dict, normalized) -> str:
+    return json.dumps({
+        "n_bins": f["n_bins"],
+        "normalized": normalized,
+        "range_lo": f["range_lo"],
+        "range_hi": f["range_hi"],
+        "range_is_auto": f["range_is_auto"],
+        "n_excluded_by_range": f["n_excluded_by_range"],
+        "user_peak_starts": f["starts"],
+        "user_param_bounds": [None if lim is None else list(lim)
+                              for lim in (f.get("user_bounds") or [])],
+        "constrained": bool(f.get("constrained", False)),
+        "at_user_bound": list(f.get("at_user_bound") or []),
+    })
+
+
 class _ModelPane(QWidget):
     """
     Model builder, fit results, model comparison, and DB save.
@@ -657,18 +680,15 @@ class _ModelPane(QWidget):
         plot_pane:     _PlotPane,
         variable:      str,
         units:         str,
-        db_path:       str,
+        context:       FitContext,
         parent=None,
-        paths:         list[str] | None = None,
-        caption:       str = "",
     ):
         super().__init__(parent)
         self._plot     = plot_pane
         self._variable = variable
         self._units    = units
-        self._db_path  = db_path
-        self._paths    = list(paths) if paths else []
-        self._caption  = caption
+        self._context  = replace(
+            context, paths=list(context.paths) if context.paths else [])
         self._rows:     list[PeakRow] = []
         self._last_fit: dict          = {}
         self._pick_row: PeakRow | None = None
@@ -852,7 +872,7 @@ class _ModelPane(QWidget):
         self._last_fit = {}
         self._save_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
-        self._save_status.setText("")
+        _set_save_status(self._save_status, "")
 
     # ── Fitting ───────────────────────────────────────────────────────────────
 
@@ -865,25 +885,28 @@ class _ModelPane(QWidget):
         and abort.  Cancelling yields no interval (see
         bootstrap_fit_ci) — never a quiet fall back to the covariance.
         """
+        ci = CiSettings()
         prog = CancelableProgress(
-            self, f"Bootstrapping the confidence interval — {CI_N_DRAWS} refits…",
-            CI_N_DRAWS,
+            self, f"Bootstrapping the confidence interval — {ci.n_draws} refits…",
+            ci.n_draws,
         )
         try:
             boot = bootstrap_fit_ci(
                 components, data, self._plot.edges, self._plot.normalized,
-                popt, bounds, x_fine,
+                popt, bounds, x_fine, ci,
                 progress=lambda i, n: prog.tick(i, n),
             )
         finally:
             prog.close()
 
         if boot is None:
-            self._save_status.setText(
+            _set_save_status(
+                self._save_status,
                 "No confidence interval — too few resamples converged."
                 if not prog.cancelled else "Confidence interval cancelled.")
         elif boot.n_failed:
-            self._save_status.setText(
+            _set_save_status(
+                self._save_status,
                 f"{boot.n_failed} of {boot.n_draws} resamples did not converge; "
                 f"interval from the {boot.n_ok} that did.")
         return boot
@@ -1040,7 +1063,7 @@ class _ModelPane(QWidget):
                            starts, user_bounds, at_user_bound, constrained)
         self._update_stats(gof)
         self._record_fit(model_label, len(data), gof, saved=False)
-        self._save_status.setText("")
+        _set_save_status(self._save_status, "")
 
         param_labels = [
             f"{labels[i]}/{comp.param_names[j]}"
@@ -1369,7 +1392,7 @@ class _ModelPane(QWidget):
     def _load_saved_fits(self):
         """Pre-populate comparison table with fits saved to DB for this variable."""
         try:
-            rows = _db.get_distribution_fits(self._variable, self._db_path)
+            rows = _db.get_distribution_fits(self._variable, self._context.db_path)
             for row in rows:
                 gof = json.loads(row["gof_json"])
                 self._fit_history.append({
@@ -1386,8 +1409,9 @@ class _ModelPane(QWidget):
                 })
             if self._fit_history:
                 self._update_comparison_table()
-        except Exception:
-            pass
+        except Exception as exc:
+            _set_save_status(self._save_status, "", style.TEXT_BAD)
+            report_handled(self._save_status.setText, "Loading saved fits", exc)
 
     # ── DB save ───────────────────────────────────────────────────────────────
 
@@ -1416,7 +1440,7 @@ class _ModelPane(QWidget):
             "constrained":         bool(f.get("constrained", False)),
             "n_params_at_user_bound": sum(
                 1 for s in (f.get("at_user_bound") or []) if s is not None),
-            "caption":     self._caption,
+            "caption":     self._context.caption,
         }
 
     def _export_fit(self):
@@ -1436,10 +1460,10 @@ class _ModelPane(QWidget):
         parts = ["_params.csv", "_histogram.csv", "_curve.csv"]
         stem  = f"fit_{_slug(self._variable)}"
         with _export.export_group(
-            self._db_path, stem, parts, kind="distribution_fit",
+            self._context.db_path, stem, parts, kind="distribution_fit",
         ) as g:
             g.contributing_files([
-                path for path, keep in zip(self._paths, self._plot.fit_mask) if keep
+                path for path, keep in zip(self._context.paths, self._plot.fit_mask) if keep
             ])
             g.note_dict(self.export_provenance())
             g.note(goodness_of_fit=f["gof"],
@@ -1448,8 +1472,9 @@ class _ModelPane(QWidget):
             # it and carries the covariance needed to reconstruct the fit.
             boot = f.get("boot")
             g.note_dict(boot.manifest_fields(f.get("pcov")) if boot is not None
-                        else ci_manifest_fields(f.get("pcov"), False,
-                                                method="none — no interval computed"))
+                        else ci_manifest_fields(
+                            f.get("pcov"), False,
+                            CiSettings(method="none — no interval computed")))
             # Every refit was handed the same limits, so a limit that binds
             # truncates the interval too. That is correct GIVEN the limits, and
             # the manifest has to say the interval is conditional on them.
@@ -1515,31 +1540,21 @@ class _ModelPane(QWidget):
             )
         ])
         gof_json = json.dumps(f["gof"])
-        fit_config_json = json.dumps({
-            "n_bins": f["n_bins"],
-            "normalized": self._plot.normalized,
-            "range_lo": f["range_lo"],
-            "range_hi": f["range_hi"],
-            "range_is_auto": f["range_is_auto"],
-            "n_excluded_by_range": f["n_excluded_by_range"],
-            "user_peak_starts": f["starts"],
-            "user_param_bounds": [None if lim is None else list(lim)
-                                  for lim in (f.get("user_bounds") or [])],
-            "constrained": bool(f.get("constrained", False)),
-            "at_user_bound": list(f.get("at_user_bound") or []),
-        })
+        fit_config_json = _fit_config_json(f, self._plot.normalized)
 
         try:
             _db.save_distribution_fit(
-                variable        = self._variable,
-                units           = self._units,
-                n_values        = f["n_values"],
-                n_peaks         = f["n_peaks"],
-                model_label     = f["model_label"],
-                params_json     = params_json,
-                gof_json        = gof_json,
-                fit_config_json = fit_config_json,
-                db_path         = self._db_path,
+                DistFitRecord(
+                    variable=self._variable,
+                    units=self._units,
+                    n_values=f["n_values"],
+                    n_peaks=f["n_peaks"],
+                    model_label=f["model_label"],
+                    params_json=params_json,
+                    gof_json=gof_json,
+                    fit_config_json=fit_config_json,
+                ),
+                self._context.db_path,
             )
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
@@ -1552,7 +1567,7 @@ class _ModelPane(QWidget):
                 break
         self._update_comparison_table()
         self._save_btn.setEnabled(False)
-        self._save_status.setText("Saved ✔")
+        _set_save_status(self._save_status, "Saved ✔")
 
 
 # ── Main window ───────────────────────────────────────────────────────────────
@@ -1616,8 +1631,8 @@ class DistFitWindow(QMainWindow):
 
         self._plot_pane  = _PlotPane(pass_values, variable_name, units, caption=caption)
         self._model_pane = _ModelPane(
-            self._plot_pane, variable_name, units, db_path,
-            paths=self._paths, caption=caption,
+            self._plot_pane, variable_name, units,
+            FitContext(db_path, self._paths, caption),
         )
 
         splitter.addWidget(self._plot_pane)

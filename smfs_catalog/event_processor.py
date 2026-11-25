@@ -20,11 +20,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 import numpy as np
 
 from .histogram_binning import counts_in_range
-from .models import ChainFit, normalize_wlc
+from .models import normalize_wlc
 
 # ── WLC-normalised 2DH grid ───────────────────────────────────────────────────
 WLC_X_BINS  = 128
@@ -129,18 +130,25 @@ ALIGN_SEG_DEFAULT = "last"
 PHYS_F_STAR_DEFAULT = 50.0
 
 
+@dataclass(frozen=True)
+class HistGrid:
+    """A 2DH grid: bin counts and axis ranges. Fields are stored as given, so
+    the cache-key strings keep ints as ints and floats as floats."""
+    x_bins:  int
+    f_bins:  int
+    x_range: tuple
+    f_range: tuple
+
+
 def _wlc_grid_params(
-    x_bins:  int   = WLC_X_BINS,
-    f_bins:  int   = WLC_F_BINS,
-    x_range: tuple = WLC_X_RANGE,
-    f_range: tuple = WLC_F_RANGE,
+    grid: HistGrid = HistGrid(WLC_X_BINS, WLC_F_BINS, WLC_X_RANGE, WLC_F_RANGE),
     align_segment: str = ALIGN_SEG_DEFAULT,
 ) -> str:
     """Cache key for normalized 2DH, including every histogram-changing choice."""
     return json.dumps(
-        {"x_bins": x_bins, "f_bins": f_bins,
-         "x_min": x_range[0], "x_max": x_range[1],
-         "f_min": f_range[0], "f_max": f_range[1],
+        {"x_bins": grid.x_bins, "f_bins": grid.f_bins,
+         "x_min": grid.x_range[0], "x_max": grid.x_range[1],
+         "f_min": grid.f_range[0], "f_max": grid.f_range[1],
          "seg": align_segment, "v": 6},  # v6: uint32 count storage
         separators=(",", ":"),
     )
@@ -148,31 +156,20 @@ def _wlc_grid_params(
 
 def _phys_grid_params(
     F_star:  float,
-    x_bins:  int   = PHYS_X_BINS,
-    f_bins:  int   = PHYS_F_BINS,
-    x_range: tuple = PHYS_X_RANGE,
-    f_range: tuple = PHYS_F_RANGE,
+    grid: HistGrid = HistGrid(PHYS_X_BINS, PHYS_F_BINS, PHYS_X_RANGE, PHYS_F_RANGE),
     align_mode:    str = PHYS_ALIGN_DEFAULT,
     align_segment: str = ALIGN_SEG_DEFAULT,
 ) -> str:
     """Cache key for physical 2DH — every choice that changes the histogram is
     part of the key, so a different alignment or fit-segment recomputes."""
     return json.dumps(
-        {"type": "phys", "x_bins": x_bins, "f_bins": f_bins,
-         "x_min": x_range[0], "x_max": x_range[1],
-         "f_min": f_range[0], "f_max": f_range[1],
+        {"type": "phys", "x_bins": grid.x_bins, "f_bins": grid.f_bins,
+         "x_min": grid.x_range[0], "x_max": grid.x_range[1],
+         "f_min": grid.f_range[0], "f_max": grid.f_range[1],
          "F_star_pN": float(F_star),
          "align": align_mode, "seg": align_segment, "v": 4},   # v4: uint32 count storage
         separators=(",", ":"),
     )
-
-
-def _wlc_x_at_force(F_target: float, l_p: float, l_c: float) -> float | None:
-    """
-    Return extension x (nm) where Marko-Siggia WLC(x, l_p, l_c) = F_target
-    (pN), or None if F_target is unreachable for these parameters.
-    """
-    return ChainFit("wlc", (l_p, l_c)).x_at_force(F_target)
 
 
 # ── Physical-2DH alignment: one anchor subroutine per registration mode ───────
@@ -222,53 +219,30 @@ PHYS_ALIGN_ANCHORS = {
 
 def compute_physical_histogram_at(
     x: np.ndarray, F: np.ndarray, anchor: float | None,
-    x_bins:  int   = PHYS_X_BINS,
-    f_bins:  int   = PHYS_F_BINS,
-    x_range: tuple = PHYS_X_RANGE,
-    f_range: tuple = PHYS_F_RANGE,
+    grid: HistGrid = HistGrid(PHYS_X_BINS, PHYS_F_BINS, PHYS_X_RANGE, PHYS_F_RANGE),
 ) -> np.ndarray | None:
-    """(PHYS_X_BINS × PHYS_F_BINS) uint32 count histogram of (x − anchor) vs F, where
+    """(grid.x_bins × grid.f_bins) uint32 count histogram of (x − anchor) vs F, where
     `anchor` (nm) is the extension mapped to Δx=0 by one of the phys_anchor_*
     subroutines.  Returns None when anchor is None (the curve is dropped)."""
     if anchor is None:
         return None
     H, _, _ = np.histogram2d(
         x - anchor, F,
-        bins=[x_bins, f_bins],
-        range=[x_range, f_range],
+        bins=[grid.x_bins, grid.f_bins],
+        range=[grid.x_range, grid.f_range],
     )
     return H.astype(np.uint32)
 
 
-def compute_physical_histogram(
-    x: np.ndarray, F: np.ndarray,
-    l_p: float, l_c: float,
-    F_star: float,
-    x_bins:  int   = PHYS_X_BINS,
-    f_bins:  int   = PHYS_F_BINS,
-    x_range: tuple = PHYS_X_RANGE,
-    f_range: tuple = PHYS_F_RANGE,
-) -> np.ndarray | None:
-    """Back-compatible F*-registered histogram (Δx = x − x*(F*)): the F* anchor
-    plus compute_physical_histogram_at.  Returns None if x*(F*) is unreachable."""
-    return compute_physical_histogram_at(
-        x, F, _wlc_x_at_force(F_star, l_p, l_c),
-        x_bins=x_bins, f_bins=f_bins, x_range=x_range, f_range=f_range,
-    )
-
-
 def compute_wlc_histogram(
     x: np.ndarray, F: np.ndarray, l_p: float, l_c: float,
-    x_bins:  int   = WLC_X_BINS,
-    f_bins:  int   = WLC_F_BINS,
-    x_range: tuple = WLC_X_RANGE,
-    f_range: tuple = WLC_F_RANGE,
+    grid: HistGrid = HistGrid(WLC_X_BINS, WLC_F_BINS, WLC_X_RANGE, WLC_F_RANGE),
 ) -> np.ndarray:
     """Return a (x_bins × f_bins) uint32 count histogram in normalised WLC coords."""
     x_n, F_n = normalize_wlc(x, F, l_p, l_c)
     H, _, _ = np.histogram2d(
         x_n, F_n,
-        bins=[x_bins, f_bins],
-        range=[x_range, f_range],
+        bins=[grid.x_bins, grid.f_bins],
+        range=[grid.x_range, grid.f_range],
     )
     return H.astype(np.uint32)

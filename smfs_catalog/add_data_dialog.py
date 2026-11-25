@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 from . import db as _db
 from . import scanner as _scanner
 from . import style
+from .file_filter import FileFilter
 from .qt_utils import CancelableProgress, fit_on_screen
 
 
@@ -152,7 +153,7 @@ class AddDataDialog(QDialog):
             return
 
         # Every descriptive field starts NULL until "Define metadata…" runs.
-        known = bool(_db.list_files(db_path=self._db_path, directory=path))
+        known = bool(_db.list_files(self._db_path, FileFilter(directory=path)))
         prog = _ScanProgress(self, f"Scanning {Path(path).name}…")
         try:
             n_found, n_updated, n_errors, cancelled = _scanner.scan_directory(

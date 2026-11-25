@@ -50,7 +50,7 @@ from . import db as _db
 from . import export_utils as _export
 from .export_utils import slug as _slug
 from .curve_loader import LoadError, load_force_curve
-from .qt_utils import _make_session_header, set_si_label, fit_on_screen
+from .qt_utils import _make_session_header, set_si_label, fit_on_screen, signals_blocked
 from . import quantities as _quant
 from . import event_processor as _ep
 # This window drives its OWN QTimer over its own curve list — it is not the
@@ -483,13 +483,12 @@ class ClassLinePlotWindow(QMainWindow):
         self._rows = [r for r in queue if r["event"] == self._classification]
         self._cohort_paths = [r["path"] for r in self._rows]
         self._event_paths  = [r["path"] for r in queue if r["event"] == "event"]
-        self._list.blockSignals(True)
-        self._list.clear()
-        for row in self._rows:
-            item = QListWidgetItem(row["filename"] or row["path"])
-            item.setData(Qt.ItemDataRole.UserRole, row["path"])
-            self._list.addItem(item)
-        self._list.blockSignals(False)
+        with signals_blocked(self._list):
+            self._list.clear()
+            for row in self._rows:
+                item = QListWidgetItem(row["filename"] or row["path"])
+                item.setData(Qt.ItemDataRole.UserRole, row["path"])
+                self._list.addItem(item)
         n_rows = len(self._rows)
         self._count_lbl.setText(
             f"{n_rows} non-event curve{'s' if n_rows != 1 else ''} in queue"
@@ -604,9 +603,8 @@ class ClassLinePlotWindow(QMainWindow):
         self._prev_btn.setEnabled(self._index > 0)
         self._next_btn.setEnabled(self._index < n - 1)
 
-        self._list.blockSignals(True)
-        self._list.setCurrentRow(self._index)
-        self._list.blockSignals(False)
+        with signals_blocked(self._list):
+            self._list.setCurrentRow(self._index)
         self._list.scrollTo(self._list.currentIndex())
 
         row  = self._rows[self._index]

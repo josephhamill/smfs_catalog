@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from dataclasses import replace
 
 import numpy as np
 from sklearn.mixture import GaussianMixture
@@ -52,9 +53,12 @@ from PyQt6.QtWidgets import (
 
 from . import style
 from . import db as _db
+from .fit_records import GmmFitRecord
 from . import quantities as _quant
 from . import export_utils as _export
 from . import variables as _vars
+from .plot_context import AxisLabels, FitContext
+from .provenance import sklearn_version
 from .gmm_fit_core import (
     COMPONENT_COLORS,
     COV_TYPE_LABELS, COV_TYPES,
@@ -70,17 +74,6 @@ from .quantities import format_value as _q   # ONE formatter: unit and
 _N_INIT = 10   # EM restarts — trades runtime for robustness against local optima
 
 
-def _sklearn_version() -> str:
-    """Recorded in the export manifest: a mixture fit's exact component
-    assignment can depend on the implementation, so reproducing one needs the
-    version as well as the settings."""
-    try:
-        import sklearn
-        return str(sklearn.__version__)
-    except Exception:
-        return "unknown"
-
-
 # ── Scatter pane ──────────────────────────────────────────────────────────────
 
 class _ScatterPane(QWidget):
@@ -93,10 +86,7 @@ class _ScatterPane(QWidget):
     def __init__(
         self,
         xy:      np.ndarray,   # (N, 2): col 0 = x, col 1 = y
-        x_label: str,
-        y_label: str,
-        x_unit:  str = "",
-        y_unit:  str = "",
+        axes:    AxisLabels,
         caption: str = "",
         parent   = None,
     ):
@@ -115,8 +105,8 @@ class _ScatterPane(QWidget):
         # si=False: this window prints the fitted means and covariances in
         # plain nm/pN in the table beside the plot, so an axis free to
         # relabel itself µm would show one fit at two scales at once.
-        set_si_label(self._plot, "bottom", x_label, x_unit, si=False)
-        set_si_label(self._plot, "left",   y_label, y_unit, si=False)
+        set_si_label(self._plot, "bottom", axes.x_label, axes.x_unit, si=False)
+        set_si_label(self._plot, "left",   axes.y_label, axes.y_unit, si=False)
         self._plot.showGrid(x=True, y=True, alpha=0.25)
         self._legend = self._plot.addLegend(offset=(10, 10))
         # On-canvas (survives pyqtgraph's Export…, unlike the header QLabel
@@ -136,6 +126,7 @@ class _ScatterPane(QWidget):
     # ── Fit overlay ───────────────────────────────────────────────────────────
 
     def show_fit(self, gm: GaussianMixture) -> None:
+        """Draw each mixture component's 1-sigma and 2-sigma ellipses and mean marker, largest weight first."""
         self.clear_fit()
 
         # Sort components largest weight first for consistent color assignment
@@ -194,24 +185,16 @@ class _ModelPane(QWidget):
         self,
         scatter_pane: _ScatterPane,
         xy:           np.ndarray,
-        x_variable:   str,
-        y_variable:   str,
-        db_path:      str,
-        x_unit:       str = "",
-        y_unit:       str = "",
+        axes:         AxisLabels,
+        context:      FitContext,
         parent        = None,
-        paths:        list[str] | None = None,
-        caption:      str = "",
     ):
         super().__init__(parent)
         self._scatter     = scatter_pane
         self._xy          = xy
-        self._x_variable  = x_variable
-        self._y_variable  = y_variable
-        self._x_unit, self._y_unit = x_unit, y_unit
-        self._db_path     = db_path
-        self._paths       = list(paths) if paths else []
-        self._caption     = caption
+        self._axes        = axes
+        self._context     = replace(
+            context, paths=list(context.paths) if context.paths else [])
         self._last_fit:   dict = {}
         self._last_gm:    GaussianMixture | None = None
         self._fit_history: list[dict] = []
@@ -264,8 +247,8 @@ class _ModelPane(QWidget):
         self._params_tbl = QTableWidget(0, 7)
         self._params_tbl.setHorizontalHeaderLabels(
             ["Component", "Weight",
-             _quant.with_unit("μ_x", x_unit), _quant.with_unit("μ_y", y_unit),
-             _quant.with_unit("σ_x", x_unit), _quant.with_unit("σ_y", y_unit), "ρ"]
+             _quant.with_unit("μ_x", axes.x_unit), _quant.with_unit("μ_y", axes.y_unit),
+             _quant.with_unit("σ_x", axes.x_unit), _quant.with_unit("σ_y", axes.y_unit), "ρ"]
         )
         self._params_tbl.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
@@ -565,15 +548,15 @@ class _ModelPane(QWidget):
         f = self._last_fit
         return {
             "window":       "gmm_fit",
-            "x_variable":   self._x_variable,
-            "y_variable":   self._y_variable,
+            "x_variable":   self._axes.x_label,
+            "y_variable":   self._axes.y_label,
             "model_label":  f.get("model_label"),
             "k_components": f.get("k_components"),
             "cov_type":     f.get("cov_label"),
             "n_values":     f.get("n_values"),
             "n_params":     f.get("n_params"),
             "n_init":       _N_INIT,
-            "caption":      self._caption,
+            "caption":      self._context.caption,
         }
 
     def _export_fit(self) -> None:
@@ -587,14 +570,14 @@ class _ModelPane(QWidget):
         f  = self._last_fit
         gm = self._last_gm
         with _export.export_group(
-            self._db_path,
-            f"fit_gmm_{_export.slug(self._x_variable)}_{_export.slug(self._y_variable)}",
+            self._context.db_path,
+            f"fit_gmm_{_export.slug(self._axes.x_label)}_{_export.slug(self._axes.y_label)}",
             ["_components.csv", "_points.csv"], kind="gmm_fit",
         ) as g:
-            g.contributing_files(self._paths)
+            g.contributing_files(self._context.paths)
             g.note_dict(self.export_provenance())
             g.note(goodness_of_fit=json_safe_statistics(f["gof"]),
-                   sklearn_version=_sklearn_version())
+                   sklearn_version=sklearn_version())
 
             rows = []
             order = component_order(gm)
@@ -621,12 +604,12 @@ class _ModelPane(QWidget):
             internal_labels = gm.predict(self._xy)
             labels = display_ids[internal_labels]
             resp   = gm.predict_proba(self._xy).max(axis=1)
-            have_paths = len(self._paths) == len(self._xy)
+            have_paths = len(self._context.paths) == len(self._xy)
             header = (["path"] if have_paths else []) + [
                 "x", "y", "component", "responsibility"]
             prows = []
             for i in range(len(self._xy)):
-                row = [self._paths[i]] if have_paths else []
+                row = [self._context.paths[i]] if have_paths else []
                 row += [float(self._xy[i, 0]), float(self._xy[i, 1]),
                         int(labels[i]), float(resp[i])]
                 prows.append(row)
@@ -640,18 +623,20 @@ class _ModelPane(QWidget):
         f = self._last_fit
         try:
             _db.save_gmm_fit(
-                x_variable      = self._x_variable,
-                y_variable      = self._y_variable,
-                n_values        = f["n_values"],
-                k_components    = f["k_components"],
-                cov_type        = f["cov_label"],
-                means_json      = json.dumps(f["means"]),
-                covs_json       = json.dumps(f["covs"]),
-                weights_json    = json.dumps(f["weights"]),
-                gof_json        = json.dumps(json_safe_statistics(f["gof"]),
-                                             allow_nan=False),
-                fit_config_json = json.dumps({"n_init": _N_INIT}),
-                db_path         = self._db_path,
+                GmmFitRecord(
+                    x_variable=self._axes.x_label,
+                    y_variable=self._axes.y_label,
+                    n_values=f["n_values"],
+                    k_components=f["k_components"],
+                    cov_type=f["cov_label"],
+                    means_json=json.dumps(f["means"]),
+                    covs_json=json.dumps(f["covs"]),
+                    weights_json=json.dumps(f["weights"]),
+                    gof_json=json.dumps(json_safe_statistics(f["gof"]),
+                                        allow_nan=False),
+                    fit_config_json=json.dumps({"n_init": _N_INIT}),
+                ),
+                self._context.db_path,
             )
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
@@ -724,18 +709,16 @@ class GmmFitWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        scatter_pane = _ScatterPane(pass_xy, self._X_LABEL, self._Y_LABEL,
-                                    self._X_UNIT, self._Y_UNIT, caption=caption)
+        scatter_pane = _ScatterPane(
+            pass_xy,
+            AxisLabels(self._X_LABEL, self._Y_LABEL, self._X_UNIT, self._Y_UNIT),
+            caption=caption)
         model_pane   = _ModelPane(
             scatter_pane,
             pass_xy,
-            self._X_VARIABLE,
-            self._Y_VARIABLE,
-            db_path,
-            x_unit=self._X_UNIT,
-            y_unit=self._Y_UNIT,
-            paths=self._paths,
-            caption=caption,
+            AxisLabels(self._X_VARIABLE, self._Y_VARIABLE,
+                       self._X_UNIT, self._Y_UNIT),
+            FitContext(db_path, self._paths, caption),
         )
 
         splitter.addWidget(scatter_pane)

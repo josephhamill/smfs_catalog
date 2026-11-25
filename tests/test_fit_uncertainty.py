@@ -471,7 +471,7 @@ def test_a_segment_reports_where_it_started_even_when_the_fit_fails() -> None:
     guards too (too short, no force peak), which return before x_max_nm is
     ever reached.
     """
-    from smfs_catalog.roi_events import fit_segments
+    from smfs_catalog.roi_events import SegmentCalibration, fit_segments
 
     n = 60
     curve = types.SimpleNamespace(
@@ -490,8 +490,8 @@ def test_a_segment_reports_where_it_started_even_when_the_fit_fails() -> None:
                   Segment(left_idx=10, right_idx=n - 1,
                           left_piezo_nm=20.0, right_piezo_nm=120.0)],
     )])
-    fit_segments(curve, events, offset_retr=0.0, invols_slope=1.0,
-                 snapoff_piezo_nm=0.0)
+    fit_segments(curve, events, calib=SegmentCalibration(
+        offset_retr=0.0, invols_slope=1.0, snapoff_piezo_nm=0.0))
 
     # With zero deflection, no offset and unit invOLS, the extension
     # coordinate collapses to the piezo one — so each segment's recorded start

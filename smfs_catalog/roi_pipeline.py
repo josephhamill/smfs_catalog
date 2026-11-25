@@ -32,6 +32,7 @@ from dataclasses import dataclass, asdict
 
 from . import db as _db
 from .analysis_params import AnalysisParams
+from .curve_analysis import CacheContext, cache_get, cache_put_multi, can_use_cache
 from .curve_loader import LoadError, load_force_curve
 from .models import CHAIN_MODEL_BY_IDX
 from .muggeo_segmented import RESTARTS as MUGGEO_RESTARTS
@@ -39,15 +40,13 @@ from .muggeo_segmented import TOLERANCES as MUGGEO_TOLERANCES
 from .rupture_algorithms import RUPTURE_ALGORITHM_BY_IDX
 from .provenance import cache_version
 from .roi_selection import (
-    ReportedSegmentChoice,
-    SegmentOverrideResolution,
     event_geometry_identity,
-    read_segment_select,
+    read_segment_select,  # noqa: F401  re-export
     resolve_reported_segment,
     resolve_isoforce_pair,
     resolve_segment_override,
-    resolve_segment_override_state,
-    write_segment_select,
+    resolve_segment_override_state,  # noqa: F401  re-export
+    write_segment_select,  # noqa: F401  re-export
 )
 
 
@@ -99,6 +98,18 @@ class EventParams:
     muggeo_restarts:   bool
     invols_offset_pts: int
     invols_window_pts: int
+
+    def fit_settings(self):
+        from .roi_events import FitSettings
+        return FitSettings(
+            chain_model=self.chain_model,
+            rupture_algorithm=self.rupture_algorithm,
+            walk_back_fit_widths=self.walk_back_fit_widths,
+            walk_back_noise_multiple=self.walk_back_noise_multiple,
+            muggeo_fit_window_multiplier=self.muggeo_fit_window_multiplier,
+            muggeo_tolerance=self.muggeo_tolerance,
+            muggeo_restarts=self.muggeo_restarts,
+        )
 
 
 def event_params_from(
@@ -180,11 +191,9 @@ def event_map_params_json(ep: EventParams) -> str:
 def compute_curve_events(
     curve, ep: EventParams,
     *,
-    db_path: str | None = None, code_ver: str | None = None,
-    file_id: int | None = None, stage1=None,
-    param_set: AnalysisParams | None = None,
+    cache: CacheContext | None = None,
+    stage1=None,
     force: bool = False,
-    conn=None,
 ):
     """
     Full multi-event structure for one loaded curve: baseline, detection signals,
@@ -194,243 +203,231 @@ def compute_curve_events(
     See compute_curve_events_coords for the stage1/cache reuse contract.
     """
     return compute_curve_events_coords(
-        curve, ep, db_path=db_path, code_ver=code_ver, file_id=file_id,
-        stage1=stage1, param_set=param_set, force=force, conn=conn,
+        curve, ep, cache=cache, stage1=stage1, force=force,
     ).events
 
 
-def compute_curve_events_coords(
-    curve, ep: EventParams,
-    *,
-    db_path:  str | None = None,
-    code_ver: str | None = None,
-    file_id:  int | None = None,
-    stage1=None,   # curve_analysis.Stage1Search | None
-    param_set: AnalysisParams | None = None,
-    force: bool = False,
-    conn=None,
-):
-    """
-    Like compute_curve_events, but also returns the (offset, invols, snap_piezo)
-    transform so callers can draw force-extension overlays that align exactly with
-    the fitted segments:
-        defl_corr = (defl_retr − offset) / invols
-        force     = k · defl_corr
-        extension = (piezo_retr − snap_piezo) − defl_corr
-    Returns a CurveEventsResult (named fields — see its docstring).
-
-    Reuse order for every stage below — baseline, snap-off index, the outer
-    rupture's search band, invOLS — is: (1) `stage1`, when the caller is in the
-    SAME pass as a fresh curve_analysis.analyse_curve call and already has these
-    in memory — zero recompute, zero DB round-trip; (2) the analysis_results
-    cache, when `db_path`/`code_ver`/`file_id` are given but stage1 doesn't have
-    a value (a cold viewer open, a batch backfill) — one DB read, no numpy; (3)
-    fresh computation, the only option when neither is available.  A caller that
-    passes none of this (the historical call shape) behaves exactly as before —
-    always fresh — so this is purely additive.
-
-    The decomposed curve and the detection signals (low/d1) are never
-    persisted (large per-sample arrays, cheap to regenerate) — they're only ever
-    reused via `stage1`, never via the DB cache.
-
-    Before doing ANY of the above, this also checks for a stored event_map
-    document under the current signature — if one already matches, the whole
-    decompose/detect/fit chain is skipped entirely and the stored document is
-    deserialised back into events instead (`_persist_multi_event_roi` already
-    does this check before ever calling in; this makes it apply to every
-    caller, including ones — like the WLC fit viewer — that call in directly
-    without that outer guard).
-
-    Always writes the freshly-computed result to event_map when this call
-    actually had to compute (i.e. no matching document already existed) and
-    cache identity (db_path/code_ver/file_id) is available — there is no way
-    for a caller to trigger a fresh computation here and have it silently not
-    saved.  `_persist_multi_event_roi` performs no separate write: it skips
-    out before reaching here on a cache hit, and this function saves whenever
-    it actually computes.
-
-    ``force=True`` bypasses the complete event-map document and reruns event
-    detection, segmentation, fitting, and persistence. Stage-1 values and
-    scalar analysis caches remain reusable calibrations. A supplied ``conn``
-    keeps those reads and the single event-map write on the caller's existing
-    database connection.
-    """
-    from .signal_processing import (
-        decompose_curve, fit_retract_baseline, find_end_in_contact,
-        fit_approach_invols,
-    )
-    from .roi_detection import compute_detection_signals, rupture_search_bounds
-    from .roi_events import build_curve_events, fit_segments, payload_to_events, events_to_payload
-    from .curve_analysis import CurveAnalysisError
-
-    can_read_cache = db_path is not None and code_ver is not None and file_id is not None
-    _p1 = None
-    if can_read_cache and param_set is not None:
-        # THE canonical key-builder for these rows (curve_analysis.pipeline_params_from)
-        # — reused rather than hand-rebuilt, so this can never drift from the keys
-        # analyse_curve actually wrote under (copy the asdict() pattern, don't
-        # hand-maintain key lists).
+def _scalar_keys(cache: CacheContext | None):
+    # THE canonical key-builder for these rows (curve_analysis.pipeline_params_from)
+    # — reused rather than hand-rebuilt, so this can never drift from the keys
+    # analyse_curve actually wrote under.
+    if can_use_cache(cache) and cache.param_set is not None:
         from .curve_analysis import pipeline_params_from
-        _p1 = pipeline_params_from(param_set)
+        return pipeline_params_from(cache.param_set)
+    return None
 
-    def _cached(atype: str, params_json: str):
-        return _db.get_analysis_result(file_id, atype, params_json, code_ver, db_path, conn=conn) \
-            if can_read_cache else None
 
-    # ── Fast path: reuse a stored event_map document if it already matches
-    # the current signature — skips the event-building and WLC fit (the
-    # expensive stages) entirely.  `dc`/`sigs` are still computed normally
-    # below regardless of this hit (they're the "cheap to regenerate" stage
-    # per this function's own docstring, and some callers — e.g. the ROI
-    # detection window — draw them directly, so they must never come back
-    # None). The rupture search band (below) is also still computed on a
-    # cache hit: it's a cheap scan over the already-computed d1 signal, not
-    # part of what the cache hit is skipping, and display_roi's mask overlay
-    # requires it to always be a valid index.
-    #
-    # The signature is asdict(ep) — EVERY parameter the finder reads — so a
-    # match means the parameters have not changed and the stored marks are
-    # the marks these numbers produce.  A miss means they HAVE changed, and
-    # the finder runs again.  That contract holds only while `ep` comes from
-    # ONE owner — assembled from two profiles, a "match" certifies a parameter
-    # set nobody chose.  See event_params_from/db.load_analysis_params.
-    _pj = None
-    _cached_events = None
-    if can_read_cache and not force:
-        _pj = event_map_params_json(ep)
-        _doc = _db.get_event_map(file_id, _pj, code_ver, db_path, conn=conn)
-        if _doc is not None:
-            _cached_events = payload_to_events(json.loads(_doc))
-    elif can_read_cache:
-        _pj = event_map_params_json(ep)
+def _cached_scalar(cache: CacheContext | None, atype: str, key_field: str):
+    keys = _scalar_keys(cache)
+    if keys is None:
+        return None
+    return cache_get(cache, atype, getattr(keys, key_field))
 
-    # ── offset (baseline) ────────────────────────────────────────────────────
+
+def _store_scalars(cache: CacheContext | None, key_field: str, values: dict) -> None:
+    keys = _scalar_keys(cache)
+    if keys is not None:
+        cache_put_multi(cache, values, getattr(keys, key_field))
+
+
+def _cached_events(ep: EventParams, cache: CacheContext | None, force: bool):
+    """The stored event_map document under the current signature, or None.
+
+    The signature is asdict(ep) — EVERY parameter the finder reads — so a match
+    means the parameters have not changed.  That contract holds only while `ep`
+    comes from ONE owner (see event_params_from/db.load_analysis_params).
+    """
+    from .roi_events import payload_to_events
+
+    if force or not can_use_cache(cache):
+        return None
+    doc = _db.get_event_map(
+        cache.file_id, event_map_params_json(ep), cache.code_ver, cache.db_path,
+        conn=cache.conn,
+    )
+    return None if doc is None else payload_to_events(json.loads(doc))
+
+
+def _offset_for(curve, ep: EventParams, stage1, cache: CacheContext | None) -> float:
+    from .signal_processing import fit_retract_baseline
+
     if stage1 is not None and stage1.offset is not None:
-        offset = stage1.offset
-    else:
-        _cv = _cached("offset_retr", _p1.params_bl) if _p1 else None
-        if _cv is not None:
-            offset = float(_cv)
-        else:
-            # Fresh computation neither stage1 nor the DB cache had — same
-            # persist-what-you-compute treatment as the invOLS block below.
-            _bl = fit_retract_baseline(curve, ep.anchor_nm)
-            offset = _bl.offset
-            if _p1 is not None and offset == offset:   # not NaN
-                _db.write_analysis_results_multi(file_id, {
-                    "offset_retr":         float(_bl.offset),
-                    "flatness_slope":      float(_bl.slope),
-                    "baseline_intercept":  float(_bl.intercept),
-                    "baseline_rms":        float(_bl.rms),
-                    "baseline_fit_lo_idx": float(_bl.fit_lo_idx),
-                    "baseline_fit_hi_idx": float(_bl.fit_hi_idx),
-                }, _p1.params_bl, code_ver, db_path, conn=conn)
+        return stage1.offset
+    cv = _cached_scalar(cache, "offset_retr", "params_bl")
+    if cv is not None:
+        return float(cv)
+    # Fresh computation neither stage1 nor the DB cache had — same
+    # persist-what-you-compute treatment as the invOLS stage.
+    bl = fit_retract_baseline(curve, ep.anchor_nm)
+    if bl.offset == bl.offset:   # not NaN
+        _store_scalars(cache, "params_bl", {
+            "offset_retr":         float(bl.offset),
+            "flatness_slope":      float(bl.slope),
+            "baseline_intercept":  float(bl.intercept),
+            "baseline_rms":        float(bl.rms),
+            "baseline_fit_lo_idx": float(bl.fit_lo_idx),
+            "baseline_fit_hi_idx": float(bl.fit_hi_idx),
+        })
+    return bl.offset
 
-    # ── decomposed curve — never DB-cached, only ever reused via stage1 ─────
-    dc = stage1.dc if (stage1 is not None and stage1.dc is not None) \
-        else decompose_curve(curve, cutoff_hz=ep.cutoff_hz)
 
-    # ── detection signals — never DB-cached, only ever reused via stage1 ────
-    sigs = stage1.sigs if (stage1 is not None and stage1.sigs is not None) \
-        else compute_detection_signals(
-            low_retr=dc.low_retr - offset, piezo_retr=curve.piezo_retr,
-            window_pts=ep.window_pts,
-        )
+def _snapoff_for(dc, ep: EventParams, stage1, cache: CacheContext | None) -> int:
+    from .signal_processing import find_end_in_contact
 
-    # ── snap-off index ───────────────────────────────────────────────────────
     if stage1 is not None and stage1.snapoff_idx is not None:
-        si = stage1.snapoff_idx
-    else:
-        _cv = _cached("snapoff_idx", _p1.params_cd) if _p1 else None
-        if _cv is not None:
-            si = int(_cv)
-        else:
-            si, _ = find_end_in_contact(
-                dc, var_window_ms=ep.var_window_ms, threshold=ep.thresh_retr,
-                trim_pts=ep.trim_pts,
-            )
+        return stage1.snapoff_idx
+    cv = _cached_scalar(cache, "snapoff_idx", "params_cd")
+    if cv is not None:
+        return int(cv)
+    si, _ = find_end_in_contact(
+        dc, var_window_ms=ep.var_window_ms, threshold=ep.thresh_retr,
+        trim_pts=ep.trim_pts,
+    )
+    return si
 
-    # ── outer-rupture search band — always computed, cache hit or not (see
-    # the fast-path comment above: display_roi's mask overlay needs a real
-    # index either way).
+
+def _band_for(sigs, si: int, ep: EventParams, stage1):
+    """Always computed, even on an event-map hit: display_roi's mask overlay needs a valid index."""
+    from .roi_detection import rupture_search_bounds
+
     if (stage1 is not None and stage1.mask_postsnap_idx is not None
             and stage1.mask_anchor_idx is not None):
-        lo_band, hi_band = stage1.mask_postsnap_idx, stage1.mask_anchor_idx
-    else:
-        lo_band, hi_band = rupture_search_bounds(
-            sigs.piezo, si, ep.anchor_nm, ep.post_mask_nm,
-        )
+        return stage1.mask_postsnap_idx, stage1.mask_anchor_idx
+    return rupture_search_bounds(sigs.piezo, si, ep.anchor_nm, ep.post_mask_nm)
 
-    # ── event build — the expensive stage the cache hit actually skips.
-    if _cached_events is not None:
-        events = _cached_events
-    else:
-        events = build_curve_events(
-            sigs.d1, sigs.low, sigs.piezo,
-            lo=lo_band, hi=hi_band,
-            onset_thr=ep.onset_thr, detector=ep.detector,
-            outer_threshold=ep.d1_threshold, inner_threshold=ep.inner_threshold,
-            prominence=ep.prominence, distance_pts=ep.distance_pts,
-            outer_events=(stage1.outer_events if stage1 is not None else None),
-        )
 
-    # ── invOLS ───────────────────────────────────────────────────────────────
-    inv = None
+def _built_events(sigs, band, ep: EventParams, stage1):
+    from .roi_events import DetectorSettings, build_curve_events
+
+    settings = DetectorSettings(
+        onset_thr=ep.onset_thr, detector=ep.detector,
+        outer_threshold=ep.d1_threshold, inner_threshold=ep.inner_threshold,
+        prominence=ep.prominence, distance_pts=ep.distance_pts,
+    )
+    return build_curve_events(
+        sigs, band, settings,
+        outer_events=(stage1.outer_events if stage1 is not None else None),
+    )
+
+
+def _fresh_invols(curve, dc, ep: EventParams, cache: CacheContext | None):
+    from .signal_processing import fit_approach_invols
+    from .curve_analysis import CurveAnalysisError
+
+    try:
+        fit = fit_approach_invols(
+            dc.low_appr, curve.piezo_appr, ep.invols_offset_pts, ep.invols_window_pts,
+        )
+        inv = fit.slope
+        # Persist what you compute: write it and its QC diagnostics now, the
+        # same as curve_analysis.analyse_curve does, so the next caller (same
+        # params) gets a cache hit instead of re-fitting.
+        if inv == inv:   # not NaN
+            _store_scalars(cache, "params_invols", {
+                "invols_slope":      float(inv),
+                "invols_intercept":  float(fit.intercept),
+                "invols_rms":        float(fit.rms),
+                "invols_fit_lo_idx": float(fit.fit_lo_idx),
+                "invols_fit_hi_idx": float(fit.fit_hi_idx),
+            })
+        return inv
+    except Exception as exc:
+        raise CurveAnalysisError("approach invOLS", exc) from exc
+
+
+def _invols_for(curve, dc, ep: EventParams, stage1, cache: CacheContext | None) -> float:
+    from .curve_analysis import CurveAnalysisError
+
     if stage1 is not None and stage1.invols_slope is not None:
         inv = stage1.invols_slope
     else:
-        _cv = _cached("invols_slope", _p1.params_invols) if _p1 else None
-        if _cv is not None:
-            inv = float(_cv)
-        else:
-            try:
-                _fit = fit_approach_invols(
-                    dc.low_appr, curve.piezo_appr, ep.invols_offset_pts, ep.invols_window_pts,
-                )
-                inv = _fit.slope
-                # This is a real fresh computation (neither stage1 nor the DB
-                # cache had it).  Persist what you compute: write it and
-                # its QC diagnostics now, the same as
-                # curve_analysis.analyse_curve does, so the next caller (same
-                # params) gets a cache hit instead of re-fitting.
-                if _p1 is not None and inv == inv:   # not NaN
-                    _db.write_analysis_results_multi(file_id, {
-                        "invols_slope":      float(inv),
-                        "invols_intercept":  float(_fit.intercept),
-                        "invols_rms":        float(_fit.rms),
-                        "invols_fit_lo_idx": float(_fit.fit_lo_idx),
-                        "invols_fit_hi_idx": float(_fit.fit_hi_idx),
-                    }, _p1.params_invols, code_ver, db_path, conn=conn)
-            except Exception as exc:
-                raise CurveAnalysisError("approach invOLS", exc) from exc
+        cv = _cached_scalar(cache, "invols_slope", "params_invols")
+        inv = float(cv) if cv is not None else _fresh_invols(curve, dc, ep, cache)
     if inv is None or not isinstance(inv, (int, float)) or not math.isfinite(inv) or inv == 0.0:
         raise CurveAnalysisError(
             "approach invOLS",
             ValueError("no finite, non-zero calibration slope was produced"),
         )
+    return inv
 
+
+def _fit_and_store(curve, events, ep: EventParams, calib, cache: CacheContext | None) -> None:
+    """Fit the freshly built events in place and persist them (calib is a roi_events.SegmentCalibration).
+
+    This is the only event_map write: _persist_multi_event_roi does no separate write.
+    """
+    from .roi_events import fit_segments, events_to_payload
+
+    fit_segments(curve, events, calib, ep.fit_settings())
+    if can_use_cache(cache):
+        _db.write_event_map(
+            cache.file_id, json.dumps(events_to_payload(events)),
+            event_map_params_json(ep), cache.code_ver, cache.db_path,
+            conn=cache.conn,
+        )
+
+
+def _decomposed_and_signals(curve, ep: EventParams, stage1, offset: float):
+    """Never stored (large per-sample arrays, cheap to regenerate); computed even on an event-map hit because callers draw them (the ROI window plots dc/sigs)."""
+    from .signal_processing import decompose_curve
+    from .roi_detection import compute_detection_signals
+
+    dc = stage1.dc if (stage1 is not None and stage1.dc is not None) \
+        else decompose_curve(curve, cutoff_hz=ep.cutoff_hz)
+    sigs = stage1.sigs if (stage1 is not None and stage1.sigs is not None) \
+        else compute_detection_signals(
+            low_retr=dc.low_retr - offset, piezo_retr=curve.piezo_retr,
+            window_pts=ep.window_pts,
+        )
+    return dc, sigs
+
+
+def compute_curve_events_coords(
+    curve, ep: EventParams,
+    *,
+    cache: CacheContext | None = None,
+    stage1=None,   # curve_analysis.Stage1Search | None
+    force: bool = False,
+):
+    """
+    Like compute_curve_events, but also returns the (offset, invols, snap_piezo)
+    transform so callers can draw force-extension overlays that align exactly with
+    the fitted segments:
+        defl_corr = (defl_retr - offset) / invols
+        force     = k * defl_corr
+        extension = (piezo_retr - snap_piezo) - defl_corr
+    Returns a CurveEventsResult (named fields - see its docstring).
+
+    Reuse order for baseline, snap-off index, search band and invOLS: (1) `stage1`
+    (same pass as analyse_curve, zero recompute); (2) the analysis_results cache
+    when `cache` carries db_path/code_ver/file_id and param_set; (3) fresh.  No
+    cache means always fresh.  The decomposed curve and detection signals are
+    never stored, only reused via `stage1`.
+
+    A stored event_map document under the current signature is checked first for
+    every caller (the WLC viewer included, without an outer guard); on
+    a hit the event build and WLC fit are skipped (dc, sigs, band and invOLS are
+    still resolved).  A fresh computation is always written to event_map when
+    cache identity is available.  ``force=True`` skips only that document; stage-1
+    values and scalar caches stay reusable.  ``cache.conn`` keeps every read and
+    write on the caller's connection.
+    """
+    stored = _cached_events(ep, cache, force)
+    offset = _offset_for(curve, ep, stage1, cache)
+    dc, sigs = _decomposed_and_signals(curve, ep, stage1, offset)
+    si = _snapoff_for(dc, ep, stage1, cache)
+    band = _band_for(sigs, si, ep, stage1)
+    events = stored if stored is not None else _built_events(sigs, band, ep, stage1)
+    inv = _invols_for(curve, dc, ep, stage1, cache)
     snap = float(curve.piezo_retr[si]) if 0 <= si < len(curve.piezo_retr) else 0.0
-
-    if _cached_events is None:
-        fit_segments(curve, events, offset, inv, snap, low_retr=dc.low_retr,
-                     chain_model=ep.chain_model,
-                     rupture_algorithm=ep.rupture_algorithm,
-                     walk_back_fit_widths=ep.walk_back_fit_widths,
-                     walk_back_noise_multiple=ep.walk_back_noise_multiple,
-                     muggeo_fit_window_multiplier=ep.muggeo_fit_window_multiplier,
-                     muggeo_tolerance=ep.muggeo_tolerance,
-                     muggeo_restarts=ep.muggeo_restarts)
-
-        if can_read_cache:
-            _db.write_event_map(
-                file_id, json.dumps(events_to_payload(events)), _pj, code_ver,
-                db_path, conn=conn,
-            )
-
+    if stored is None:
+        from .roi_events import SegmentCalibration
+        _fit_and_store(curve, events, ep,
+                       SegmentCalibration(offset, inv, snap, dc.low_retr), cache)
     return CurveEventsResult(
         events=events, offset=offset, invols=inv, snap_piezo=snap,
         sigs=sigs, dc=dc, snapoff_idx=si,
-        mask_postsnap_idx=lo_band, mask_anchor_idx=hi_band,
+        mask_postsnap_idx=band[0], mask_anchor_idx=band[1],
     )
 
 
@@ -497,8 +494,9 @@ def populate_event_map(
                         # recomputing from the raw curve — see
                         # compute_curve_events_coords's reuse-order docstring.
                         compute_curve_events(
-                            curve, ep, db_path=db_path, code_ver=cv, file_id=fid,
-                            param_set=param_set, force=force, conn=conn,
+                            curve, ep,
+                            cache=CacheContext(db_path, cv, fid, conn, param_set=param_set),
+                            force=force,
                         )
                         n_ok += 1
                     except Exception as e:                   # noqa: BLE001
@@ -609,17 +607,217 @@ SEG_SUMMARY_FIELD = {
 }
 
 
-def segment_summary_bulk(
-    paths: list[str], select: str, db_path: str,
-) -> dict[str, dict[str, "float | None"]]:
+def _empty_summary_row() -> dict[str, "float | None"]:
+    return {
+        "l_p_nm": None, "l_c_nm": None, "l_p_err": None, "l_c_err": None,
+        "b_nm": None, "b_err": None, "k_pN": None, "k_err": None,
+        "chain_model": None,
+        "force_pN": None, "x_rupture_nm": None, "x_junction_nm": None,
+        "dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None,
+        "n_segments": None,
+        "tau": None, "z_max": None, "x_max_nm": None, "edge_pinned": None,
+        "loading_rate_pN_s": None, "loading_stiffness_pN_nm": None,
+        "loading_rate_err_pN_s": None,
+        "loading_stiffness_err_pN_nm": None, "rate_tau": None,
+        "fit_status": None, "fit_detail": None,
+    }
+
+
+def _fetch_rows(paths_resolved: list[str], db_path: str):
     """
-    Per-path {"l_p_nm", "l_c_nm", "l_p_err", "l_c_err", "b_nm", "b_err",
-    "k_pN", "k_err", "chain_model", "force_pN",
-    "x_rupture_nm", "x_junction_nm", "dF_pN", "dX_iso_nm", "dX_ext_nm",
-    "n_segments", "tau", "z_max", "edge_pinned"},
-    read from each curve's latest event_map (whatever params/code produced it —
-    like the 2DH windows, this never silently drops a curve pending a
-    recompute).
+    (path_by_fid, payload_by_fid, params_by_fid, override_by_fid) for the
+    resolved paths.
+
+    Bulk by construction.  A per-path db.get_file_id opens and closes its own
+    sqlite connection each time, and the queue-table rebuild behind every
+    raw-viewer double-click pays that cost again for the whole queue.  So
+    path->file_id and the event_map fetch both go through chunked bulk SQL,
+    the same way get_derived_results_bulk_latest does.
+    """
+    conn = _db.get_connection(db_path)
+    try:
+        path_by_fid: dict[int, str] = {}
+        for chunk in _db._sql_chunks(paths_resolved):
+            ph = ",".join("?" * len(chunk))
+            for r in conn.execute(
+                f"SELECT id, path FROM files WHERE path IN ({ph})", chunk
+            ).fetchall():
+                path_by_fid[r["id"]] = r["path"]
+        if not path_by_fid:
+            return path_by_fid, {}, {}, {}
+
+        # event_map holds exactly one row per file_id (write_event_map deletes
+        # any prior row before inserting), so this is already "the latest" —
+        # no need for a per-file MAX(computed_at) subquery.
+        fids = list(path_by_fid.keys())
+        payload_by_fid: dict[int, str] = {}
+        params_by_fid: dict[int, str] = {}
+        for chunk in _db._sql_chunks(fids):
+            fid_ph = ",".join("?" * len(chunk))
+            for r in conn.execute(
+                f"SELECT file_id, payload_json, params_json FROM event_map "
+                f"WHERE file_id IN ({fid_ph})",
+                chunk,
+            ).fetchall():
+                payload_by_fid[r["file_id"]] = r["payload_json"]
+                params_by_fid[r["file_id"]]  = r["params_json"]
+
+        # Manual segment overrides — bulk, for the same reason as above: one
+        # query, not one per file.
+        override_by_fid = _db.get_segment_overrides_bulk(fids, db_path, conn=conn)
+    finally:
+        conn.close()
+    return path_by_fid, payload_by_fid, params_by_fid, override_by_fid
+
+
+def _pick_roi(events):
+    """
+    The right-most outer ROI with ruptures, or None.  Every selected-segment
+    field below (l_p/l_c/force_pN, n_segments) comes from this ROI, so an
+    earlier ROI is ignored once a later one has ruptures.
+    """
+    return next((r for r in reversed(events.rois) if r.ruptures), None)
+
+
+def _picked_pair_metrics(roi, primary_idx, secondary_idx, pair) -> dict:
+    """
+    dF_pN/dX_ext_nm/dX_iso_nm for a usable Primary+Secondary pick.
+
+    Sorted by actual rupture index, never by which one was tagged Primary vs
+    Secondary, so pick order never flips the sign.  dF_pN/dX_ext_nm need no
+    adjacency (plain subtractions); dX_iso_nm does, and is None for a
+    non-adjacent pair, same as any other missing piece.
+    """
+    out = {"dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None}
+    lo, hi = sorted((primary_idx, secondary_idx))
+    f_lo, f_hi = roi.ruptures[lo].force_pN, roi.ruptures[hi].force_pN
+    out["dF_pN"] = None if f_lo is None or f_hi is None else f_hi - f_lo
+    # dX_ext_nm is a plain extension-point subtraction — needs no
+    # adjacency, same as dF_pN, unlike dX_iso_nm below.
+    x_lo, x_hi = roi.ruptures[lo].extension_nm, roi.ruptures[hi].extension_nm
+    out["dX_ext_nm"] = None if x_lo is None or x_hi is None else x_hi - x_lo
+    # isoforce_x_nm is only ever stored relative to the IMMEDIATELY
+    # PRECEDING rupture (roi_events.Segment docstring) — a non-
+    # adjacent pair legitimately has no such value to read; None,
+    # same as any other missing piece, never fabricated.
+    if pair is not None:
+        pair_lo, pair_hi = pair
+        rup_lo, seg_hi = roi.ruptures[pair_lo], roi.segments[pair_hi]
+        out["dX_iso_nm"] = (
+            None if rup_lo.extension_nm is None or seg_hi.isoforce_x_nm is None
+            else seg_hi.isoforce_x_nm - rup_lo.extension_nm
+        )
+    return out
+
+
+def _pair_metrics(roi, primary_idx, secondary_idx) -> dict:
+    """
+    dF_pN/dX_iso_nm/dX_ext_nm: the gap between two ruptures.
+
+    By default the last two (ultimate minus penultimate, by definition), so
+    they are NOT selection-dependent (`select`) — flipping `select` moves only
+    l_p_nm/l_c_nm/force_pN.  If Primary AND Secondary are both usable (see
+    resolve_segment_override) they are computed from that pair instead.
+
+    dX_ext_nm is the plain ruptures[hi].extension_nm -
+    ruptures[lo].extension_nm gap — no crossing search, defined regardless of
+    which rupture is stronger, unlike dX_iso_nm (see roi_events.ROI.
+    dX_ext_pairs). It exists so dF_pN has an order-independent extension-side
+    counterpart to compare against; dX_iso_nm remains the deliberately
+    one-directional, force-matched "reload distance" — see roi_events.ROI.
+    isoforce_dX_pairs for why that one is NOT made symmetric the same way.
+    """
+    out = {"dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None}
+    pair = resolve_isoforce_pair(
+        len(roi.segments), primary_idx, secondary_idx,
+    )
+    if primary_idx is not None and secondary_idx is not None:
+        out = _picked_pair_metrics(roi, primary_idx, secondary_idx, pair)
+    elif pair is not None:
+        lo, hi = pair
+        out["dF_pN"]     = roi.dF_pairs[hi - 1]
+        out["dX_iso_nm"] = roi.isoforce_dX_pairs[hi - 1]
+        out["dX_ext_nm"] = roi.dX_ext_pairs[hi - 1]
+    return out
+
+
+def _segment_diagnostics(seg) -> dict:
+    """
+    tau/z_max/edge_pinned are the SELECTED segment's fit-conditioning
+    diagnostics, following the same selection rule as l_p/l_c so that a value
+    and its explanation always describe the same fit:
+      * tau     — integrated autocorrelation time of that fit's residual, in
+                  samples.  l_p_err/l_c_err ALREADY include sqrt(tau);
+                  this is here so the size of an error bar can be explained.
+      * z_max   — x_max/l_c, how close the fit window got to the WLC pole.  The
+                  fit's conditioning number in all but name; below ~0.8 only the
+                  product l_p*l_c is well determined.  Derived, never stored.
+      * edge_pinned — 1.0 when the force peak sat on the window's right edge, so
+                  the rupture force is an underestimate and the fit stopped
+                  early.  0.0 otherwise, None if no peak was found.
+    All three inform; none of them gates anything by itself.
+    """
+    return {
+        # The three diagnostics describe the SELECTED segment's own fit, so
+        # they follow the same Ultimate/Penultimate/override rule as the
+        # values they explain — an error bar and the tau behind it must
+        # never come from different segments.
+        "tau": seg.tau,
+        "z_max": seg.z_max,
+        # z_max's own numerator. Offered beside it so a low ratio can be
+        # read as a short pull or an overlong contour length, rather than
+        # only as a number that is too small.
+        "x_max_nm": seg.x_max_nm,
+        # The selected segment's own loading ramp, following the same rule
+        # as the force it explains — a rupture force and the rate it was
+        # reached at must never come from different segments.
+        "loading_rate_pN_s": seg.loading_rate_pN_s,
+        "loading_stiffness_pN_nm": seg.loading_stiffness_pN_nm,
+        # Each slope's own uncertainty, following the value it belongs to.
+        "loading_rate_err_pN_s": seg.loading_rate_err_pN_s,
+        "loading_stiffness_err_pN_nm": seg.loading_stiffness_err_pN_nm,
+        "rate_tau": seg.rate_tau,
+        # Numeric 0/1, not a bool: this reaches criteria_gate (which bounds
+        # numbers) and quantities.format_value (which formats them).  The
+        # dataclass keeps the bool; only this projection flattens it.
+        "edge_pinned": (
+            None if seg.edge_pinned is None else float(bool(seg.edge_pinned))
+        ),
+    }
+
+
+def _segment_fields(seg) -> dict:
+    """
+    The SELECTED segment's fit values, plus its diagnostics.
+
+    l_p_err/l_c_err are the WLC fit's own uncertainty on l_p/l_c; large values
+    flag an under-constrained fit.  They inform; they gate nothing by
+    themselves.
+
+    fit_status/fit_detail are that same segment's stored fit outcome (see
+    roi_events.Segment), so a missing l_c or force can be explained by the
+    pipeline's own reason. Strings, so they stay out of SEG_SUMMARY_KEYS and
+    are never offered as criteria.
+    """
+    return {
+        "l_p_nm": seg.l_p_nm,
+        "l_c_nm": seg.l_c_nm,
+        "l_p_err": seg.l_p_err,
+        "l_c_err": seg.l_c_err,
+        "b_nm": seg.b_nm, "b_err": seg.b_err,
+        "k_pN": seg.k_pN, "k_err": seg.k_err,
+        # Which model the values above are from, so a view that needs one
+        # model's equation can tell.
+        "chain_model": seg.chain_model,
+        **_segment_diagnostics(seg),
+        "fit_status": seg.fit_status,
+        "fit_detail": seg.fit_detail,
+    }
+
+
+def _rupture_fields(roi, rup) -> dict:
+    """
+    force_pN, x_rupture_nm, x_junction_nm of the reported rupture.
 
     x_rupture_nm/x_junction_nm are the reported rupture's position on the
     extension coordinate — (piezo - snapoff) - deflection, the axis every WLC
@@ -634,257 +832,98 @@ def segment_summary_bulk(
     Both are read off the SAME Rupture as force_pN and therefore follow the
     same select/override rule, so a row's force and extension always describe
     one point.  NOT raw piezo: onset_dx_nm/rupture_dx_nm are that, on a
-    different axis and (for the rupture) a different sample.
+    different axis and (for the rupture) a different sample.  Pinning
+    x_junction_nm to the terminal rupture instead would put one row's force
+    and extension on two different ruptures whenever "penultimate" is in force.
+    """
+    # The x of the SAME point force_pN is the y of — fit_segments sets
+    # both from one sample (roi_events: rup.force_pN / rup.extension_nm
+    # at peak_rel).  Read off the same `rup` here so a row can never
+    # pair a force with an extension from a different rupture.
+    # x_junction_nm measures that rupture from the junction's onset instead
+    # of from snap-off: segments[0] is the onset segment, so its left edge is
+    # the junction's onset whichever segment is reported.
+    onset_x = roi.segments[0].left_extension_nm
+    return {
+        "force_pN": rup.force_pN,
+        "x_rupture_nm": rup.extension_nm,
+        "x_junction_nm": (
+            None if rup.extension_nm is None or onset_x is None
+            else rup.extension_nm - onset_x
+        ),
+    }
 
-    tau/z_max/edge_pinned are the SELECTED segment's fit-
-    conditioning diagnostics, following the same selection rule as l_p/l_c so
-    that a value and its explanation always describe the same fit:
-      * tau     — integrated autocorrelation time of that fit's residual, in
-                  samples.  l_p_err/l_c_err above ALREADY include sqrt(tau);
-                  this is here so the size of an error bar can be explained.
-      * z_max   — x_max/l_c, how close the fit window got to the WLC pole.  The
-                  fit's conditioning number in all but name; below ~0.8 only the
-                  product l_p*l_c is well determined.  Derived, never stored.
-      * edge_pinned — 1.0 when the force peak sat on the window's right edge, so
-                  the rupture force is an underestimate and the fit stopped
-                  early.  0.0 otherwise, None if no peak was found.
-    All three inform; none of them gates anything by itself.
 
-    fit_status/fit_detail are that same segment's stored fit outcome (see
-    roi_events.Segment), so a missing l_c or force can be explained by the
-    pipeline's own reason. Strings, so they stay out of SEG_SUMMARY_KEYS and
-    are never offered as criteria.
+def _fill_row(row, roi, select, primary_idx, secondary_idx) -> None:
+    """
+    Fill one curve's row from its chosen ROI.
 
     l_p_nm/l_c_nm/l_p_err/l_c_err/force_pN come from the SELECTED segment (and
-    its terminating rupture) of the right-most outer ROI with ruptures:
-    "ultimate" = its last segment (the tether/final rupture, or the whole pull
-    if there's only one segment); "penultimate" = the one before it when that
-    ROI has >= 2 segments, else the SAME segment ultimate would use — matching
-    base_2dh_window._stored_segment_fit.  force_pN is the characterization
-    value for "rupture force": whichever segment is selected here IS the
-    rupture force, by definition — one user-facing force number, not a second
-    parallel one alongside a stage-1 scalar.  l_p_err/l_c_err are the WLC
-    fit's own uncertainty on l_p/l_c; large values flag an under-constrained
-    fit.  They inform; they gate nothing by themselves.
+    its terminating rupture): "ultimate" = its last segment (the tether/final
+    rupture, or the whole pull if there's only one segment); "penultimate" =
+    the one before it when the ROI has >= 2 segments, else the SAME segment
+    ultimate would use — matching base_2dh_window._stored_segment_fit.
+    force_pN is the characterization value for "rupture force": whichever
+    segment is selected here IS the rupture force, by definition — one
+    user-facing force number, not a second parallel one alongside a stage-1
+    scalar.  A usable (non-stale) Primary override replaces that choice for
+    this curve outright — an absolute per-curve override, not another value
+    of `select`.
 
-    n_segments is the segment count of that SAME right-most outer ROI —
-    NOT selection-dependent (it describes the ROI, not the pick within it).
-    It exists so a caller who wants "only curves with a real, distinct
-    penultimate segment" can filter on it explicitly (seg_n_segments >= 2)
-    instead of relying on `select` to narrow the population silently.
+    n_segments is the segment count of the ROI — NOT selection-dependent (it
+    describes the ROI, not the pick within it).  It exists so a caller who
+    wants "only curves with a real, distinct penultimate segment" can filter
+    on it explicitly (seg_n_segments >= 2) instead of relying on `select` to
+    narrow the population silently.
+    """
+    row["n_segments"] = len(roi.segments)
+    row.update(_pair_metrics(roi, primary_idx, secondary_idx))
+    # segments/ruptures are always the same length, one segment per
+    # terminating rupture (ROI docstring: "Always len(ruptures) segments"),
+    # so one length check picks both the segment and its rupture.
+    reported = resolve_reported_segment(
+        len(roi.segments), select, primary_idx,
+    )
+    if reported is not None:
+        idx = reported.segment_idx
+        row.update(_segment_fields(roi.segments[idx]))
+        row.update(_rupture_fields(roi, roi.ruptures[idx]))
 
-    x_rupture_nm/x_junction_nm ARE selection-dependent, for the reason above:
-    they belong to the reported rupture, so flipping `select` moves them
-    exactly as it moves force_pN.  Pinning x_junction_nm to the terminal
-    rupture instead would put one row's force and extension on two different
-    ruptures whenever "penultimate" is in force.
 
-    dF_pN/dX_iso_nm/dX_ext_nm are NOT selection-dependent (`select`) either by
-    default — they are the gap between the last two ruptures (ultimate minus
-    penultimate, by definition), so they don't change when `select` is
-    flipped; only l_p_nm/l_c_nm/force_pN do.
-
-    dX_ext_nm is the plain ruptures[hi].extension_nm -
-    ruptures[lo].extension_nm gap — no crossing search, defined regardless of
-    which rupture is stronger, unlike dX_iso_nm (see roi_events.ROI.
-    dX_ext_pairs). It exists so dF_pN has an order-independent extension-side
-    counterpart to compare against; dX_iso_nm remains the deliberately
-    one-directional, force-matched "reload distance" — see roi_events.ROI.
-    isoforce_dX_pairs for why that one is NOT made symmetric the same way.
-
-    Manual segment override: a curve with a usable (non-stale, see
-    resolve_segment_override) Primary pick uses THAT segment for
-    l_p_nm/l_c_nm/l_p_err/l_c_err/force_pN instead of the `select`-driven
-    Ultimate/Penultimate choice — an absolute per-curve override, not another
-    value of `select`. If Primary AND Secondary are both usable, dF_pN/
-    dX_iso_nm/dX_ext_nm are computed from that pair instead of the
-    last-two-ruptures default — sorted by actual rupture index, never by
-    which one was tagged Primary vs Secondary, so pick order never flips the
-    sign. dF_pN/dX_ext_nm need no adjacency (plain subtractions); dX_iso_nm
-    does (isoforce_x_nm is only ever stored relative to the immediately
-    preceding rupture) and is None for a non-adjacent pair, same as any other
-    missing piece below.
+def segment_summary_bulk(
+    paths: list[str], select: str, db_path: str,
+) -> dict[str, dict[str, "float | None"]]:
+    """
+    Per-path dict of the keys in _empty_summary_row (the SEG_SUMMARY_FIELD
+    values plus chain_model, fit_status, fit_detail), read from each curve's
+    latest event_map (whatever params/code produced it — like the 2DH windows,
+    this never silently drops a curve pending a recompute).
 
     Any missing piece (no file, no document, wrong schema version) yields
     None fields — never a fabricated value.  A present-but-single-segment
     ROI under "penultimate" is not one of those: it is the documented
-    fallback above, not an absence.  Keyed by resolved path
-    (db.normalize_path), matching get_derived_results_bulk_latest.
-
-    Bulk by construction.  A per-path db.get_file_id opens and closes its own
-    sqlite connection each time, and the queue-table rebuild behind every
-    raw-viewer double-click pays that cost again for the whole queue.  So
-    path->file_id and the event_map fetch both go through chunked bulk SQL,
-    the same way get_derived_results_bulk_latest does.
+    fallback, not an absence.  Keyed by resolved path (db.normalize_path),
+    matching get_derived_results_bulk_latest.  The per-field rules are in
+    _fetch_rows, _pair_metrics, _segment_fields, _rupture_fields, _fill_row.
     """
     from .roi_events import payload_to_events
 
-    out: dict[str, dict[str, float | None]] = {
-        _db.normalize_path(p): {
-            "l_p_nm": None, "l_c_nm": None, "l_p_err": None, "l_c_err": None,
-            "b_nm": None, "b_err": None, "k_pN": None, "k_err": None,
-            "chain_model": None,
-            "force_pN": None, "x_rupture_nm": None, "x_junction_nm": None,
-            "dF_pN": None, "dX_iso_nm": None, "dX_ext_nm": None,
-            "n_segments": None,
-            "tau": None, "z_max": None, "x_max_nm": None, "edge_pinned": None,
-            "loading_rate_pN_s": None, "loading_stiffness_pN_nm": None,
-            "loading_rate_err_pN_s": None,
-            "loading_stiffness_err_pN_nm": None, "rate_tau": None,
-            "fit_status": None, "fit_detail": None,
-        }
-        for p in paths
-    }
+    out = {_db.normalize_path(p): _empty_summary_row() for p in paths}
     if not paths:
         return out
-
-    def _chunks(seq, size=800):
-        for i in range(0, len(seq), size):
-            yield seq[i:i + size]
-
-    conn = _db.get_connection(db_path)
-    try:
-        paths_resolved = list(out.keys())
-        path_by_fid: dict[int, str] = {}
-        for chunk in _chunks(paths_resolved):
-            ph = ",".join("?" * len(chunk))
-            for r in conn.execute(
-                f"SELECT id, path FROM files WHERE path IN ({ph})", chunk
-            ).fetchall():
-                path_by_fid[r["id"]] = r["path"]
-        if not path_by_fid:
-            return out
-
-        # event_map holds exactly one row per file_id (write_event_map deletes
-        # any prior row before inserting), so this is already "the latest" —
-        # no need for a per-file MAX(computed_at) subquery.
-        fids = list(path_by_fid.keys())
-        payload_by_fid: dict[int, str] = {}
-        params_by_fid: dict[int, str] = {}
-        for chunk in _chunks(fids):
-            fid_ph = ",".join("?" * len(chunk))
-            for r in conn.execute(
-                f"SELECT file_id, payload_json, params_json FROM event_map "
-                f"WHERE file_id IN ({fid_ph})",
-                chunk,
-            ).fetchall():
-                payload_by_fid[r["file_id"]] = r["payload_json"]
-                params_by_fid[r["file_id"]]  = r["params_json"]
-
-        # Manual segment overrides — bulk, for the same reason this function's
-        # own docstring gives: one query, not one per file.
-        override_by_fid = _db.get_segment_overrides_bulk(fids, db_path, conn=conn)
-    finally:
-        conn.close()
-
+    path_by_fid, payload_by_fid, params_by_fid, override_by_fid = _fetch_rows(
+        list(out.keys()), db_path,
+    )
     for fid, doc in payload_by_fid.items():
-        path = path_by_fid[fid]
         events = payload_to_events(json.loads(doc))
-        if events is None:
-            continue
-        roi = next((r for r in reversed(events.rois) if r.ruptures), None)
+        roi = None if events is None else _pick_roi(events)
         if roi is None:
             continue
-        row = out[path]
-        row["n_segments"] = len(roi.segments)
-
         primary_idx, secondary_idx = resolve_segment_override(
             override_by_fid.get(fid, {}), params_by_fid.get(fid), len(roi.segments),
             event_geometry_identity(events),
         )
-
-        pair = resolve_isoforce_pair(
-            len(roi.segments), primary_idx, secondary_idx,
-        )
-        if primary_idx is not None and secondary_idx is not None:
-            lo, hi = sorted((primary_idx, secondary_idx))
-            f_lo, f_hi = roi.ruptures[lo].force_pN, roi.ruptures[hi].force_pN
-            row["dF_pN"] = None if f_lo is None or f_hi is None else f_hi - f_lo
-            # dX_ext_nm is a plain extension-point subtraction — needs no
-            # adjacency, same as dF_pN, unlike dX_iso_nm below.
-            x_lo, x_hi = roi.ruptures[lo].extension_nm, roi.ruptures[hi].extension_nm
-            row["dX_ext_nm"] = None if x_lo is None or x_hi is None else x_hi - x_lo
-            # isoforce_x_nm is only ever stored relative to the IMMEDIATELY
-            # PRECEDING rupture (roi_events.Segment docstring) — a non-
-            # adjacent pair legitimately has no such value to read; None,
-            # same as any other missing piece, never fabricated.
-            if pair is not None:
-                pair_lo, pair_hi = pair
-                rup_lo, seg_hi = roi.ruptures[pair_lo], roi.segments[pair_hi]
-                row["dX_iso_nm"] = (
-                    None if rup_lo.extension_nm is None or seg_hi.isoforce_x_nm is None
-                    else seg_hi.isoforce_x_nm - rup_lo.extension_nm
-                )
-        elif pair is not None:
-            lo, hi = pair
-            row["dF_pN"]     = roi.dF_pairs[hi - 1]
-            row["dX_iso_nm"] = roi.isoforce_dX_pairs[hi - 1]
-            row["dX_ext_nm"] = roi.dX_ext_pairs[hi - 1]
-
-        # segments/ruptures are always the same length, one segment per
-        # terminating rupture (ROI docstring: "Always len(ruptures) segments"),
-        # so one length check picks both the segment and its rupture.
-        seg = None
-        rup = None
-        reported = resolve_reported_segment(
-            len(roi.segments), select, primary_idx,
-        )
-        if reported is not None:
-            seg = roi.segments[reported.segment_idx]
-            rup = roi.ruptures[reported.segment_idx]
-        if seg is not None:
-            row["l_p_nm"] = seg.l_p_nm
-            row["l_c_nm"] = seg.l_c_nm
-            row["l_p_err"] = seg.l_p_err
-            row["l_c_err"] = seg.l_c_err
-            row["b_nm"], row["b_err"] = seg.b_nm, seg.b_err
-            row["k_pN"], row["k_err"] = seg.k_pN, seg.k_err
-            # Which model the values above are from, so a view that needs one
-            # model's equation can tell.
-            row["chain_model"] = seg.chain_model
-            # The three diagnostics describe the SELECTED segment's own fit, so
-            # they follow the same Ultimate/Penultimate/override rule as the
-            # values they explain — an error bar and the tau behind it must
-            # never come from different segments.
-            row["tau"]   = seg.tau
-            row["z_max"] = seg.z_max
-            # z_max's own numerator. Offered beside it so a low ratio can be
-            # read as a short pull or an overlong contour length, rather than
-            # only as a number that is too small.
-            row["x_max_nm"] = seg.x_max_nm
-            # The selected segment's own loading ramp, following the same rule
-            # as the force it explains — a rupture force and the rate it was
-            # reached at must never come from different segments.
-            row["loading_rate_pN_s"]      = seg.loading_rate_pN_s
-            row["loading_stiffness_pN_nm"] = seg.loading_stiffness_pN_nm
-            # Each slope's own uncertainty, following the value it belongs to.
-            row["loading_rate_err_pN_s"]      = seg.loading_rate_err_pN_s
-            row["loading_stiffness_err_pN_nm"] = seg.loading_stiffness_err_pN_nm
-            row["rate_tau"] = seg.rate_tau
-            # Numeric 0/1, not a bool: this reaches criteria_gate (which bounds
-            # numbers) and quantities.format_value (which formats them).  The
-            # dataclass keeps the bool; only this projection flattens it.
-            row["edge_pinned"] = (
-                None if seg.edge_pinned is None else float(bool(seg.edge_pinned))
-            )
-            row["fit_status"] = seg.fit_status
-            row["fit_detail"] = seg.fit_detail
-        if rup is not None:
-            row["force_pN"] = rup.force_pN
-            # The x of the SAME point force_pN is the y of — fit_segments sets
-            # both from one sample (roi_events: rup.force_pN / rup.extension_nm
-            # at peak_rel).  Read off the same `rup` here so a row can never
-            # pair a force with an extension from a different rupture.
-            row["x_rupture_nm"] = rup.extension_nm
-            # The same rupture measured from the junction's onset instead of
-            # from snap-off: how far the junction stretched under load, rather
-            # than how long it was.  segments[0] is the onset segment, so its
-            # left edge is the junction's onset whichever segment is reported.
-            _onset_x = roi.segments[0].left_extension_nm
-            row["x_junction_nm"] = (
-                None if rup.extension_nm is None or _onset_x is None
-                else rup.extension_nm - _onset_x
-            )
+        _fill_row(out[path_by_fid[fid]], roi, select, primary_idx, secondary_idx)
     return out
 
 

@@ -64,6 +64,7 @@ from smfs_catalog.dist_fit_core import (  # noqa: E402
     BOOTSTRAP_CI_METHOD,
     COV_CI_METHOD,
     MODELS,
+    CiSettings,
     bootstrap_fit_ci,
     ci_manifest_fields,
     composite_bounds,
@@ -123,7 +124,7 @@ def test_covariance_can_report_a_negative_width_and_the_bootstrap_cannot():
         "the check"
     )
 
-    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, n_draws=200)
+    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, ci=CiSettings(n_draws=200))
     assert boot is not None
     assert min(boot.lo[i] for i in SIGMA_IDX) > 0, (
         "a resample is refitted under the same bounds, so no draw can hold a "
@@ -137,7 +138,7 @@ def test_covariance_can_report_a_negative_width_and_the_bootstrap_cannot():
 def test_widths_stay_positive_and_fractions_stay_in_the_unit_interval(seed):
     data = _two_peaks(seed=seed)
     comps, edges, bounds, popt, _ = _fit(data)
-    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, n_draws=150)
+    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, ci=CiSettings(n_draws=150))
     assert boot is not None
     for i in SIGMA_IDX:
         assert boot.lo[i] > 0 and boot.hi[i] > boot.lo[i]
@@ -160,7 +161,7 @@ def test_agrees_with_the_covariance_where_the_fit_is_well_determined():
     data = np.concatenate([rng.normal(60, 8, 3000), rng.normal(160, 12, 2000)])
     comps, edges, bounds, popt, pcov = _fit(data, n_bins=40)
     perr = np.sqrt(np.diag(pcov))
-    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, n_draws=200)
+    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, ci=CiSettings(n_draws=200))
     assert boot is not None
     for i in (1, 4):                       # the two mu parameters
         cov_w = 2 * 1.96 * perr[i]
@@ -188,7 +189,7 @@ def test_interval_width_falls_roughly_as_one_over_root_n():
         data = pool[:n]
         comps, edges, bounds, popt, _ = _fit(data, n_peaks=1, n_bins=30)
         boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds,
-                                n_draws=150)
+                                ci=CiSettings(n_draws=150))
         assert boot is not None
         widths.append(boot.hi[1] - boot.lo[1])
     ratio = widths[0] / widths[1]
@@ -245,7 +246,7 @@ def test_failed_draws_are_counted_not_silently_dropped(monkeypatch):
         return real(*a, **kw)
 
     monkeypatch.setattr("smfs_catalog.dist_fit_core.optimize.curve_fit", flaky)
-    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, n_draws=100)
+    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, ci=CiSettings(n_draws=100))
     assert boot is not None
     assert boot.n_failed > 0
     assert boot.n_ok + boot.n_failed == boot.n_draws, (
@@ -264,7 +265,7 @@ def test_returns_none_rather_than_falling_back_to_the_covariance(monkeypatch):
     monkeypatch.setattr("smfs_catalog.dist_fit_core.optimize.curve_fit",
                         always_fails)
     assert bootstrap_fit_ci(comps, data, edges, True, popt, bounds,
-                            n_draws=50) is None, (
+                            ci=CiSettings(n_draws=50)) is None, (
         "no interval is the honest answer; substituting a different method "
         "behind the same column heading is the defect this fixes"
     )
@@ -283,7 +284,7 @@ def test_cancelling_is_honoured_and_recorded():
         return i >= 60
 
     boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds,
-                            n_draws=400, progress=cancel_after_60)
+                            ci=CiSettings(n_draws=400), progress=cancel_after_60)
     assert calls["n"] <= 62, "cancelling must stop the loop, not just flag it"
     assert boot is not None and boot.cancelled
     assert boot.n_ok < boot.n_draws
@@ -293,7 +294,7 @@ def test_cancelling_too_early_yields_no_interval():
     data = _two_peaks(seed=3)
     comps, edges, bounds, popt, _ = _fit(data)
     boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds,
-                            n_draws=400, progress=lambda i, n: i >= 3)
+                            ci=CiSettings(n_draws=400), progress=lambda i, n: i >= 3)
     assert boot is None, (
         "three refits is not an interval; better to report none than to "
         "percentile the resampler"
@@ -305,7 +306,7 @@ def test_cancelling_too_early_yields_no_interval():
 def test_same_seed_reproduces_the_interval_exactly():
     data = _two_peaks(seed=4)
     comps, edges, bounds, popt, _ = _fit(data)
-    kw = dict(n_draws=80)
+    kw = dict(ci=CiSettings(n_draws=80))
     a = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, **kw)
     b = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, **kw)
     assert np.allclose(a.lo, b.lo) and np.allclose(a.hi, b.hi), (
@@ -317,7 +318,7 @@ def test_same_seed_reproduces_the_interval_exactly():
 def test_manifest_names_the_method_that_actually_ran():
     data = _two_peaks(seed=0)
     comps, edges, bounds, popt, pcov = _fit(data)
-    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, n_draws=60)
+    boot = bootstrap_fit_ci(comps, data, edges, True, popt, bounds, ci=CiSettings(n_draws=60))
     fields = boot.manifest_fields(pcov)
 
     assert fields["ci_method"] == BOOTSTRAP_CI_METHOD
@@ -331,7 +332,7 @@ def test_manifest_names_the_method_that_actually_ran():
 
     # The default must still describe the covariance -- mean_curve_window's
     # band genuinely uses it, and this change must not relabel that.
-    assert ci_manifest_fields(pcov, True)["ci_method"] == COV_CI_METHOD
+    assert ci_manifest_fields(pcov, True, CiSettings())["ci_method"] == COV_CI_METHOD
 
 
 if __name__ == "__main__":

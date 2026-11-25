@@ -172,12 +172,13 @@ def _trace(**kw):
     )
 
 
-def test_a_curve_the_ramp_pipeline_refuses_is_still_drawn(monkeypatch):
+def test_a_curve_the_ramp_pipeline_refuses_is_still_drawn(monkeypatch, catalog):
     """Not analysable and not viewable are different verdicts. A held
     curve has no approach/retract to split, which is a reason to draw it as one
     series — never a reason to show the user an empty plot."""
     from smfs_catalog.curve_loader import UnusableCurveError, UNUSABLE_NOT_FE
     win = _window(monkeypatch)
+    monkeypatch.setattr(win, "_db_path", catalog)
     monkeypatch.setattr(
         raw, "load_force_curve",
         lambda _p: (_ for _ in ()).throw(

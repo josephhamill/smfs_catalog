@@ -12,19 +12,24 @@ import os
 import zlib
 import sys
 import platform
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from datetime import datetime
+from dataclasses import replace
 from typing import Optional
 
 import numpy as np
 from scipy import sparse
 
+from . import crashlog
 from .analysis_params import (
     ANALYSIS_PARAM_DEFAULTS,
     ANALYSIS_PARAM_KEYS,
     AnalysisParams,
 )
+from .file_filter import FileFilter
+from .fit_records import DistFitRecord, GmmFitRecord
 from .path_pattern import path_matches
 
 APP_NAME = "smfs_catalog"
@@ -73,7 +78,7 @@ def check_db_machine(db_path: str = DEFAULT_DB_PATH) -> Optional[str]:
             "SELECT key, value FROM meta WHERE key IN ('built_host','built_os')"
         ).fetchall())
         conn.close()
-    except Exception:
+    except Exception:  # noqa: BLE001  best-effort host warning; no warning if the meta read fails
         return None
     built_host = rows.get("built_host")
     built_os = rows.get("built_os")
@@ -95,6 +100,20 @@ def get_connection(db_path: str = DEFAULT_DB_PATH, timeout: float = 30.0) -> sql
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.create_function("path_matches", 2, path_matches, deterministic=True)
     return conn
+
+
+@contextmanager
+def _borrowed(conn, db_path, *, commit=False):
+    c = conn or get_connection(db_path)
+    try:
+        if commit:
+            with c:  # sqlite3: commit on success, roll back on error
+                yield c
+        else:
+            yield c
+    finally:
+        if conn is None:
+            c.close()
 
 
 # ── The catalog's version ─────────────────────────────────────────────────────
@@ -684,15 +703,11 @@ def set_file_descriptors_bulk(
     sets = ", ".join(f"{k} = ?" for k in rec)
     value_params = list(rec.values())
 
-    def _chunks(seq, size=800):
-        for i in range(0, len(seq), size):
-            yield seq[i:i + size]
-
     n = 0
     conn = get_connection(db_path)
     try:
         with conn:
-            for chunk in _chunks(resolved):
+            for chunk in _sql_chunks(resolved):
                 ph = ",".join("?" * len(chunk))
                 cur = conn.execute(
                     f"UPDATE files SET {sets} WHERE path IN ({ph})",
@@ -1009,12 +1024,6 @@ def get_distinct_values(
     column: str,
     table: str = "files",
     db_path: str = DEFAULT_DB_PATH,
-    *,
-    users: Optional[list] = None,
-    techniques: Optional[list] = None,
-    analytes: Optional[list] = None,
-    solvents: Optional[list] = None,
-    afm_units: Optional[list] = None,
 ) -> list[str]:
     """Return sorted list of distinct non-null values for a given column."""
     _allowed = {
@@ -1026,35 +1035,10 @@ def get_distinct_values(
     if table not in _allowed or column not in _allowed[table]:
         return []
 
-    clauses = [f"{column} IS NOT NULL AND {column} != ''"]
-    params: list = []
-
-    if users:
-        ph = ",".join("?" * len(users))
-        clauses.append(f"experimentalist IN ({ph})")
-        params.extend(users)
-    if techniques:
-        ph = ",".join("?" * len(techniques))
-        clauses.append(f"technique IN ({ph})")
-        params.extend(techniques)
-    if analytes:
-        ph = ",".join("?" * len(analytes))
-        clauses.append(f"analyte IN ({ph})")
-        params.extend(analytes)
-    if solvents:
-        ph = ",".join("?" * len(solvents))
-        clauses.append(f"solvent IN ({ph})")
-        params.extend(solvents)
-    if afm_units:
-        ph = ",".join("?" * len(afm_units))
-        clauses.append(f"afm_unit IN ({ph})")
-        params.extend(afm_units)
-
-    where = " AND ".join(clauses)
+    where = f"{column} IS NOT NULL AND {column} != ''"
     conn = get_connection(db_path)
     rows = conn.execute(
         f"SELECT DISTINCT {column} FROM {table} WHERE {where} ORDER BY {column}",
-        params,
     ).fetchall()
     conn.close()
     return [row[0] for row in rows]
@@ -1079,26 +1063,17 @@ _CANONICAL_IDS_SQL = """
 """
 
 
-def _file_filter_clauses(
-    *,
-    directory=None, directories=None,
-    curve_type=None, curve_types=None, parse_ok=None, quality=None,
-    search=None, users=None, analytes=None, solvents=None, afm_units=None,
-    techniques=None, substrates=None, sample_preps=None,
-    date_from=None, date_to=None, k_min=None, k_max=None,
-    usable=None, unique=None, exclude_facet=None,
-) -> tuple[list[str], list]:
-    """Build the one authoritative set of predicates over ``files f``."""
+def _add_many(clauses: list, params: list, column: str, values) -> None:
+    if values:
+        placeholders = ",".join("?" * len(values))
+        clauses.append(f"{column} IN ({placeholders})")
+        params.extend(values)
+
+
+def _directory_clauses(flt: FileFilter) -> tuple[list[str], list]:
     clauses: list[str] = []
     params: list = []
-
-    def add_many(column: str, values) -> None:
-        if values:
-            placeholders = ",".join("?" * len(values))
-            clauses.append(f"{column} IN ({placeholders})")
-            params.extend(values)
-
-    for d in ([directory] if directory else []) + list(directories or []):
+    for d in ([flt.directory] if flt.directory else []) + list(flt.directories or []):
         # Compared with a trailing separator, so /a/b never captures
         # /a/b2.  substr rather than LIKE: LIKE reads _ and % in the root as
         # wildcards, and a real folder name may contain either.
@@ -1106,82 +1081,106 @@ def _file_filter_clauses(
         under = root + os.sep
         clauses.append("(f.path = ? OR substr(f.path, 1, ?) = ?)")
         params.extend([root, len(under), under])
-    if usable is not None:
+    return clauses, params
+
+
+def _eligibility_clauses(flt: FileFilter) -> tuple[list[str], list]:
+    clauses: list[str] = []
+    if flt.usable is not None:
         clauses.append(
-            "f.unusable_reason IS NULL" if usable
+            "f.unusable_reason IS NULL" if flt.usable
             else "f.unusable_reason IS NOT NULL"
         )
-    if unique is not None:
-        clauses.append(f"f.id {'' if unique else 'NOT '}IN ({_CANONICAL_IDS_SQL})")
-    if curve_type is not None:
+    if flt.unique is not None:
+        clauses.append(
+            f"f.id {'' if flt.unique else 'NOT '}IN ({_CANONICAL_IDS_SQL})")
+    return clauses, []
+
+
+def _column_clauses(flt: FileFilter, exclude_facet) -> tuple[list[str], list]:
+    clauses: list[str] = []
+    params: list = []
+    if flt.curve_type is not None:
         clauses.append("f.curve_type = ?")
-        params.append(curve_type)
+        params.append(flt.curve_type)
     if exclude_facet != "curve_types":
-        add_many("f.curve_type", curve_types)
-    if parse_ok is not None:
+        _add_many(clauses, params, "f.curve_type", flt.curve_types)
+    if flt.parse_ok is not None:
         clauses.append("f.parse_ok = ?")
-        params.append(1 if parse_ok else 0)
-    if quality is not None:
+        params.append(1 if flt.parse_ok else 0)
+    if flt.quality is not None:
         clauses.append("f.quality = ?")
-        params.append(quality)
-    if search:
+        params.append(flt.quality)
+    if flt.search:
         clauses.append("path_matches(f.path, ?)")
-        params.append(search)
-    for facet, column, values in (
-        ("users", "f.experimentalist", users),
-        ("analytes", "f.analyte", analytes),
-        ("solvents", "f.solvent", solvents),
-        ("techniques", "f.technique", techniques),
-        ("substrates", "f.substrate", substrates),
-        ("sample_preps", "f.sample_prep", sample_preps),
-        ("afm_units", "f.afm_unit", afm_units),
+        params.append(flt.search)
+    return clauses, params
+
+
+def _facet_clauses(flt: FileFilter, exclude_facet) -> tuple[list[str], list]:
+    clauses: list[str] = []
+    params: list = []
+    for facet, column in (
+        ("users", "f.experimentalist"),
+        ("analytes", "f.analyte"),
+        ("solvents", "f.solvent"),
+        ("techniques", "f.technique"),
+        ("substrates", "f.substrate"),
+        ("sample_preps", "f.sample_prep"),
+        ("afm_units", "f.afm_unit"),
     ):
         if exclude_facet != facet:
-            add_many(column, values)
-    if date_from:
+            _add_many(clauses, params, column, getattr(flt, facet))
+    return clauses, params
+
+
+def _range_clauses(flt: FileFilter) -> tuple[list[str], list]:
+    clauses: list[str] = []
+    params: list = []
+    if flt.date_from:
         clauses.append("f.measured_date >= ?")
-        params.append(date_from)
-    if date_to:
+        params.append(flt.date_from)
+    if flt.date_to:
         clauses.append("f.measured_date <= ?")
-        params.append(date_to)
-    if k_min is not None:
+        params.append(flt.date_to)
+    if flt.k_min is not None:
         clauses.append("f.spring_constant_pn_nm >= ?")
-        params.append(k_min)
-    if k_max is not None:
+        params.append(flt.k_min)
+    if flt.k_max is not None:
         clauses.append("f.spring_constant_pn_nm <= ?")
-        params.append(k_max)
+        params.append(flt.k_max)
+    return clauses, params
+
+
+def _file_filter_clauses(
+    flt: FileFilter, *, exclude_facet=None,
+) -> tuple[list[str], list]:
+    """Build the one authoritative set of predicates over ``files f``."""
+    clauses: list[str] = []
+    params: list = []
+    for part_clauses, part_params in (
+        _directory_clauses(flt),
+        _eligibility_clauses(flt),
+        _column_clauses(flt, exclude_facet),
+        _facet_clauses(flt, exclude_facet),
+        _range_clauses(flt),
+    ):
+        clauses += part_clauses
+        params += part_params
     return clauses, params
 
 
 def get_facet_options(
     db_path: str = DEFAULT_DB_PATH,
-    *,
-    users:        Optional[list] = None,
-    analytes:     Optional[list] = None,
-    solvents:     Optional[list] = None,
-    techniques:   Optional[list] = None,
-    substrates:   Optional[list] = None,
-    sample_preps: Optional[list] = None,
-    afm_units:    Optional[list] = None,
-    curve_types:  Optional[list] = None,
-    date_from:    Optional[str]  = None,
-    date_to:      Optional[str]  = None,
-    search:       Optional[str]  = None,
+    flt: Optional[FileFilter] = None,
 ) -> dict[str, list[tuple[str, int]]]:
     """Faceted-search options: for each filter dimension, the distinct values that still have data given the OTHER selected dimensions, each..."""
+    flt = replace(flt or FileFilter(), parse_ok=True, usable=True, unique=True)
     out: dict[str, list[tuple[str, int]]] = {}
     conn = get_connection(db_path)
     try:
         for dim, col in _FACET_COLUMNS.items():
-            clauses, params = _file_filter_clauses(
-                users=users, analytes=analytes, solvents=solvents,
-                techniques=techniques, substrates=substrates,
-                sample_preps=sample_preps,
-                afm_units=afm_units, curve_types=curve_types,
-                date_from=date_from, date_to=date_to, search=search,
-                parse_ok=True, usable=True, unique=True,
-                exclude_facet=dim,
-            )
+            clauses, params = _file_filter_clauses(flt, exclude_facet=dim)
             clauses.append(f"{col} IS NOT NULL AND {col} != ''")
             where = " AND ".join(clauses)
             rows = conn.execute(f"""
@@ -1199,37 +1198,10 @@ def get_facet_options(
 
 def list_files(
     db_path: str = DEFAULT_DB_PATH,
-    directory: Optional[str] = None,
-    directories: Optional[list] = None,
-    curve_type: Optional[str] = None,
-    curve_types: Optional[list] = None,
-    parse_ok: Optional[bool] = None,
-    quality: Optional[str] = None,
-    search: Optional[str] = None,
-    users: Optional[list] = None,
-    analytes: Optional[list] = None,
-    solvents: Optional[list] = None,
-    techniques: Optional[list] = None,
-    substrates: Optional[list] = None,
-    sample_preps: Optional[list] = None,
-    afm_units: Optional[list] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    k_min: Optional[float] = None,
-    k_max: Optional[float] = None,
-    usable: Optional[bool] = None,
-    unique: Optional[bool] = None,
+    flt: Optional[FileFilter] = None,
 ) -> list[sqlite3.Row]:
     """Fetch file records with optional filters."""
-    clauses, params = _file_filter_clauses(
-        directory=directory, directories=directories,
-        curve_type=curve_type, curve_types=curve_types, parse_ok=parse_ok,
-        quality=quality, search=search, users=users, analytes=analytes,
-        solvents=solvents, techniques=techniques, substrates=substrates,
-        sample_preps=sample_preps, afm_units=afm_units,
-        date_from=date_from, date_to=date_to, k_min=k_min, k_max=k_max,
-        usable=usable, unique=unique,
-    )
+    clauses, params = _file_filter_clauses(flt or FileFilter())
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
@@ -1298,16 +1270,24 @@ def _classification_report_columns() -> tuple[str, ...]:
 
 def classification_report_rows(
     db_path: str = DEFAULT_DB_PATH,
+    flt: Optional[FileFilter] = None,
     *,
     select: str = "ultimate",
-    **scope_kwargs,
 ) -> tuple[list[str], list[list]]:
-    """Build a classification report: one row per file matching `scope_kwargs` (any list_files() filter — users/analytes/solvents/afm_units/..."""
-    rows = list_files(db_path=db_path, **scope_kwargs)
+    """Build a classification report: one row per file matching `flt` (any list_files() filter — users/analytes/solvents/afm_units/..."""
+    rows = list_files(db_path, flt)
     if not rows:
         return list(_classification_report_columns()), []
+    hit_by_path, seg_by_path = _report_lookups(rows, select, db_path)
+    header = list(_classification_report_columns())
+    out = [_report_record(row, hit_by_path, seg_by_path) for row in rows]
+    return header, out
 
+
+def _report_lookups(rows, select: str, db_path: str) -> tuple[dict, dict]:
+    """The per-path hit cell and segment summary for the report's event rows."""
     from . import criteria_gate as _gate
+    from .roi_pipeline import segment_summary_bulk
     event_paths = [r["path"] for r in rows if r["event"] == "event"]
     hit_by_path: dict[str, str] = {}
     if event_paths:
@@ -1316,44 +1296,30 @@ def classification_report_rows(
         cls = _gate.classify(event_paths, db_path)
         if cls.gate:
             hit_by_path = dict(cls.membership)
-
-    from .roi_pipeline import SEG_SUMMARY_FIELD, SEG_SUMMARY_KEYS, segment_summary_bulk
     seg_by_path: dict[str, dict] = (
         segment_summary_bulk(event_paths, select, db_path) if event_paths else {})
+    return hit_by_path, seg_by_path
 
-    header = list(_classification_report_columns())
-    out: list[list] = []
-    for row in rows:
-        path = row["path"]
-        seg  = seg_by_path.get(path) or {}
-        record = [row[c] if c in row.keys() else "" for c in _FILE_REPORT_COLUMNS]
-        record.append(row["event"])
-        record.append(hit_by_path.get(path, ""))
-        record.extend(seg.get(SEG_SUMMARY_FIELD[k]) for k in SEG_SUMMARY_KEYS)
-        out.append(["" if v is None else v for v in record])
-    return header, out
+
+def _report_record(row, hit_by_path: dict, seg_by_path: dict) -> list:
+    from .roi_pipeline import SEG_SUMMARY_FIELD, SEG_SUMMARY_KEYS
+    path = row["path"]
+    seg  = seg_by_path.get(path) or {}
+    record = [row[c] if c in row.keys() else "" for c in _FILE_REPORT_COLUMNS]
+    record.append(row["event"])
+    record.append(hit_by_path.get(path, ""))
+    record.extend(seg.get(SEG_SUMMARY_FIELD[k]) for k in SEG_SUMMARY_KEYS)
+    return ["" if v is None else v for v in record]
 
 
 def get_distinct_dates(
     db_path: str = DEFAULT_DB_PATH,
-    *,
-    users:        Optional[list] = None,
-    analytes:     Optional[list] = None,
-    solvents:     Optional[list] = None,
-    techniques:   Optional[list] = None,
-    substrates:   Optional[list] = None,
-    sample_preps: Optional[list] = None,
-    afm_units:    Optional[list] = None,
-    curve_types:  Optional[list] = None,
-    search:       Optional[str]  = None,
+    flt: Optional[FileFilter] = None,
 ) -> list[tuple[str, int]]:
-    """Return [(measured_date, n_files), ...] for dates that have at least one parseable file."""
-    clauses, params = _file_filter_clauses(
-        users=users, analytes=analytes, solvents=solvents,
-        techniques=techniques, substrates=substrates, sample_preps=sample_preps,
-        afm_units=afm_units, curve_types=curve_types, search=search,
-        parse_ok=True,
-    )
+    """Return [(measured_date, n_files), ...] for dates that have at least one parseable file; `flt` narrows it except that parse_ok is forced True and usable, unique and the date range are ignored."""
+    flt = replace(flt or FileFilter(), parse_ok=True, usable=None, unique=None,
+                  date_from=None, date_to=None)
+    clauses, params = _file_filter_clauses(flt)
     clauses += ["f.measured_date IS NOT NULL", "f.measured_date != ''"]
     where = " AND ".join(clauses)
 
@@ -1410,12 +1376,8 @@ def get_file_id(
 ) -> Optional[int]:
     """Return files.id for the given path, or None if the file is not in the DB."""
     path = normalize_path(path)
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     return row["id"] if row else None
 
 
@@ -1425,14 +1387,10 @@ def get_path(
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[str]:
     """Return files.path for the given id, or None if not present."""
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute(
             "SELECT path FROM files WHERE id = ?", (file_id,)
         ).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     return row["path"] if row else None
 
 
@@ -1447,16 +1405,12 @@ def get_analysis_result(
     """Return a cached value only when its legacy code_version column matches the supplied scientific-method identity."""
     if code_version is None:
         return None
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute("""
             SELECT value, code_version
             FROM   analysis_results
             WHERE  file_id = ? AND analysis_type = ? AND params_json = ?
         """, (file_id, analysis_type, params_json)).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     if row is None:
         return None
     if row["code_version"] != code_version:
@@ -1505,17 +1459,13 @@ def get_analysis_results_multi(
     """Batched get_analysis_result for several analysis_types under the same (file_id, params_json, code_version) — one connection/query..."""
     if not analysis_types or code_version is None:
         return {}
-    c = conn or get_connection(db_path)
-    placeholders = ",".join("?" for _ in analysis_types)
-    try:
+    with _borrowed(conn, db_path) as c:
+        placeholders = ",".join("?" for _ in analysis_types)
         rows = c.execute(f"""
             SELECT analysis_type, value, code_version
             FROM   analysis_results
             WHERE  file_id = ? AND params_json = ? AND analysis_type IN ({placeholders})
         """, (file_id, params_json, *analysis_types)).fetchall()
-    finally:
-        if conn is None:
-            c.close()
     return {
         r["analysis_type"]: r["value"]
         for r in rows
@@ -1568,14 +1518,10 @@ def get_derived_results_bulk_latest(
     paths_resolved = [normalize_path(p) for p in paths]
     type_ph = ",".join("?" * len(analysis_types))
 
-    def _chunks(seq, size=800):
-        for i in range(0, len(seq), size):
-            yield seq[i:i + size]
-
     conn = get_connection(db_path)
     try:
         path_by_fid: dict[int, str] = {}
-        for chunk in _chunks(paths_resolved):
+        for chunk in _sql_chunks(paths_resolved):
             ph = ",".join("?" * len(chunk))
             for r in conn.execute(
                 f"SELECT id, path FROM files WHERE path IN ({ph})", chunk
@@ -1586,7 +1532,7 @@ def get_derived_results_bulk_latest(
 
         rows = []
         fids = list(path_by_fid.keys())
-        for chunk in _chunks(fids):
+        for chunk in _sql_chunks(fids):
             fid_ph = ",".join("?" * len(chunk))
             rows += conn.execute(f"""
                 SELECT ar.file_id, ar.analysis_type, ar.value, ar.params_json
@@ -2033,16 +1979,12 @@ def get_event_histogram(
     conn:        Optional[sqlite3.Connection] = None,
 ) -> Optional[sparse.csr_array]:
     """Return the cached histogram, or None if not yet computed."""
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute(
             "SELECT histogram, x_bins, f_bins FROM event_histograms "
             "WHERE file_id = ? AND params_json = ?",
             (file_id, params_json),
         ).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     if row is None:
         return None
     return _decode_event_histogram(row["histogram"], row["x_bins"], row["f_bins"])
@@ -2056,8 +1998,7 @@ def get_event_histograms_bulk(
 ) -> dict[int, sparse.csr_array]:
     """file_id → cached histogram, for those of `file_ids` that have one."""
     out: dict[int, sparse.csr_array] = {}
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         for chunk in _sql_chunks(list(file_ids)):
             ph = ",".join("?" * len(chunk))
             for row in c.execute(
@@ -2067,9 +2008,6 @@ def get_event_histograms_bulk(
             ):
                 out[row["file_id"]] = _decode_event_histogram(
                     row["histogram"], row["x_bins"], row["f_bins"])
-    finally:
-        if conn is None:
-            c.close()
     return out
 
 
@@ -2132,16 +2070,12 @@ def get_deflection_histogram(
     conn:        Optional[sqlite3.Connection] = None,
 ) -> Optional[tuple[np.ndarray, int, int]]:
     """(counts, n_below, n_above) for one curve, or None if not on this grid."""
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute(
             "SELECT counts, n_bins, n_below, n_above FROM deflection_histograms "
             "WHERE file_id = ? AND params_json = ?",
             (file_id, params_json),
         ).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     if row is None:
         return None
     counts = np.frombuffer(zlib.decompress(row["counts"]), dtype=np.uint32)
@@ -2202,8 +2136,7 @@ def sum_deflection_histograms(
     if not paths:
         return total, below, above, n_curves
     keys = [normalize_path(p) for p in paths]
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         for chunk in _sql_chunks(keys):
             marks = ",".join("?" * len(chunk))
             cur = c.execute(
@@ -2223,9 +2156,6 @@ def sum_deflection_histograms(
                 below   += row["n_below"]
                 above   += row["n_above"]
                 n_curves += 1
-    finally:
-        if conn is None:
-            c.close()
     return total, below, above, n_curves
 
 
@@ -2240,18 +2170,13 @@ def write_event_map(
     """Store the multi-event ROI document for one file — as its ONE current registration."""
     if code_version is None:
         return
-    c = conn or get_connection(db_path)
-    try:
-        with c:
-            c.execute("DELETE FROM event_map WHERE file_id = ?", (file_id,))
-            c.execute("""
-                INSERT OR REPLACE INTO event_map
-                    (file_id, params_json, code_version, payload_json, computed_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (file_id, params_json, code_version, payload_json, _now()))
-    finally:
-        if conn is None:
-            c.close()
+    with _borrowed(conn, db_path, commit=True) as c:
+        c.execute("DELETE FROM event_map WHERE file_id = ?", (file_id,))
+        c.execute("""
+            INSERT OR REPLACE INTO event_map
+                (file_id, params_json, code_version, payload_json, computed_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (file_id, params_json, code_version, payload_json, _now()))
 
 
 def get_event_map(
@@ -2264,16 +2189,12 @@ def get_event_map(
     """Return a cached payload only when its legacy code_version column matches the supplied scientific-method identity."""
     if code_version is None:
         return None
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute(
             "SELECT payload_json, code_version FROM event_map "
             "WHERE file_id = ? AND params_json = ?",
             (file_id, params_json),
         ).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     if row is None or row["code_version"] != code_version:
         return None
     return row["payload_json"]
@@ -2285,16 +2206,12 @@ def get_latest_event_map(
     conn:    Optional[sqlite3.Connection] = None,
 ) -> Optional[str]:
     """Return the payload_json of the MOST RECENTLY computed event_map document for this file, across ALL param sets and code versions — or..."""
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute(
             "SELECT payload_json FROM event_map WHERE file_id = ? "
             "ORDER BY computed_at DESC LIMIT 1",
             (file_id,),
         ).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     return row["payload_json"] if row is not None else None
 
 
@@ -2307,8 +2224,7 @@ def get_latest_event_maps_bulk(
     recent event_map document, as get_latest_event_map; paths with none are absent."""
     keys = [normalize_path(p) for p in paths]
     out: dict[str, tuple[int, str, str]] = {}
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         for chunk in _sql_chunks(keys):
             ph = ",".join("?" * len(chunk))
             for row in c.execute(
@@ -2318,9 +2234,6 @@ def get_latest_event_maps_bulk(
                 chunk,
             ):
                 out[row["path"]] = (row["file_id"], row["computed_at"], row["payload_json"])
-    finally:
-        if conn is None:
-            c.close()
     return out
 
 
@@ -2330,14 +2243,10 @@ def get_latest_event_map_params(
     conn:    Optional[sqlite3.Connection] = None,
 ) -> Optional[str]:
     """params_json of the file's current event_map row, or None if it has none. write_event_map deletes a file's prior row before inserting, so..."""
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute(
             "SELECT params_json FROM event_map WHERE file_id = ?", (file_id,),
         ).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     return row["params_json"] if row is not None else None
 
 
@@ -2377,16 +2286,12 @@ def get_segment_override(
     conn:    Optional[sqlite3.Connection] = None,
 ) -> dict:
     """{"primary_segment_idx", "secondary_segment_idx", "params_json"} — the raw stored manual pick, or all-None fields if never set."""
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute(
             "SELECT primary_segment_idx, secondary_segment_idx, "
             "segment_override_params_json FROM files WHERE id = ?",
             (file_id,),
         ).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     if row is None:
         return {"primary_segment_idx": None, "secondary_segment_idx": None, "params_json": None}
     return {
@@ -2408,10 +2313,8 @@ def get_segment_overrides_bulk(
     }
     if not file_ids:
         return out
-    c = conn or get_connection(db_path)
-    try:
-        for i in range(0, len(file_ids), 800):
-            chunk = file_ids[i:i + 800]
+    with _borrowed(conn, db_path) as c:
+        for chunk in _sql_chunks(file_ids):
             ph = ",".join("?" * len(chunk))
             for r in c.execute(
                 f"SELECT id, primary_segment_idx, secondary_segment_idx, "
@@ -2423,9 +2326,6 @@ def get_segment_overrides_bulk(
                     "secondary_segment_idx": r["secondary_segment_idx"],
                     "params_json":           r["segment_override_params_json"],
                 }
-    finally:
-        if conn is None:
-            c.close()
     return out
 
 
@@ -2473,13 +2373,8 @@ def delete_event_map(
     conn:    Optional[sqlite3.Connection] = None,
 ) -> None:
     """Drop every event_map document (all param sets) for one file."""
-    c = conn or get_connection(db_path)
-    try:
-        with c:
-            c.execute("DELETE FROM event_map WHERE file_id = ?", (file_id,))
-    finally:
-        if conn is None:
-            c.close()
+    with _borrowed(conn, db_path, commit=True) as c:
+        c.execute("DELETE FROM event_map WHERE file_id = ?", (file_id,))
 
 
 def write_file_metadata(
@@ -2635,7 +2530,8 @@ def get_experimentalist_profile(
     import json
     try:
         return json.loads(row["params_json"])
-    except Exception:
+    except (json.JSONDecodeError, TypeError) as exc:
+        crashlog.log_handled("Read experimentalist profile", exc)
         return None
 
 
@@ -2674,16 +2570,8 @@ def merge_experimentalist_profile(
 
 
 def save_distribution_fit(
-    variable:        str,
-    units:           str,
-    n_values:        int,
-    n_peaks:         int,
-    model_label:     str,
-    params_json:     str,
-    gof_json:        str,
-    fit_config_json: str,
-    db_path:         str = DEFAULT_DB_PATH,
-    experimentalist: str = "",
+    record:  DistFitRecord,
+    db_path: str = DEFAULT_DB_PATH,
 ) -> None:
     """Insert one committed distribution fit."""
     conn = get_connection(db_path)
@@ -2693,8 +2581,9 @@ def save_distribution_fit(
                 (variable, units, n_values, n_peaks, model_label,
                  params_json, gof_json, fit_config_json, created_at, experimentalist)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (variable, units, n_values, n_peaks, model_label,
-              params_json, gof_json, fit_config_json, _now(), experimentalist))
+        """, (record.variable, record.units, record.n_values, record.n_peaks,
+              record.model_label, record.params_json, record.gof_json,
+              record.fit_config_json, _now(), record.experimentalist))
     conn.close()
 
 
@@ -2714,18 +2603,8 @@ def get_distribution_fits(
 
 
 def save_gmm_fit(
-    x_variable:      str,
-    y_variable:      str,
-    n_values:        int,
-    k_components:    int,
-    cov_type:        str,
-    means_json:      str,
-    covs_json:       str,
-    weights_json:    str,
-    gof_json:        str,
-    fit_config_json: str = "{}",
-    db_path:         str = DEFAULT_DB_PATH,
-    experimentalist: str = "",
+    record:  GmmFitRecord,
+    db_path: str = DEFAULT_DB_PATH,
 ) -> None:
     """Insert one committed 2D GMM fit."""
     conn = get_connection(db_path)
@@ -2736,9 +2615,10 @@ def save_gmm_fit(
                  means_json, covs_json, weights_json, gof_json,
                  fit_config_json, created_at, experimentalist)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (x_variable, y_variable, n_values, k_components, cov_type,
-              means_json, covs_json, weights_json, gof_json,
-              fit_config_json, _now(), experimentalist))
+        """, (record.x_variable, record.y_variable, record.n_values,
+              record.k_components, record.cov_type, record.means_json,
+              record.covs_json, record.weights_json, record.gof_json,
+              record.fit_config_json, _now(), record.experimentalist))
     conn.close()
 
 
@@ -2770,16 +2650,11 @@ def set_event(
     """Write the stage-1 verdict for one file."""
     if event is not None and event not in EVENT_VERDICTS:
         raise ValueError(f"invalid event verdict: {event!r}")
-    c = conn or get_connection(db_path)
-    try:
-        with c:
-            c.execute(
-                "UPDATE files SET event = ? WHERE id = ?",
-                (event, file_id),
-            )
-    finally:
-        if conn is None:
-            c.close()
+    with _borrowed(conn, db_path, commit=True) as c:
+        c.execute(
+            "UPDATE files SET event = ? WHERE id = ?",
+            (event, file_id),
+        )
 
 
 def get_curve_type(
@@ -2792,14 +2667,10 @@ def get_curve_type(
     Written by the scanner at import from the wave itself, so it is known for
     every catalogued file without opening one.
     """
-    c = conn or get_connection(db_path)
-    try:
+    with _borrowed(conn, db_path) as c:
         row = c.execute(
             "SELECT curve_type FROM files WHERE id = ?", (file_id,)
         ).fetchone()
-    finally:
-        if conn is None:
-            c.close()
     return row["curve_type"] if row else None
 
 
@@ -2811,16 +2682,11 @@ def set_unusable_reason(
     conn: Optional[sqlite3.Connection] = None,
 ) -> None:
     """Record WHY a file cannot be analysed — or clear it (reason=None)."""
-    c = conn or get_connection(db_path)
-    try:
-        with c:
-            c.execute(
-                "UPDATE files SET unusable_reason = ?, unusable_detail = ? WHERE id = ?",
-                (reason, detail, file_id),
-            )
-    finally:
-        if conn is None:
-            c.close()
+    with _borrowed(conn, db_path, commit=True) as c:
+        c.execute(
+            "UPDATE files SET unusable_reason = ?, unusable_detail = ? WHERE id = ?",
+            (reason, detail, file_id),
+        )
 
 
 def clear_analysis_queue(db_path: str = DEFAULT_DB_PATH) -> None:
@@ -2874,16 +2740,11 @@ def set_queue_status(
     """Update the status of one queue entry."""
     if status not in ("pending", "running", "done") and not status.startswith("error: "):
         raise ValueError(f"invalid queue status: {status!r}")
-    c = conn or get_connection(db_path)
-    try:
-        with c:
-            c.execute(
-                "UPDATE analysis_queue SET status = ? WHERE file_id = ?",
-                (status, file_id),
-            )
-    finally:
-        if conn is None:
-            c.close()
+    with _borrowed(conn, db_path, commit=True) as c:
+        c.execute(
+            "UPDATE analysis_queue SET status = ? WHERE file_id = ?",
+            (status, file_id),
+        )
 
 
 def queue_paths(db_path: str = DEFAULT_DB_PATH) -> list[str]:
@@ -2897,8 +2758,7 @@ def import_queue_from_paths(paths: "list[str]", db_path: str = DEFAULT_DB_PATH) 
     try:
         resolved = [normalize_path(p) for p in paths]
         found: list[int] = []
-        for i in range(0, len(resolved), 800):
-            chunk = resolved[i:i + 800]
+        for chunk in _sql_chunks(resolved):
             ph = ",".join("?" * len(chunk))
             found.extend(
                 r["id"] for r in conn.execute(

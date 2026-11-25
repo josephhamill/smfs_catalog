@@ -50,7 +50,7 @@ from .export_utils import slug as _slug
 from . import style
 from . import clustering as _clustering
 from .widgets import ClusterColourBar
-from .qt_utils import _DateAxis, _make_session_header, set_si_label, fit_on_screen
+from .qt_utils import _DateAxis, _make_session_header, set_si_label, fit_on_screen, signals_blocked
 from . import variables as _vars
 from .roi_pipeline import SEG_SUMMARY_KEYS, read_segment_select
 
@@ -939,12 +939,11 @@ class VariableStatsWindow(QMainWindow):
 
     def _populate_list(self) -> None:
         """Repopulate the side list — one row per plotted point, in scatter order."""
-        self._list.blockSignals(True)
-        self._list.clear()
-        for path in self._plot_paths:
-            item = QListWidgetItem(Path(path).name)
-            self._list.addItem(item)
-        self._list.blockSignals(False)
+        with signals_blocked(self._list):
+            self._list.clear()
+            for path in self._plot_paths:
+                item = QListWidgetItem(Path(path).name)
+                self._list.addItem(item)
         self._selected = None
         self._sel_marker.hide()
         self._sel_label.setText("")
@@ -974,9 +973,8 @@ class VariableStatsWindow(QMainWindow):
             f"{_quant.format_value(self._variable_key, self._plot_vals[i], with_unit=True)}"
         )
         if not from_list:
-            self._list.blockSignals(True)
-            self._list.setCurrentRow(i)
-            self._list.blockSignals(False)
+            with signals_blocked(self._list):
+                self._list.setCurrentRow(i)
             self._list.scrollTo(self._list.currentIndex())
 
     def _on_double_click(self, _item: QListWidgetItem) -> None:

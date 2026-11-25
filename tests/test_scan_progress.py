@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tmpdirs                                              # noqa: E402
 
 from smfs_catalog import db as _db
+from smfs_catalog.file_filter import FileFilter
 from smfs_catalog import scanner as _scanner
 
 tmp = tmpdirs.mkdtemp(prefix="scan_progress_")
@@ -73,7 +74,7 @@ def make_dir(name, n):
 
 def n_files_in_db(directory):
     """How many catalogued files live under `directory` — read off files.path, the one place a location is stored."""
-    return len(_db.list_files(db_path=DB, directory=directory))
+    return len(_db.list_files(DB, FileFilter(directory=directory)))
 
 
 # -- (a)(d)(g) a full, uncancelled scan ---------------------------------------

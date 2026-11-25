@@ -1,5 +1,7 @@
 import numpy as np
 
+from smfs_catalog import event_processor as _ep
+
 from smfs_catalog.event_processor import (
     compute_physical_histogram_at,
     compute_wlc_histogram,
@@ -19,7 +21,7 @@ def test_normalized_histogram_uses_wlc_coordinates():
     kT = _k_B * _TEMPERATURE
     H = compute_wlc_histogram(
         np.array([5.0]), np.array([kT / 2.0]), l_p=2.0, l_c=10.0,
-        x_bins=2, f_bins=2, x_range=(0.0, 1.0), f_range=(0.0, 2.0),
+        grid=_ep.HistGrid(2, 2, (0.0, 1.0), (0.0, 2.0)),
     )
 
     assert H.dtype == np.uint32
@@ -29,7 +31,7 @@ def test_normalized_histogram_uses_wlc_coordinates():
 def test_physical_histogram_subtracts_the_supplied_anchor():
     H = compute_physical_histogram_at(
         np.array([10.0, 11.0]), np.array([2.0, 3.0]), anchor=10.0,
-        x_bins=2, f_bins=2, x_range=(0.0, 2.0), f_range=(2.0, 4.0),
+        grid=_ep.HistGrid(2, 2, (0.0, 2.0), (2.0, 4.0)),
     )
 
     np.testing.assert_array_equal(H, [[1.0, 0.0], [0.0, 1.0]])
@@ -85,7 +87,7 @@ def test_incremental_2dh_uses_the_same_fit_policy_as_full_rebuild():
 def test_out_of_window_trace_remains_a_zero_content_histogram():
     H = compute_physical_histogram_at(
         np.array([100.0]), np.array([100.0]), anchor=0.0,
-        x_bins=2, f_bins=2, x_range=(0.0, 2.0), f_range=(0.0, 2.0),
+        grid=_ep.HistGrid(2, 2, (0.0, 2.0), (0.0, 2.0)),
     )
 
     assert H is not None

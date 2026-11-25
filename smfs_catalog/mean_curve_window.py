@@ -31,7 +31,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from dataclasses import replace
 
 import numpy as np
 import pyqtgraph as pg
@@ -44,6 +44,7 @@ from . import models
 # shared rather than re-derived here.
 from .dist_fit_core import ci_manifest_fields, total_fit_ci as _fit_ci_band
 from .export_utils import slug as _slug
+from .plot_context import AxisLabels, ExportContext, HistView
 from .qt_utils import FixedDomainPlot, set_plot_title, set_si_label, fit_on_screen
 from .quantities import format_value as _q   # ONE formatter: unit and
 # meaningful digits come from quantities.py, so the same measurement
@@ -130,50 +131,29 @@ class MeanCurveWindow(QMainWindow):
 
     def __init__(
         self,
-        title:    str,
-        display:  np.ndarray,
-        counts:   np.ndarray,
-        auto_max: float,
-        z_pct:    int,
-        lut:      np.ndarray,
-        x_range:  tuple[float, float],
-        f_range:  tuple[float, float],
-        x_label:  str,
-        f_label:  str,
-        x_unit:   str = "",
-        f_unit:   str = "",
-        caption:    str = "",
-        physical:   bool = False,
-        paths:      "list[str] | None" = None,
-        overlay_fn: "Callable[[str], tuple | None] | None" = None,
-        db_path:    "str | None" = None,
-        provenance: dict | None = None,
+        title:   str,
+        view:    HistView,
+        axes:    AxisLabels,
+        context: ExportContext,
     ) -> None:
         super().__init__()
         self.setWindowTitle("SMFS — mean curve")
         self.setWindowFlag(Qt.WindowType.Window)
-        fit_on_screen(self, 640 + (190 if paths else 0), 560)
-        self._display  = display
-        self._counts   = counts
-        self._auto_max = auto_max
-        self._z_pct    = z_pct
-        self._lut      = lut
-        self._x_range  = x_range
-        self._f_range  = f_range
-        self._physical = physical
-        self._title    = title
-        self._caption  = caption
-        self._x_label  = x_label
-        self._f_label  = f_label
-        self._x_unit   = x_unit
-        self._f_unit   = f_unit
-        self._db_path  = db_path
-        self._paths    = list(paths) if paths else []
+        fit_on_screen(self, 640 + (190 if context.paths else 0), 560)
+        self._view    = view
+        self._axes    = axes
+        self._display = np.sqrt(view.counts)
+        self._z_pct   = view.z_pct
+        self._title   = title
         # The parent 2DH/PCA window's own export_provenance(), so a mean-curve
         # export says which population/grid/alignment produced the histogram
         # underneath it — this window computes a curve, it does not know where
         # the histogram came from.
-        self._provenance = dict(provenance) if provenance else {}
+        self._context = replace(
+            context,
+            paths=list(context.paths) if context.paths else [],
+            provenance=dict(context.provenance) if context.provenance else {},
+        )
         # Last WLC fit, kept for the export: it is a RESULT (l_p/l_c of the
         # ridge).
         self._wlc_fit: dict | None = None
@@ -182,13 +162,13 @@ class MeanCurveWindow(QMainWindow):
 
         # Physical axis geometry. The per-column Gaussian ridge is computed
         # in _recompute_mean() so it can be refreshed when the corner mask moves.
-        n_x, n_f = counts.shape
-        x0, x1 = x_range
-        f0, f1 = f_range
+        n_x, n_f = view.counts.shape
+        x0, x1 = view.x_range
+        f0, f1 = view.f_range
         self._f0        = f0
         self._f_per_col = (f1 - f0) / n_f
-        self._x_phys = _bin_centres(x_range, n_x)
-        self._f_col  = _bin_centres(f_range, n_f)
+        self._x_phys = _bin_centres(view.x_range, n_x)
+        self._f_col  = _bin_centres(view.f_range, n_f)
         self._f_mean = np.full(n_x, np.nan)
         self._f_sig  = np.full(n_x, np.nan)
         self._valid  = np.zeros(n_x, dtype=bool)
@@ -209,12 +189,12 @@ class MeanCurveWindow(QMainWindow):
         ctrl.addWidget(QLabel("Clip:"))
         self._z_slider = QSlider(Qt.Orientation.Horizontal)
         self._z_slider.setRange(1, 200)
-        self._z_slider.setValue(z_pct)
+        self._z_slider.setValue(view.z_pct)
         self._z_slider.setFixedWidth(150)
         self._z_slider.setToolTip(
             "Intensity clip: drag left to highlight dense regions (clipped values shown in red)"
         )
-        self._z_label = QLabel(f"{z_pct}%")
+        self._z_label = QLabel(f"{view.z_pct}%")
         self._z_label.setMinimumWidth(36)
         auto_btn = QPushButton("Auto")
         auto_btn.setFixedWidth(42)
@@ -247,7 +227,7 @@ class MeanCurveWindow(QMainWindow):
         )
         row2.addWidget(spread_label)
 
-        if physical:
+        if self._context.physical:
             row2.addSpacing(12)
             self._wlc_btn = QPushButton("Fit WLC")
             self._wlc_btn.setToolTip(
@@ -258,7 +238,7 @@ class MeanCurveWindow(QMainWindow):
             self._wlc_label = QLabel("WLC: —")
             row2.addWidget(self._wlc_label)
         row2.addStretch()
-        if db_path is not None:
+        if self._context.db_path is not None:
             self._export_btn = QPushButton("Export…")
             self._export_btn.setToolTip(
                 "Write this view to the export folder: the 2DH matrix, the "
@@ -270,19 +250,19 @@ class MeanCurveWindow(QMainWindow):
         lay.addLayout(row2)
 
         # ── Plot ──────────────────────────────────────────────────────────────
-        self._pw = FixedDomainPlot(x_range, f_range)
-        set_plot_title(self._pw, title, caption)
+        self._pw = FixedDomainPlot(view.x_range, view.f_range)
+        set_plot_title(self._pw, title, self._context.caption)
         # si=False: this view sits on the 2DH grid whose ranges are set in
         # plain nm/pN spin boxes, and its WLC label prints l_p/l_c in nm.
-        set_si_label(self._pw, "bottom", x_label, x_unit, si=False)
-        set_si_label(self._pw, "left",   f_label, f_unit, si=False)
+        set_si_label(self._pw, "bottom", axes.x_label, axes.x_unit, si=False)
+        set_si_label(self._pw, "left",   axes.y_label, axes.y_unit, si=False)
         self._img = pg.ImageItem()
         self._pw.addItem(self._img)
 
         self._overlay_panel = None
-        if paths and overlay_fn is not None:
-            self._overlay_panel = TraceOverlayPanel(self._pw, overlay_fn)
-            self._overlay_panel.set_paths(paths)
+        if self._context.paths and self._context.overlay_fn is not None:
+            self._overlay_panel = TraceOverlayPanel(self._pw, self._context.overlay_fn)
+            self._overlay_panel.set_paths(self._context.paths)
             splitter = QSplitter(Qt.Orientation.Horizontal)
             splitter.addWidget(self._pw)
             splitter.addWidget(self._overlay_panel)
@@ -295,8 +275,8 @@ class MeanCurveWindow(QMainWindow):
         # Corner mask: everything to the right of and below the marker is excluded
         # from the per-column Gaussian fit. Place the marker at the upper-left of
         # the bottom-right baseline blob; the rising ridge to the left is kept.
-        f_lo, f_hi = f_range
-        x_lo, x_hi = x_range
+        f_lo, f_hi = view.f_range
+        x_lo, x_hi = view.x_range
         self._corner = pg.TargetItem(
             pos=(x_lo + 0.45 * (x_hi - x_lo), f_lo + 0.12 * (f_hi - f_lo)),
             size=12,
@@ -310,8 +290,8 @@ class MeanCurveWindow(QMainWindow):
         self._pw.addItem(self._corner)
 
         # Draggable extension region for the WLC fit (physical axes only).
-        if physical:
-            x0, x1 = x_range
+        if self._context.physical:
+            x0, x1 = view.x_range
             span = x1 - x0
             self._region = pg.LinearRegionItem(
                 values=(x0 + 0.3 * span, x0 + 0.7 * span),
@@ -325,26 +305,26 @@ class MeanCurveWindow(QMainWindow):
         self._recompute_mean()
 
     def _draw(self) -> None:
-        clip_level = max(self._auto_max * self._z_pct / 100.0, 1e-10)
+        clip_level = max(self._view.auto_max * self._z_pct / 100.0, 1e-10)
         scaled = np.clip(self._display / clip_level * 254.0, 0, 254).astype(np.uint8)
         scaled[self._display > clip_level] = 255
-        self._img.setImage(scaled, autoLevels=False, lut=self._lut, levels=(0, 255))
+        self._img.setImage(scaled, autoLevels=False, lut=self._view.lut, levels=(0, 255))
         self._img.setRect(QRectF(
-            self._x_range[0], self._f_range[0],
-            self._x_range[1] - self._x_range[0],
-            self._f_range[1] - self._f_range[0],
+            self._view.x_range[0], self._view.f_range[0],
+            self._view.x_range[1] - self._view.x_range[0],
+            self._view.f_range[1] - self._view.f_range[0],
         ))
 
     def _recompute_mean(self) -> None:
         """Per-column Gaussian fit, optionally excluding the corner-mask quadrant."""
         self._invalidate_wlc()
-        counts = self._counts
+        counts = self._view.counts
         if self._corner_chk.isChecked() and self._corner is not None:
             p = self._corner.pos()
             x_c, f_c = p.x(), p.y()
             x_mask = self._x_phys >= x_c       # to the right
             f_mask = self._f_col  <= f_c       # and below
-            counts = self._counts.copy()
+            counts = self._view.counts.copy()
             counts[np.ix_(x_mask, f_mask)] = 0.0
         mean_c, sig_c = _column_gaussian_means(counts)
         self._f_mean = self._f0 + (mean_c + 0.5) * self._f_per_col
@@ -505,20 +485,20 @@ class MeanCurveWindow(QMainWindow):
     def export_provenance(self) -> dict:
         """This view's settings, for an export manifest — the parent window's
         provenance plus what this window itself decided."""
-        d = dict(self._provenance)
+        d = dict(self._context.provenance)
         corner = self._corner.pos() if self._corner is not None else None
         fit_region = self._region.getRegion() if self._region is not None else None
         d.update({
             "window":       "mean_curve",
             "view_title":   self._title,
-            "caption":      self._caption,
-            "physical":     self._physical,
-            "x_label":      self._x_label,
-            "f_label":      self._f_label,
-            "x_unit":       self._x_unit,
-            "f_unit":       self._f_unit,
-            "x_range":      list(self._x_range),
-            "f_range":      list(self._f_range),
+            "caption":      self._context.caption,
+            "physical":     self._context.physical,
+            "x_label":      self._axes.x_label,
+            "f_label":      self._axes.y_label,
+            "x_unit":       self._axes.x_unit,
+            "f_unit":       self._axes.y_unit,
+            "x_range":      list(self._view.x_range),
+            "f_range":      list(self._view.f_range),
             "z_clip_pct":   self._z_pct,
             "ridge_estimator": "per-x-bin Gaussian centre",
             "band":         "±1σ fitted Gaussian spread",
@@ -545,10 +525,10 @@ class MeanCurveWindow(QMainWindow):
         if self._wlc_curve is not None:
             parts.append("_wlc_curve.csv")
         with _export.export_group(
-            self._db_path, f"mean_curve_{_slug(self._title)}", parts,
+            self._context.db_path, f"mean_curve_{_slug(self._title)}", parts,
             kind="mean_curve",
         ) as g:
-            g.contributing_files(self._paths)
+            g.contributing_files(self._context.paths)
             g.note_dict(self.export_provenance())
             g.note(n_columns=int(self._x_phys.size),
                    n_valid_columns=int(self._valid.sum()),
@@ -558,7 +538,7 @@ class MeanCurveWindow(QMainWindow):
                     self._wlc_pcov,
                     self._wlc_curve is not None and self._wlc_curve[2] is not None))
 
-            g.matrix("_matrix.csv", self._counts)
+            g.matrix("_matrix.csv", self._view.counts)
             g.table(
                 "_mean_curve.csv",
                 ["x", "f_mean", "f_sigma", "valid"],

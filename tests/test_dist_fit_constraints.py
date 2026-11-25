@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from smfs_catalog.dist_fit_core import (  # noqa: E402
     MODELS,
+    CiSettings,
     at_bound_flags,
     bootstrap_fit_ci,
     composite_bounds,
@@ -186,9 +187,9 @@ def test_a_binding_limit_narrows_the_reported_interval():
     _, lim_b, lim_p = _fit(data, GAUSS, [[None, (0.0, None), None]])
 
     free = bootstrap_fit_ci(GAUSS, data, edges, True, free_p, free_b,
-                            n_draws=120, seed=3)
+                            ci=CiSettings(n_draws=120, seed=3))
     lim = bootstrap_fit_ci(GAUSS, data, edges, True, lim_p, lim_b,
-                           n_draws=120, seed=3)
+                           ci=CiSettings(n_draws=120, seed=3))
     assert free is not None and lim is not None
     assert lim.lo[MU] >= 0.0
     assert free.lo[MU] < lim.lo[MU]
@@ -199,7 +200,7 @@ def test_no_draw_escapes_the_limit():
     data = _skewed()
     edges, bounds, popt = _fit(data, GAUSS, [[None, (0.0, None), None]])
     boot = bootstrap_fit_ci(GAUSS, data, edges, True, popt, bounds,
-                            n_draws=120, seed=5)
+                            ci=CiSettings(n_draws=120, seed=5))
     assert boot is not None
     assert boot.lo[MU] >= 0.0 and boot.hi[MU] >= 0.0
 

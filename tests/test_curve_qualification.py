@@ -32,6 +32,7 @@ import numpy as np
 import pytest
 
 from smfs_catalog import curve_loader as cl
+from smfs_catalog.file_filter import FileFilter
 
 
 # ── Wave builders ─────────────────────────────────────────────────────────────
@@ -288,7 +289,7 @@ def test_an_unusable_file_is_labelled_and_kept_not_deleted(tmp_path):
 
     # Re-qualifying (e.g. the file was replaced on disk) clears it.
     db.set_unusable_reason(fid, None, None, p)
-    assert db.list_files(db_path=p, usable=True)[0]["path"] == db.normalize_path("/x/a.ibw")
+    assert db.list_files(p, FileFilter(usable=True))[0]["path"] == db.normalize_path("/x/a.ibw")
 
 
 def test_unusable_is_a_verdict_of_its_own_never_non_event(tmp_path):
@@ -304,8 +305,8 @@ def test_scope_excludes_unusable_files():
     """Same 'never put broken files in scope' rule as parse_ok, one stage on."""
     from smfs_catalog.scope import new_scope, scope_to_query
     kw = scope_to_query(new_scope())
-    assert kw["parse_ok"] is True
-    assert kw["usable"] is True
+    assert kw.parse_ok is True
+    assert kw.usable is True
 
 
 def test_the_loader_does_not_reject_a_curve_over_its_intent_label():
@@ -352,12 +353,12 @@ def test_the_same_bytes_under_two_paths_are_one_curve(tmp_path):
     _seed(db, p, "/c/Image0001.ibw", "bbb")     # same NAME, different bytes
 
     assert len(db.list_files(db_path=p)) == 3
-    assert len(db.list_files(db_path=p, unique=True)) == 2, (
+    assert len(db.list_files(p, FileFilter(unique=True))) == 2, (
         "identical content under two paths is one curve, not two"
     )
     # The user can select exactly the redundant copies — that is how they get
     # handed to the removal dialog. The app never deletes anything itself.
-    dupes = db.list_files(db_path=p, unique=False)
+    dupes = db.list_files(p, FileFilter(unique=False))
     assert [r["path"] for r in dupes] == ["/b/Image0001.ibw"]
 
     groups = db.duplicate_groups(p)
@@ -373,7 +374,7 @@ def test_filename_alone_could_never_have_answered_this(tmp_path):
     db, p = _fresh_db(tmp_path)
     _seed(db, p, "/a/Image0001.ibw", "aaa")
     _seed(db, p, "/b/Image0001.ibw", "bbb")
-    assert len(db.list_files(db_path=p, unique=True)) == 2
+    assert len(db.list_files(p, FileFilter(unique=True))) == 2
 
 
 def test_an_unknown_hash_is_never_treated_as_a_duplicate(tmp_path):
@@ -383,7 +384,7 @@ def test_an_unknown_hash_is_never_treated_as_a_duplicate(tmp_path):
     db, p = _fresh_db(tmp_path)
     _seed(db, p, "/a/x.ibw", None)
     _seed(db, p, "/b/y.ibw", None)
-    assert len(db.list_files(db_path=p, unique=True)) == 2
+    assert len(db.list_files(p, FileFilter(unique=True))) == 2
     assert db.duplicate_groups(p) == []
 
 
@@ -393,9 +394,9 @@ def test_which_copy_is_canonical_cannot_drift(tmp_path):
     db, p = _fresh_db(tmp_path)
     for name in ("/z/last.ibw", "/a/first.ibw", "/m/mid.ibw"):
         _seed(db, p, name, "same")
-    first = [r["path"] for r in db.list_files(db_path=p, unique=True)]
+    first = [r["path"] for r in db.list_files(p, FileFilter(unique=True))]
     for _ in range(3):
-        assert [r["path"] for r in db.list_files(db_path=p, unique=True)] == first
+        assert [r["path"] for r in db.list_files(p, FileFilter(unique=True))] == first
     assert len(first) == 1
     # Adding an unrelated file must not move it either.
     _seed(db, p, "/q/other.ibw", "different")
@@ -419,12 +420,12 @@ def test_scope_sets_aside_rejects_but_can_still_select_them():
     from smfs_catalog.scope import new_scope, scope_to_query
 
     kw = scope_to_query(new_scope())
-    assert kw["parse_ok"] is True and kw["usable"] is True and kw["unique"] is True
+    assert kw.parse_ok is True and kw.usable is True and kw.unique is True
 
     kw = scope_to_query({**new_scope(), "only_unusable": True})
-    assert kw["usable"] is False, "the user must be able to point at the rejects"
+    assert kw.usable is False, "the user must be able to point at the rejects"
     kw = scope_to_query({**new_scope(), "only_duplicates": True})
-    assert kw["unique"] is False
+    assert kw.unique is False
 
 
 def test_the_folder_name_rule_is_gone():
@@ -491,7 +492,7 @@ def test_requalify_reports_progress_and_can_be_cancelled(tmp_path):
     assert s["cancelled"] is True
     assert ticks[0] == (0, 5), "done counts files FINISHED, so it starts at 0"
     assert s["hashed"] == 2, "work done before the cancel is kept, not rolled back"
-    assert len(db.list_files(db_path=p, unique=True)) == 5
+    assert len(db.list_files(p, FileFilter(unique=True))) == 5
 
 
 # ── (f) the acquisition filter is a column, backfilled from file_metadata ─────

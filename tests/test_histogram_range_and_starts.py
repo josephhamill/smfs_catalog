@@ -108,9 +108,24 @@ def test_the_fit_uses_only_values_inside_the_selected_range():
 def test_saved_fit_preserves_non_numeric_gof_provenance_and_configuration():
     src = SRC["dist_fit_window.py"]
     assert "gof_json = json.dumps(f[\"gof\"])" in src
-    assert '"normalized": self._plot.normalized' in src
+    # the config dict lives in _fit_config_json; _save_fit hands it the plot's flag
+    assert "_fit_config_json(f, self._plot.normalized)" in src
     assert '"n_excluded_by_range": f["n_excluded_by_range"]' in src
     assert '"user_peak_starts": f["starts"]' in src
+
+
+@pytest.mark.parametrize("normalized", [True, False])
+def test_fit_config_json_records_the_normalized_flag_and_the_range_provenance(normalized):
+    import json
+    pytest.importorskip("PyQt6")
+    from smfs_catalog import dist_fit_window
+    f = {"n_bins": 20, "range_lo": 1.0, "range_hi": 9.0, "range_is_auto": False,
+         "n_excluded_by_range": 3, "starts": [[1.0, 2.0]]}
+    cfg = json.loads(dist_fit_window._fit_config_json(f, normalized))
+    assert cfg["normalized"] is normalized
+    assert cfg["n_excluded_by_range"] == 3
+    assert cfg["user_peak_starts"] == [[1.0, 2.0]]
+    assert (cfg["n_bins"], cfg["range_lo"], cfg["range_hi"]) == (20, 1.0, 9.0)
 
 
 # ── Histogram (c) ceilings ──────────────────────────────────────────────────────

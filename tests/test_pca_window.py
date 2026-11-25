@@ -25,19 +25,20 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+def _pca(histograms, x_bins, f_bins, x_range, f_range) -> PCAWindow:
+    from smfs_catalog.event_processor import HistGrid
+    from smfs_catalog.plot_context import AxisLabels, ExportContext
+    return PCAWindow(histograms, HistGrid(x_bins, f_bins, x_range, f_range),
+                     AxisLabels("x̃", "F̃"), ExportContext())
+
+
 def _window() -> PCAWindow:
     rng = np.random.default_rng(7)
     histograms = {
         f"trace-{i}": rng.poisson(0.2, size=(5, 4)).astype(np.float32)
         for i in range(4)
     }
-    return PCAWindow(
-        histograms=histograms,
-        x_bins=5,
-        f_bins=4,
-        x_range=(1.25, 3.75),
-        f_range=(-2.0, 6.0),
-    )
+    return _pca(histograms, 5, 4, (1.25, 3.75), (-2.0, 6.0))
 
 
 def test_pca_records_the_solver_it_used(qapp):
@@ -128,7 +129,7 @@ def test_pca_component_count_is_bounded_by_live_features(qapp):
         f"trace-{i}": np.array([[i + 1, 4 - i], [0, 0]], dtype=np.uint32)
         for i in range(4)
     }
-    window = PCAWindow(histograms, 2, 2, (0.0, 2.0), (0.0, 2.0))
+    window = _pca(histograms, 2, 2, (0.0, 2.0), (0.0, 2.0))
     assert window._scores.shape == (4, 1)
     window.close()
 
@@ -139,7 +140,7 @@ def test_pca_rejects_an_empty_feature_space(qapp):
         for i in range(2)
     }
     with pytest.raises(ValueError, match="no non-zero bins"):
-        PCAWindow(histograms, 2, 2, (0.0, 2.0), (0.0, 2.0))
+        _pca(histograms, 2, 2, (0.0, 2.0), (0.0, 2.0))
 
 
 def test_pca_profiles_give_each_trace_equal_total_weight():
@@ -162,7 +163,7 @@ def test_sparse_pca_matches_dense_standardised_pca(qapp):
         f"trace-{i}": rng.poisson(0.3, size=(8, 6)).astype(np.float32)
         for i in range(12)
     }
-    window = PCAWindow(histograms, 8, 6, (0.0, 1.0), (0.0, 1.0))
+    window = _pca(histograms, 8, 6, (0.0, 1.0), (0.0, 1.0))
 
     X = np.stack([H.ravel() for H in histograms.values()]).astype(np.float64)
     X = X / X.sum(axis=1, keepdims=True)

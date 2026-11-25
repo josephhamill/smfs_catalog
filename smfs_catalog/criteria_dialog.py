@@ -43,8 +43,8 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QCheckBox, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel,
+    QMainWindow, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from . import criteria_cards as _cards

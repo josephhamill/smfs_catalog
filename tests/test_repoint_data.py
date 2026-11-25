@@ -48,6 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tmpdirs                                              # noqa: E402
 
 from smfs_catalog import db as _db
+from smfs_catalog.file_filter import FileFilter
 
 import checkstyle                                          # noqa: E402
 
@@ -172,7 +173,7 @@ with conn:
         " VALUES (8, ?, 'Force0008.ibw', datetime('now'), datetime('now'))",
         (N(os.path.join(LOOKALIKE, "Force0008.ibw")),))
 conn.close()
-scoped = {r["path"] for r in _db.list_files(db_path=DB, directory=OLD)}
+scoped = {r["path"] for r in _db.list_files(DB, FileFilter(directory=OLD))}
 check("(c) scoping to a folder returns its files, nested ones included",
       scoped == {N(os.path.join(OLD, "Force0001.ibw")),
                  N(os.path.join(SUB, "Force0002.ibw"))})

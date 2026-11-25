@@ -57,18 +57,12 @@ def test_trace_overlay_preserves_acquisition_order_and_stable_identity(qapp):
 
 def test_input_changes_invalidate_wlc_and_provenance_records_controls(qapp):
     counts = np.ones((5, 6), dtype=float)
+    from smfs_catalog.plot_context import AxisLabels, ExportContext, HistView
+    view = HistView(counts, 1.0, 100, np.zeros((256, 4), dtype=np.uint8),
+                    (0.0, 10.0), (-3.0, 3.0))
     window = MeanCurveWindow(
-        title="test",
-        display=np.sqrt(counts),
-        counts=counts,
-        auto_max=1.0,
-        z_pct=100,
-        lut=np.zeros((256, 4), dtype=np.uint8),
-        x_range=(0.0, 10.0),
-        f_range=(-3.0, 3.0),
-        x_label="Extension",
-        f_label="Force",
-        physical=True,
+        "test", view, AxisLabels("Extension", "Force"),
+        ExportContext(physical=True),
     )
     window._wlc_fit = {"sentinel": True}
     window._wlc_curve = (np.array([]), np.array([]), None)

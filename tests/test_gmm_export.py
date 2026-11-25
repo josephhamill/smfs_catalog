@@ -33,8 +33,10 @@ def test_gmm_export_is_complete_strict_json_and_uses_displayed_ids(
         rng.normal([160.0, 130.0], [5.0, 6.0], size=(10, 2)),
     ])
     paths = [f"C:/data/curve_{i}.ibw" for i in range(len(xy))]
-    scatter = _ScatterPane(xy, "length", "force")
-    pane = _ModelPane(scatter, xy, "length", "force", db_path, paths=paths)
+    from smfs_catalog.plot_context import AxisLabels, FitContext
+    axes = AxisLabels("length", "force")
+    scatter = _ScatterPane(xy, axes)
+    pane = _ModelPane(scatter, xy, axes, FitContext(db_path, paths=paths))
     pane._k_spin.setValue(2)
     pane._fit()
     monkeypatch.setattr(

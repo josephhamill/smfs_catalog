@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pyqtgraph as pg
 from scipy import sparse
@@ -30,7 +32,10 @@ from . import style
 from . import clustering as _clustering
 from . import quantities as _quant
 from . import export_utils as _export
+from .provenance import sklearn_version
+from .event_processor import HistGrid
 from .mean_curve_window import MeanCurveWindow
+from .plot_context import AxisLabels, ExportContext, HistView
 from .qt_utils import FixedDomainPlot, set_plot_title, set_si_label, fit_on_screen
 from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtWidgets import (
@@ -61,17 +66,6 @@ _PCA_SEED = 0
 _KMEANS_SEED     = 42
 _KMEANS_N_PCS    = 3     # k-means runs in PC1-_KMEANS_N_PCS space
 _KMEANS_N_INIT   = "auto"
-
-
-def _sklearn_version() -> str:
-    """Recorded in the manifest: k-means' exact labels can depend on the
-    implementation, so "same seed" is only reproducible alongside the version
-    that honoured it."""
-    try:
-        import sklearn
-        return str(sklearn.__version__)
-    except Exception:
-        return "unknown"
 
 
 _N_LOADINGS   = 3    # loading panels shown (PC1, PC2, PC3)
@@ -129,51 +123,37 @@ class PCAWindow(QMainWindow):
 
     def __init__(
         self,
-        histograms:         dict[str, np.ndarray],
-        x_bins:             int,
-        f_bins:             int,
-        x_range:            tuple[float, float],
-        f_range:            tuple[float, float],
-        x_label:            str = "x̃",
-        f_label:            str = "F̃",
-        x_unit:             str = "",
-        f_unit:             str = "",
-        caption:            str = "",
-        provenance:         dict | None = None,
-        db_path:            str | None = None,
-        display_histograms: dict[str, np.ndarray] | None = None,
-        display_x_range:    tuple[float, float] | None = None,
-        display_f_range:    tuple[float, float] | None = None,
-        physical:           bool = False,
-        overlay_fn=None,
+        histograms: dict[str, np.ndarray],
+        grid:       HistGrid,
+        axes:       AxisLabels,
+        context:    ExportContext,
+        display:    tuple[dict[str, np.ndarray], HistGrid] | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("SMFS — PCA")
         self.setWindowFlag(Qt.WindowType.Window)
         fit_on_screen(self, 1100, 760)
-        self._physical   = physical
         # Structured version of `caption` (population/segment/grid/align/z-clip
         # — see base_2dh_window.export_provenance()), for the export manifest.
         # `caption` itself stays the human-readable line shown on screen.
-        self._provenance = provenance or {}
-        self._db_path    = db_path
-        # Bound _TwoDHWindowBase._overlay_xF from the 2DH window this PCA run
-        # was opened from — already knows the alignment settings that
-        # produced these histograms, so popouts can offer per-curve overlay +
-        # filenames without owning any DB/alignment logic themselves.
-        self._overlay_fn = overlay_fn
+        # overlay_fn is the bound _TwoDHWindowBase._overlay_xF from the 2DH
+        # window this PCA run was opened from — already knows the alignment
+        # settings that produced these histograms, so popouts can offer
+        # per-curve overlay + filenames without owning any DB/alignment logic
+        # themselves.
+        self._context = replace(
+            context,
+            provenance=dict(context.provenance) if context.provenance else {},
+        )
+        self._axes    = axes
 
         style.apply_plot_defaults()
 
-        self._x_bins  = x_bins
-        self._f_bins  = f_bins
-        self._x_range = x_range
-        self._f_range = f_range
-        self._x_label = x_label
-        self._f_label = f_label
-        self._x_unit  = x_unit
-        self._f_unit  = f_unit
-        self._caption = caption
+        self._x_bins  = grid.x_bins
+        self._f_bins  = grid.f_bins
+        self._x_range = grid.x_range
+        self._f_range = grid.f_range
+        self._caption = context.caption
         self._cluster_labels: np.ndarray | None = None
         self._cluster_hists:  list[np.ndarray]  = []
         self._cluster_centers: np.ndarray | None = None
@@ -198,21 +178,18 @@ class PCAWindow(QMainWindow):
         # Display matrix for cluster visualisation — full 2DHs when a selection
         # window is active,
         # otherwise identical to the PCA data matrix.
-        if display_histograms is not None:
-            sample = next(iter(display_histograms.values()))
-            self._display_x_bins  = sample.shape[0]
-            self._display_f_bins  = sample.shape[1]
+        if display is not None:
+            display_histograms, display_grid = display
             self._X_display = _sparse_rows(
                 display_histograms[p] for p in self._paths
             )
-            self._display_x_range = display_x_range if display_x_range is not None else x_range
-            self._display_f_range = display_f_range if display_f_range is not None else f_range
         else:
-            self._display_x_bins  = x_bins
-            self._display_f_bins  = f_bins
-            self._X_display       = X_raw
-            self._display_x_range = x_range
-            self._display_f_range = f_range
+            display_grid    = grid
+            self._X_display = X_raw
+        self._display_x_bins  = display_grid.x_bins
+        self._display_f_bins  = display_grid.f_bins
+        self._display_x_range = display_grid.x_range
+        self._display_f_range = display_grid.f_range
 
         # Give every trace equal total weight in PCA regardless of how many
         # samples its selected segment contains. Integer counts remain the
@@ -266,7 +243,7 @@ class PCAWindow(QMainWindow):
 
         hdr_text = (
             f"{n} events    {n_features} features used  "
-            f"(of {x_bins * f_bins} bins,  {x_bins * f_bins - n_features} dead)    "
+            f"(of {self._x_bins * self._f_bins} bins,  {self._x_bins * self._f_bins - n_features} dead)    "
             f"PC1 {_vpct(0)}   PC2 {_vpct(1)}   PC3 {_vpct(2)}"
         )
         hdr_row = QHBoxLayout()
@@ -586,11 +563,11 @@ class PCAWindow(QMainWindow):
         if self._cluster_labels is None:
             return
         source = {
-            "window":           self._provenance.get("window"),
-            "population":       self._provenance.get("population"),
-            "segment":          self._provenance.get("segment"),
-            "align_mode":       self._provenance.get("align_mode"),
-            "selection_window": bool(self._provenance.get("selection_window")),
+            "window":           self._context.provenance.get("window"),
+            "population":       self._context.provenance.get("population"),
+            "segment":          self._context.provenance.get("segment"),
+            "align_mode":       self._context.provenance.get("align_mode"),
+            "selection_window": bool(self._context.provenance.get("selection_window")),
         }
         _clustering.set_current(_clustering.Clustering(
             labels          = {p: int(c) for p, c in
@@ -598,7 +575,7 @@ class PCAWindow(QMainWindow):
             k               = self._kmeans_k,
             seed            = _KMEANS_SEED,
             n_pcs           = self._kmeans_n_pcs,
-            sklearn_version = _sklearn_version(),
+            sklearn_version = sklearn_version(),
             source          = source,
             created_at      = _clustering.now_stamp(),
         ))
@@ -638,34 +615,24 @@ class PCAWindow(QMainWindow):
         came from, so they share its axis text and unit. si=False for the same reason as the 2DH's
         own axes: the grid ranges are set in plain-unit spin boxes.
         """
-        set_si_label(pw, "bottom", self._x_label, self._x_unit, si=False)
-        set_si_label(pw, "left",   self._f_label, self._f_unit, si=False)
+        set_si_label(pw, "bottom", self._axes.x_label, self._axes.x_unit, si=False)
+        set_si_label(pw, "left",   self._axes.y_label, self._axes.y_unit, si=False)
 
     def _open_cluster_popout(self, c: int) -> None:
         if c >= len(self._cluster_displays):
             return
         cluster_paths = [p for p, lbl in zip(self._paths, self._cluster_labels) if lbl == c]
         win = MeanCurveWindow(
-            title    = f"Cluster {c}  (n={len(cluster_paths)})",
-            display  = self._cluster_displays[c],
-            counts   = self._cluster_hists[c],
-            auto_max = self._cluster_auto_max,
-            z_pct    = self._z_pct,
-            lut      = self._lut,
-            x_range  = self._display_x_range,
-            f_range  = self._display_f_range,
-            x_label  = self._x_label,
-            f_label  = self._f_label,
-            x_unit   = self._x_unit,
-            f_unit   = self._f_unit,
-            caption  = self._caption,
-            physical = self._physical,
-            paths      = cluster_paths,
-            overlay_fn = self._overlay_fn,
-            db_path    = self._db_path,
-            provenance = {**self._provenance, "source": "pca_cluster",
-                          "cluster": c, "kmeans_k": self._kmeans_k,
-                          "kmeans_random_state": _KMEANS_SEED},
+            f"Cluster {c}  (n={len(cluster_paths)})",
+            HistView(self._cluster_hists[c], self._cluster_auto_max,
+                     self._z_pct, self._lut,
+                     self._display_x_range, self._display_f_range),
+            self._axes,
+            replace(self._context, caption=self._caption, paths=cluster_paths,
+                    provenance={**self._context.provenance,
+                                "source": "pca_cluster", "cluster": c,
+                                "kmeans_k": self._kmeans_k,
+                                "kmeans_random_state": _KMEANS_SEED}),
         )
         self._popout_wins.append(win)
         win.show()
@@ -675,26 +642,14 @@ class PCAWindow(QMainWindow):
         hist = (np.asarray(self._X_display.mean(axis=0))
                 .reshape(self._display_x_bins, self._display_f_bins)
                 .astype(np.float32))
-        display = np.sqrt(hist)
         win = MeanCurveWindow(
-            title    = f"Total  (n={len(self._paths)})",
-            display  = display,
-            counts   = hist,
-            auto_max = max(float(display.max()), 1e-10),
-            z_pct    = 100,
-            lut      = self._lut,
-            x_range  = self._display_x_range,
-            f_range  = self._display_f_range,
-            x_label  = self._x_label,
-            f_label  = self._f_label,
-            x_unit   = self._x_unit,
-            f_unit   = self._f_unit,
-            caption  = self._caption,
-            physical = self._physical,
-            paths      = self._paths,
-            overlay_fn = self._overlay_fn,
-            db_path    = self._db_path,
-            provenance = {**self._provenance, "source": "pca_total"},
+            f"Total  (n={len(self._paths)})",
+            HistView(hist, max(float(np.sqrt(hist).max()), 1e-10), 100,
+                     self._lut, self._display_x_range, self._display_f_range),
+            self._axes,
+            replace(self._context, caption=self._caption, paths=self._paths,
+                    provenance={**self._context.provenance,
+                                "source": "pca_total"}),
         )
         self._popout_wins.append(win)
         win.show()
@@ -887,10 +842,10 @@ class PCAWindow(QMainWindow):
         window's provenance (population/segment/grid/align mode, passed in at
         construction) plus what this window itself decided. Same protocol
         method as the other exporting windows."""
-        d = dict(self._provenance)
+        d = dict(self._context.provenance)
         d.update({
             "window":                "pca",
-            "physical":              self._physical,
+            "physical":              self._context.physical,
             "x_bins":                self._x_bins,
             "f_bins":                self._f_bins,
             "x_range":               list(self._x_range),
@@ -934,7 +889,7 @@ class PCAWindow(QMainWindow):
         files; the manifest carries the axis definition instead."""
         n_load    = min(_N_LOADINGS, len(self._loadings))
         clustered = self._cluster_labels is not None
-        stem = f"pca_{'physical' if self._physical else 'normalized'}"
+        stem = f"pca_{'physical' if self._context.physical else 'normalized'}"
 
         parts = ["_scores.csv", "_scree.csv"]
         parts += [f"_pc{i + 1}_matrix.csv" for i in range(n_load)]
@@ -944,7 +899,7 @@ class PCAWindow(QMainWindow):
             parts.append("_elbow.csv")
 
         with _export.export_group(
-            self._db_path, stem, parts, kind="pca_kmeans",
+            self._context.db_path, stem, parts, kind="pca_kmeans",
         ) as g:
             g.contributing_files(self._paths)
             g.note_dict(self.export_provenance())
@@ -997,7 +952,7 @@ class PCAWindow(QMainWindow):
                     cluster_matrix_x_range=list(self._display_x_range),
                     cluster_matrix_f_range=list(self._display_f_range),
                     cluster_matrix_z_quantity="counts_per_trace",
-                    sklearn_version=_sklearn_version(),
+                    sklearn_version=sklearn_version(),
                 )
             else:
                 g.note(kmeans_k=None,

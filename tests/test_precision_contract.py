@@ -7,6 +7,7 @@ import numpy as np
 
 from smfs_catalog.analysis_params import AnalysisParams
 from smfs_catalog.curve_analysis import pipeline_params_from
+from smfs_catalog import event_processor as _ep
 from smfs_catalog.event_processor import _phys_grid_params, _wlc_grid_params
 from smfs_catalog.roi_pipeline import event_map_params_json, event_params_from
 
@@ -28,14 +29,22 @@ def test_event_map_key_keeps_full_snapshot_precision():
 
 
 def test_physical_grid_key_does_not_round_f_star():
-    assert _phys_grid_params(50.001) != _phys_grid_params(50.002)
+    grid = _ep.HistGrid(_ep.PHYS_X_BINS, _ep.PHYS_F_BINS,
+                        _ep.PHYS_X_RANGE, _ep.PHYS_F_RANGE)
+    mode, seg = _ep.PHYS_ALIGN_DEFAULT, _ep.ALIGN_SEG_DEFAULT
+    assert (_phys_grid_params(50.001, grid, mode, seg)
+            != _phys_grid_params(50.002, grid, mode, seg))
 
 
 def test_normalized_grid_key_covers_ranges_and_segment():
-    base = _wlc_grid_params()
-    assert base != _wlc_grid_params(x_range=(-0.1001, 1.2))
-    assert base != _wlc_grid_params(f_range=(-5.0, 45.001))
-    assert base != _wlc_grid_params(align_segment="first")
+    def grid(x_range=_ep.WLC_X_RANGE, f_range=_ep.WLC_F_RANGE):
+        return _ep.HistGrid(_ep.WLC_X_BINS, _ep.WLC_F_BINS, x_range, f_range)
+
+    seg = _ep.ALIGN_SEG_DEFAULT
+    base = _wlc_grid_params(grid(), seg)
+    assert base != _wlc_grid_params(grid(x_range=(-0.1001, 1.2)), seg)
+    assert base != _wlc_grid_params(grid(f_range=(-5.0, 45.001)), seg)
+    assert base != _wlc_grid_params(grid(), "first")
 
 
 def test_loader_and_scanner_do_not_round_sample_rate_before_storage():

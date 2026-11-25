@@ -361,19 +361,28 @@ COV_CI_METHOD = ("Monte Carlo over the full parameter covariance; "
                  "pointwise percentile envelope")
 
 
-def ci_manifest_fields(pcov, band_drawn: bool, *,
-                       method: str = COV_CI_METHOD,
-                       n_draws: int = CI_N_DRAWS,
-                       pct: float = CI_PCT,
-                       seed: int = CI_SEED,
-                       extra: Optional[dict] = None) -> dict:
+@dataclass(frozen=True)
+class CiSettings:
+    """How a confidence band is drawn: the method label and its sampling settings.
+
+    One object so the manifest, the Monte Carlo band and the bootstrap are all
+    handed the same four values instead of four loose arguments.
+    """
+    method:  str   = COV_CI_METHOD
+    n_draws: int   = CI_N_DRAWS
+    pct:     float = CI_PCT
+    seed:    int   = CI_SEED
+
+
+def ci_manifest_fields(pcov, band_drawn: bool,
+                       ci: CiSettings = CiSettings()) -> dict:
     """Manifest fields describing a drawn confidence band, for an export.
 
     Lives next to the two estimators so the description can never drift from
     the thing described — every window that draws one of these bands calls
     this rather than restating the method.
 
-    The keyword arguments exist because the two estimators are NOT the same
+    `ci` exists because the two estimators are NOT the same
     and a manifest that said they were would be lying about one of them:
     mean_curve_window samples the fit's covariance (the defaults here), while
     dist_fit_window bootstraps the raw values because its covariance
@@ -390,20 +399,17 @@ def ci_manifest_fields(pcov, band_drawn: bool, *,
     cov = np.asarray(pcov, dtype=float) if pcov is not None else None
     out = {
         "ci_band_drawn": bool(band_drawn),
-        "ci_method":     method,
-        "ci_pct":        pct,
-        "ci_n_draws":    n_draws,
-        "ci_seed":       seed,
+        "ci_method":     ci.method,
+        "ci_pct":        ci.pct,
+        "ci_n_draws":    ci.n_draws,
+        "ci_seed":       ci.seed,
         "param_covariance": (
             cov.tolist() if cov is not None and np.isfinite(cov).all() else None),
     }
-    if extra:
-        out.update(extra)
     return out
 
 
-def total_fit_ci(fn, x, popt, pcov, n_draws: int = CI_N_DRAWS,
-                 pct: float = CI_PCT, seed: int = CI_SEED):
+def total_fit_ci(fn, x, popt, pcov, ci: CiSettings = CiSettings()):
     """Pointwise confidence band for the TOTAL fitted curve.
 
     The parameter covariance from curve_fit has always been available here —
@@ -423,10 +429,10 @@ def total_fit_ci(fn, x, popt, pcov, n_draws: int = CI_N_DRAWS,
     pcov = np.asarray(pcov, dtype=float)
     if pcov.size == 0 or not np.isfinite(pcov).all():
         return None
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(ci.seed)
     try:
         draws = rng.multivariate_normal(np.asarray(popt, dtype=float), pcov,
-                                        size=n_draws)
+                                        size=ci.n_draws)
     except (np.linalg.LinAlgError, ValueError):
         return None
     with np.errstate(all="ignore"):
@@ -435,7 +441,7 @@ def total_fit_ci(fn, x, popt, pcov, n_draws: int = CI_N_DRAWS,
     if ok.sum() < 20:
         return None
     ys = ys[ok]
-    half = (100.0 - pct) / 2.0
+    half = (100.0 - ci.pct) / 2.0
     return (np.percentile(ys, half, axis=0), np.percentile(ys, 100.0 - half, axis=0))
 
 
@@ -520,7 +526,7 @@ BOOTSTRAP_CI_METHOD = ("nonparametric bootstrap over the raw values "
 
 @dataclass(frozen=True)
 class BootstrapCI:
-    """The spread of `n_ok` refits — see bootstrap_fit_ci."""
+    """The spread of `n_ok` refits — see the design notes above _resample_heights."""
     lo:        np.ndarray            # per parameter, in popt order
     hi:        np.ndarray
     sd:        np.ndarray
@@ -536,14 +542,12 @@ class BootstrapCI:
 
     def manifest_fields(self, pcov) -> dict:
         """This interval's provenance, for an export manifest."""
-        return ci_manifest_fields(
-            pcov, self.band is not None,
-            method=BOOTSTRAP_CI_METHOD,
-            n_draws=self.n_draws, pct=self.pct, seed=self.seed,
-            extra={"ci_n_draws_ok": self.n_ok,
-                   "ci_n_draws_failed": self.n_failed,
-                   "ci_cancelled": self.cancelled},
-        )
+        ci = CiSettings(BOOTSTRAP_CI_METHOD, self.n_draws, self.pct, self.seed)
+        out = ci_manifest_fields(pcov, self.band is not None, ci)
+        out.update({"ci_n_draws_ok": self.n_ok,
+                    "ci_n_draws_failed": self.n_failed,
+                    "ci_cancelled": self.cancelled})
+        return out
 
 
 def order_params_by_centre(components: list[ModelSpec],
@@ -589,6 +593,73 @@ def _mixing_fractions(components: list[ModelSpec], params: np.ndarray) -> np.nda
     return amps / total
 
 
+# bootstrap_fit_ci — percentile confidence intervals for a binned mixture fit.
+#
+# `components`, `popt` and `bounds` must already be in the order the caller
+# reports (left-to-right); every draw is ordered the same way.
+#
+# Three things are deliberately held FIXED across draws, because they are
+# the caller's decisions and not properties of the sample:
+#   * the bin EDGES — re-deriving them per draw would let the histogram
+#     geometry move underneath the fit, mixing binning variability into an
+#     interval that is supposed to describe sampling variability;
+#   * the BOUNDS — they define the model being fitted;
+#   * the starting point (`popt`) — a bootstrap describes the spread of THIS
+#     fit, so each refit starts from it rather than re-running the peak
+#     finder and possibly landing in a different basin.
+#
+# `progress(i, n_draws) -> cancelled` is an ordinary callable, never a Qt
+# object: this module has to stay usable from a test and a script.  The GUI
+# adapts its own progress dialog on its side.
+#
+# Returns None when there is nothing honest to report (fewer than
+# _MIN_BOOTSTRAP_OK refits converged, or the caller cancelled before that
+# many).  None means "no interval", NEVER a silent fall back to the
+# covariance: substituting a different method behind the same label is worse
+# than reporting nothing.
+
+
+def _resample_heights(rng, data: np.ndarray, edges: np.ndarray,
+                      normalize: bool) -> np.ndarray:
+    """Heights of one bootstrap resample, binned on the fixed original edges."""
+    sample = rng.choice(data, size=len(data), replace=True)
+    counts, _ = np.histogram(sample, bins=edges)
+    if normalize:
+        total = counts.sum() * float(edges[1] - edges[0])
+        return counts / max(total, 1e-10)
+    return counts.astype(float)
+
+
+def _bootstrap_band(fn, arr: np.ndarray, x_fine, half: float):
+    """Pointwise (lo, hi) of the refit curves over x_fine, or None."""
+    if x_fine is None or not len(x_fine):
+        return None
+    with np.errstate(all="ignore"):
+        ys = np.array([fn(np.asarray(x_fine, dtype=float), *p) for p in arr])
+    ok = np.isfinite(ys).all(axis=1)
+    if ok.sum() < _MIN_BOOTSTRAP_OK:
+        return None
+    ys = ys[ok]
+    return (np.percentile(ys, half, axis=0), np.percentile(ys, 100.0 - half, axis=0))
+
+
+def _summarise_refits(components: list[ModelSpec], fn, draws: list,
+                      x_fine, pct: float) -> dict:
+    """The BootstrapCI interval fields for the converged refits `draws`."""
+    arr = np.array(draws, dtype=float)
+    half = (100.0 - pct) / 2.0
+    fracs = np.array([_mixing_fractions(components, p) for p in arr])
+    with np.errstate(all="ignore"):
+        frac_lo = np.nanpercentile(fracs, half, axis=0)
+        frac_hi = np.nanpercentile(fracs, 100.0 - half, axis=0)
+    return dict(
+        lo=np.percentile(arr, half, axis=0),
+        hi=np.percentile(arr, 100.0 - half, axis=0),
+        sd=arr.std(axis=0), frac_lo=frac_lo, frac_hi=frac_hi,
+        band=_bootstrap_band(fn, arr, x_fine, half),
+    )
+
+
 def bootstrap_fit_ci(
     components: list[ModelSpec],
     data:       np.ndarray,
@@ -597,35 +668,13 @@ def bootstrap_fit_ci(
     popt:       np.ndarray,
     bounds:     tuple,
     x_fine:     Optional[np.ndarray] = None,
-    n_draws:    int   = CI_N_DRAWS,
-    pct:        float = CI_PCT,
-    seed:       int   = CI_SEED,
+    ci:         CiSettings = CiSettings(),
     progress:   Optional[Callable[[int, int], bool]] = None,
 ) -> Optional[BootstrapCI]:
     """Percentile confidence intervals for a binned mixture fit.
 
-    `components`, `popt` and `bounds` must already be in the order the caller
-    reports (left-to-right); every draw is ordered the same way.
-
-    Three things are deliberately held FIXED across draws, because they are
-    the caller's decisions and not properties of the sample:
-      * the bin EDGES — re-deriving them per draw would let the histogram
-        geometry move underneath the fit, mixing binning variability into an
-        interval that is supposed to describe sampling variability;
-      * the BOUNDS — they define the model being fitted;
-      * the starting point (`popt`) — a bootstrap describes the spread of THIS
-        fit, so each refit starts from it rather than re-running the peak
-        finder and possibly landing in a different basin.
-
-    `progress(i, n_draws) -> cancelled` is an ordinary callable, never a Qt
-    object: this module has to stay usable from a test and a script.  The GUI
-    adapts its own progress dialog on its side.
-
-    Returns None when there is nothing honest to report (fewer than
-    _MIN_BOOTSTRAP_OK refits converged, or the caller cancelled before that
-    many).  None means "no interval", NEVER a silent fall back to the
-    covariance: substituting a different method behind the same label is worse
-    than reporting nothing.
+    Returns None when there is nothing honest to report; never a quiet
+    fall back to the covariance.  Notes on the design sit above `_resample_heights`.
     """
     data = np.asarray(data, dtype=float)
     data = data[np.isfinite(data)]
@@ -633,63 +682,32 @@ def bootstrap_fit_ci(
         return None
     popt = np.asarray(popt, dtype=float)
     edges = np.asarray(edges, dtype=float)
-    bw = float(edges[1] - edges[0])
     centres = (edges[:-1] + edges[1:]) / 2
     fn = make_composite(components)
-    rng = np.random.default_rng(seed)
-
+    rng = np.random.default_rng(ci.seed)
     draws, n_failed, cancelled = [], 0, False
-    for i in range(n_draws):
-        if progress is not None and progress(i, n_draws):
+    for i in range(ci.n_draws):
+        if progress is not None and progress(i, ci.n_draws):
             cancelled = True
             break
-        sample = rng.choice(data, size=len(data), replace=True)
-        counts, _ = np.histogram(sample, bins=edges)
-        if normalize:
-            total = counts.sum() * bw
-            heights = counts / max(total, 1e-10)
-        else:
-            heights = counts.astype(float)
+        heights = _resample_heights(rng, data, edges, normalize)
         try:
             p, _ = optimize.curve_fit(
                 fn, centres, heights, p0=popt, bounds=bounds,
                 maxfev=20000, method="trf",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001  a failed draw is counted in n_failed
             # A draw that will not converge is a fact about this fit's
             # stability, so it is counted and reported rather than dropped.
             n_failed += 1
             continue
         draws.append(order_params_by_centre(components, p))
-
     if len(draws) < _MIN_BOOTSTRAP_OK:
         return None
-
-    arr = np.array(draws, dtype=float)
-    half = (100.0 - pct) / 2.0
-    lo = np.percentile(arr, half, axis=0)
-    hi = np.percentile(arr, 100.0 - half, axis=0)
-
-    fracs = np.array([_mixing_fractions(components, p) for p in arr])
-    with np.errstate(all="ignore"):
-        frac_lo = np.nanpercentile(fracs, half, axis=0)
-        frac_hi = np.nanpercentile(fracs, 100.0 - half, axis=0)
-
-    band = None
-    if x_fine is not None and len(x_fine):
-        with np.errstate(all="ignore"):
-            ys = np.array([fn(np.asarray(x_fine, dtype=float), *p) for p in arr])
-        ok = np.isfinite(ys).all(axis=1)
-        if ok.sum() >= _MIN_BOOTSTRAP_OK:
-            ys = ys[ok]
-            band = (np.percentile(ys, half, axis=0),
-                    np.percentile(ys, 100.0 - half, axis=0))
-
     return BootstrapCI(
-        lo=lo, hi=hi, sd=arr.std(axis=0),
-        frac_lo=frac_lo, frac_hi=frac_hi, band=band,
-        n_draws=n_draws, n_ok=len(draws), n_failed=n_failed,
-        pct=pct, seed=seed, cancelled=cancelled,
+        **_summarise_refits(components, fn, draws, x_fine, ci.pct),
+        n_draws=ci.n_draws, n_ok=len(draws), n_failed=n_failed,
+        pct=ci.pct, seed=ci.seed, cancelled=cancelled,
     )
 
 

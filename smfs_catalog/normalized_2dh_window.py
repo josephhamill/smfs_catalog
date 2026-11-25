@@ -71,12 +71,7 @@ class Normalized2DHWindow(_TwoDHWindowBase):
 
     @property
     def _grid_key(self) -> str:
-        return _wlc_grid_params(
-            x_bins=self._x_bins, f_bins=self._f_bins,
-            x_range=(self._x_min, self._x_max),
-            f_range=(self._f_min, self._f_max),
-            align_segment=self._align_segment,
-        )
+        return _wlc_grid_params(self._hist_grid, self._align_segment)
 
     def _axis_labels(self) -> tuple[tuple[str, str], tuple[str, str]]:
         # Both axes are dimensionless BY CONSTRUCTION (x/l_c and F·l_p/kT),
@@ -86,8 +81,7 @@ class Normalized2DHWindow(_TwoDHWindowBase):
 
     def _make_grid_dialog(self) -> _GridDialog:
         return _GridDialog(
-            self, self._x_bins, self._f_bins, self._x_min, self._x_max,
-            self._f_min, self._f_max, self._align_segment,
+            self, self._hist_grid, self._align_segment,
             defaults={
                 "x_bins": WLC_X_BINS, "f_bins": WLC_F_BINS,
                 "x_min": WLC_X_RANGE[0], "x_max": WLC_X_RANGE[1],
@@ -112,11 +106,7 @@ class Normalized2DHWindow(_TwoDHWindowBase):
         if self._fit_drop_reason(fit) is not None:
             return None
         return compute_wlc_histogram(
-            x, F, *fit.params,
-            x_bins=self._x_bins, f_bins=self._f_bins,
-            x_range=(self._x_min, self._x_max),
-            f_range=(self._f_min, self._f_max),
-        )
+            x, F, *fit.params, self._hist_grid)
 
     def _build_overlay_xF(self, x, F, lo, hi, fit, right_idx):
         if self._fit_drop_reason(fit) is not None:

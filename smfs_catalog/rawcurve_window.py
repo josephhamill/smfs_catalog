@@ -39,6 +39,7 @@ from . import style
 from .widgets import SampleMarksToggle
 from .qt_utils import (
     fit_on_screen,
+    report_handled,
     _make_session_header,
     set_si_label,
 )
@@ -696,10 +697,7 @@ class RawCurveWindow(QWidget):
         self._blank_display(path, "✗ ")
 
     def _show_overlay_error(self, exc: Exception) -> None:
-        self._status_label.setText(
-            f"analysis overlays unavailable: {type(exc).__name__}: "
-            f"{str(exc)[:120]}"
-        )
+        report_handled(self._status_label.setText, "Analysis overlays", exc)
 
     def _draw_persisted_overlays(
         self, file_id: int, *, event: str | None = None,

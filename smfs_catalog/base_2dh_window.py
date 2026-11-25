@@ -57,6 +57,8 @@ from . import quantities as _quant
 from . import export_utils as _export
 from . import ledger as _ledger
 from .db import write_event_histograms_bulk
+from .event_processor import HistGrid
+from .plot_context import AxisLabels, ExportContext
 from .curve_loader import LoadError, load_force_curve
 from . import style
 from .qt_utils import (
@@ -101,8 +103,7 @@ class _GridDialog(QDialog):
     _TITLE = "Grid settings"
     _WARN_COLOR = style.TEXT_WARNING
 
-    def __init__(self, parent, x_bins, f_bins, x_min, x_max, f_min, f_max,
-                 align_segment, defaults):
+    def __init__(self, parent, grid, align_segment, defaults):
         super().__init__(parent)
         self.setWindowTitle(self._TITLE)
         self.setModal(True)
@@ -115,16 +116,27 @@ class _GridDialog(QDialog):
             self._WARN_COLOR, selector="QGroupBox"))
         self._form = QFormLayout(box)
 
+        self._add_bins_and_range_rows(grid)
+        self._add_segment_row(align_segment)
+        self._add_extra_rows()
+
+        warn = QLabel("⚠  Changing these settings invalidates all cached 2DHs.")
+        warn.setStyleSheet(f"color: {self._WARN_COLOR};")
+        self._form.addRow(warn)
+        root.addWidget(box)
+        root.addWidget(self._make_buttons())
+
+    def _add_bins_and_range_rows(self, grid) -> None:
         self._xb = QComboBox()
         self._fb = QComboBox()
         for lbl in _BINS_CHOICES:
             self._xb.addItem(lbl)
             self._fb.addItem(lbl)
-        self._xb.setCurrentText(str(x_bins))
-        self._fb.setCurrentText(str(f_bins))
+        self._xb.setCurrentText(str(grid.x_bins))
+        self._fb.setCurrentText(str(grid.f_bins))
 
         self._x_min, self._x_max, self._f_min, self._f_max = self._make_range_spins(
-            x_min, x_max, f_min, f_max)
+            *grid.x_range, *grid.f_range)
 
         x_row = QHBoxLayout()
         x_row.addWidget(QLabel("min")); x_row.addWidget(self._x_min)
@@ -141,6 +153,7 @@ class _GridDialog(QDialog):
         self._form.addRow(self._x_range_label(), x_row)
         self._form.addRow(self._f_range_label(), f_row)
 
+    def _add_segment_row(self, align_segment) -> None:
         self._seg = QComboBox()
         for lbl, key in _ALIGN_SEG_CHOICES:
             self._seg.addItem(lbl, key)
@@ -148,13 +161,7 @@ class _GridDialog(QDialog):
         self._seg.setCurrentIndex(j if j >= 0 else 0)
         self._form.addRow("Segment:", self._seg)
 
-        self._add_extra_rows()
-
-        warn = QLabel("⚠  Changing these settings invalidates all cached 2DHs.")
-        warn.setStyleSheet(f"color: {self._WARN_COLOR};")
-        self._form.addRow(warn)
-        root.addWidget(box)
-
+    def _make_buttons(self) -> QDialogButtonBox:
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Reset |
             QDialogButtonBox.StandardButton.Cancel |
@@ -163,7 +170,7 @@ class _GridDialog(QDialog):
         btns.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.accept)
         btns.button(QDialogButtonBox.StandardButton.Cancel).clicked.connect(self.reject)
         btns.button(QDialogButtonBox.StandardButton.Reset).clicked.connect(self._reset)
-        root.addWidget(btns)
+        return btns
 
     # ── Hooks for _PhysicalGridDialog ───────────────────────────────────────
 
@@ -492,6 +499,11 @@ class _TwoDHWindowBase(QMainWindow):
         self._after_grid_settings_applied()
         self._on_rebuild()
 
+    @property
+    def _hist_grid(self) -> HistGrid:
+        return HistGrid(self._x_bins, self._f_bins,
+                        (self._x_min, self._x_max), (self._f_min, self._f_max))
+
     def _make_grid_dialog(self) -> _GridDialog:
         raise NotImplementedError
 
@@ -592,6 +604,7 @@ class _TwoDHWindowBase(QMainWindow):
     # ── Incremental update (one new event) ──────────────────────────────────────
 
     def add_event(self, path: str) -> None:
+        """Add one event's histogram to the plot, if it has a usable stored segment fit; otherwise do nothing."""
         stored = self._stored_segment_fit(path)
         if stored is None:
             return
@@ -606,6 +619,7 @@ class _TwoDHWindowBase(QMainWindow):
     # ── Full rebuild ──────────────────────────────────────────────────────────
 
     def sync_from_event_summary(self, event_summary_win) -> None:
+        """Rebuild every event's histogram from the event summary's kept population, reusing held grids that are unchanged."""
         self._event_summary_win = event_summary_win
         self._rebuild_btn.setEnabled(False)
         self._stats_label.setText("Building…")
@@ -1017,7 +1031,7 @@ class _TwoDHWindowBase(QMainWindow):
     def _run_pca(self) -> None:
         try:
             self._run_pca_impl()
-        except Exception:
+        except Exception:  # noqa: BLE001  user sees the full traceback via QMessageBox
             import traceback
             QMessageBox.critical(
                 self, "Run PCA failed",
@@ -1037,9 +1051,7 @@ class _TwoDHWindowBase(QMainWindow):
         f_bins          = self._f_bins
         x_range         = (self._x_min, self._x_max)
         f_range         = (self._f_min, self._f_max)
-        display_hists   = None
-        display_x_range = None
-        display_f_range = None
+        display         = None
         feature_space_selected = False
 
         if self._selection is not None:
@@ -1064,9 +1076,7 @@ class _TwoDHWindowBase(QMainWindow):
                     p: H[xi_lo:xi_hi, fi_lo:fi_hi]
                     for p, H in self._event_histograms.items()
                 }
-                display_hists   = dict(self._event_histograms)
-                display_x_range = (self._x_min, self._x_max)
-                display_f_range = (self._f_min, self._f_max)
+                display = (dict(self._event_histograms), self._hist_grid)
 
         (x_label, x_unit), (f_label, f_unit) = self._axis_labels()
         provenance = dict(self.export_provenance())
@@ -1098,23 +1108,14 @@ class _TwoDHWindowBase(QMainWindow):
                 f"   ·   {f_label}: {f_range[0]:g}–{f_range[1]:g} {f_unit}"
             )
         self._pca_win = PCAWindow(
-            histograms         = pca_histograms,
-            x_bins              = x_bins,
-            f_bins              = f_bins,
-            x_range             = x_range,
-            f_range             = f_range,
-            x_label             = x_label,
-            f_label             = f_label,
-            x_unit              = x_unit,
-            f_unit              = f_unit,
-            caption             = caption,
-            provenance          = provenance,
-            db_path             = self._db_path,
-            display_histograms  = display_hists,
-            display_x_range     = display_x_range,
-            display_f_range     = display_f_range,
-            physical            = self._physical,
-            overlay_fn          = self._overlay_xF,
+            pca_histograms,
+            HistGrid(x_bins, f_bins, x_range, f_range),
+            AxisLabels(x_label, f_label, x_unit, f_unit),
+            ExportContext(
+                caption=caption, provenance=provenance, paths=None,
+                db_path=self._db_path, physical=self._physical,
+                overlay_fn=self._overlay_xF),
+            display,
         )
         self._pca_win.show()
 

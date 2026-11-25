@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import html
 import os
-import sqlite3
 import time
 from collections import deque
-from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import (
@@ -43,9 +41,9 @@ from .widgets import CollapsibleSection, FlowLayout, LabeledControl
 from .analysis_worker import AnalysisWorker
 from .navigator_bar import NavigatorBar
 from .roi_pipeline import (
-    read_segment_select, write_segment_select, segment_summary_bulk,
+    read_segment_select, write_segment_select,
 )
-from .qt_utils import fit_on_screen
+from .qt_utils import fit_on_screen, report_handled, signals_blocked
 
 
 _SELECTION_QSS = style.TABLE_QSS
@@ -330,6 +328,9 @@ class DashboardWindow(QMainWindow):
         self._db_path = db_path
         self._scope = new_scope()
         self._children: list[QWidget] = []
+        self._facets_error: str | None = None
+        self._child_errors: dict = {}
+        self._freshness_error: str | None = None
 
         _db.clear_analysis_queue(db_path)
 
@@ -402,12 +403,12 @@ class DashboardWindow(QMainWindow):
             return
         try:
             self._worker.stop()
-        except Exception:
+        except Exception:  # noqa: BLE001  shutdown: a worker that will not stop must not block closing
             pass
         for win in list(self._children):
             try:
                 win.close()
-            except Exception:
+            except Exception:  # noqa: BLE001  shutdown: a child that will not close must not block closing
                 pass
         self._children = []
         super().closeEvent(event)
@@ -908,10 +909,10 @@ class DashboardWindow(QMainWindow):
 
     def _on_export_classification_report(self) -> None:
         """Report on whatever the CURRENT scope filters express — the whole DB if none are set, the same subset "Database — files in scope" counts..."""
-        kw = scope_to_query(self._scope)
+        flt = scope_to_query(self._scope)
         select = read_segment_select(self._db_path)
         header, rows = _db.classification_report_rows(
-            self._db_path, select=select, **kw)
+            self._db_path, flt, select=select)
         if not rows:
             QMessageBox.information(
                 self, "Classification report",
@@ -925,7 +926,7 @@ class DashboardWindow(QMainWindow):
             g.contributing_files(r[0] for r in rows)
             g.note(
                 window="dashboard",
-                scope=kw or "whole database (no scope filters set)",
+                scope=flt.set_fields() or "whole database (no scope filters set)",
                 segment_select=select,
                 columns=header,
                 n_rows=len(rows),
@@ -938,8 +939,7 @@ class DashboardWindow(QMainWindow):
 
     def _on_define_metadata(self) -> None:
         """Bulk-write sample metadata onto every file the CURRENT scope expresses — same cohort as "Database — files in scope" and the..."""
-        kw = scope_to_query(self._scope)
-        rows = _db.list_files(db_path=self._db_path, **kw)
+        rows = _db.list_files(self._db_path, scope_to_query(self._scope))
         paths = [row["path"] for row in rows]
         if not paths:
             QMessageBox.information(
@@ -952,8 +952,7 @@ class DashboardWindow(QMainWindow):
 
     def _on_remove_files(self) -> None:
         """The undo for Add Data and for an analysis run, over the CURRENT scope — same cohort as "Database — files in scope", "Define metadata..."..."""
-        kw = scope_to_query(self._scope)
-        rows = _db.list_files(db_path=self._db_path, **kw)
+        rows = _db.list_files(self._db_path, scope_to_query(self._scope))
         paths = [row["path"] for row in rows]
         if not paths:
             QMessageBox.information(
@@ -970,7 +969,7 @@ class DashboardWindow(QMainWindow):
         from .add_data_dialog import _ScanProgress
         from . import scanner as _scanner
 
-        n_all = len(_db.list_files(db_path=self._db_path))
+        n_all = len(_db.list_files(self._db_path))
         if not n_all:
             QMessageBox.information(self, "Re-check catalogued files",
                                     "The catalog is empty.")
@@ -1151,39 +1150,30 @@ class DashboardWindow(QMainWindow):
         """Cascading facets."""
         scope = self._scope
         try:
-            facets = _db.get_facet_options(
-                self._db_path,
-                users=scope.get("users") or None,
-                analytes=scope.get("analytes") or None,
-                solvents=scope.get("solvents") or None,
-                techniques=scope.get("techniques") or None,
-                substrates=scope.get("substrates") or None,
-                sample_preps=scope.get("sample_preps") or None,
-                afm_units=scope.get("afm_units") or None,
-                curve_types=scope.get("curve_types") or None,
-                date_from=scope.get("date_from"),
-                date_to=scope.get("date_to"),
-                search=scope.get("search"),
-            )
-        except Exception:
+            facets = _db.get_facet_options(self._db_path, scope_to_query(scope))
+        except Exception as exc:
+            def show(text):
+                self._facets_error = text
+                self._scope_count_lbl.setText(text)
+            report_handled(show, "Refresh filters", exc)
             return
+        self._facets_error = None
 
         for key, lst in self._lists.items():
             checked = set(scope.get(key) or [])
             counts = {v: n for v, n in facets.get(key, [])}
             values = sorted(set(counts) | checked, key=lambda s: str(s).lower())
-            lst.blockSignals(True)
-            lst.clear()
-            for v in values:
-                n = counts.get(v, 0)
-                item = QListWidgetItem(f"{v}  ({n:,})")
-                item.setData(Qt.ItemDataRole.UserRole, v)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(
-                    Qt.CheckState.Checked if v in checked else Qt.CheckState.Unchecked
-                )
-                lst.addItem(item)
-            lst.blockSignals(False)
+            with signals_blocked(lst):
+                lst.clear()
+                for v in values:
+                    n = counts.get(v, 0)
+                    item = QListWidgetItem(f"{v}  ({n:,})")
+                    item.setData(Qt.ItemDataRole.UserRole, v)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(
+                        Qt.CheckState.Checked if v in checked else Qt.CheckState.Unchecked
+                    )
+                    lst.addItem(item)
 
     def _current_scope(self) -> dict:
         out = new_scope()
@@ -1206,12 +1196,23 @@ class DashboardWindow(QMainWindow):
         self._count_timer.start()
         self.scope_changed.emit(self._scope)
         self._prune_children()
+        errors = getattr(self, "_child_errors", None)
+        if errors is None:
+            errors = self._child_errors = {}
         for win in self._children:
             if hasattr(win, "apply_scope") and win.isVisible():
+                title = win.windowTitle()
                 try:
                     win.apply_scope(self._scope)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    report_handled(lambda t, w=win: errors.__setitem__(w, t),
+                                   f"Update {title}", exc)
+                else:
+                    errors.pop(win, None)
+        for win in [w for w in errors if w not in self._children]:
+            del errors[win]
+        if errors:
+            self._scope_count_lbl.setText(_join_messages(errors.values()))
 
     def _prune_children(self) -> None:
         """Drop child windows that have been closed or destroyed."""
@@ -1226,10 +1227,9 @@ class DashboardWindow(QMainWindow):
 
     def _clear_filters(self) -> None:
         for lst in self._lists.values():
-            lst.blockSignals(True)
-            for i in range(lst.count()):
-                lst.item(i).setCheckState(Qt.CheckState.Unchecked)
-            lst.blockSignals(False)
+            with signals_blocked(lst):
+                for i in range(lst.count()):
+                    lst.item(i).setCheckState(Qt.CheckState.Unchecked)
         self._date_from_chk.setChecked(False)
         self._date_to_chk.setChecked(False)
         self._search.clear()
@@ -1238,14 +1238,15 @@ class DashboardWindow(QMainWindow):
 
     def _refresh_db_and_counts(self) -> None:
         self._refresh_facets()
-        kw = scope_to_query(self._scope)
         try:
-            rows = _db.list_files(db_path=self._db_path, **kw)
+            rows = _db.list_files(self._db_path, scope_to_query(self._scope))
         except Exception as exc:
             self._db_count_lbl.setText(f"(query failed: {exc!r})")
             return
         total = len(rows)
-        self._scope_count_lbl.setText(f"{total:,} files match scope")
+        self._scope_count_lbl.setText(_join_messages(
+            [f"{total:,} files match scope", getattr(self, "_facets_error", None),
+             *(getattr(self, "_child_errors", None) or {}).values()]))
 
         self._db_model.set_rows(rows)
         self._db_count_lbl.setText(f"{total:,} files in scope")
@@ -1304,9 +1305,8 @@ class DashboardWindow(QMainWindow):
         n_fixed = len(_QUEUE_COLUMNS_FIXED)
         by_visual = sorted(range(hdr.count()), key=hdr.visualIndex)
         moved = [self._queue_derived_cols[c - n_fixed][0] for c in by_visual if c >= n_fixed]
-        hdr.blockSignals(True)
-        hdr.moveSection(new_visual, old_visual)
-        hdr.blockSignals(False)
+        with signals_blocked(hdr):
+            hdr.moveSection(new_visual, old_visual)
         # The table's columns take back their own slots in the full order, so
         # variables not in this queue keep their places.
         in_table, refill = set(moved), iter(moved)
@@ -1468,9 +1468,15 @@ class DashboardWindow(QMainWindow):
         try:
             from .curve_analysis import current_signature
             params_json, code_ver = current_signature(self._db_path)
-            return _db.queue_freshness(params_json, code_ver, self._db_path)
-        except Exception:
+            fresh = _db.queue_freshness(params_json, code_ver, self._db_path)
+        except Exception as exc:
+            def show(text):
+                self._freshness_error = text
+                self._worker_status_lbl.setText(text)
+            report_handled(show, "Queue freshness", exc)
             return {}
+        self._freshness_error = None
+        return fresh
 
     def _status_class(self, file_id: int, status: str | None) -> str:
         """The CLASS the Status column reports: what this row will cost."""
@@ -1609,7 +1615,9 @@ class DashboardWindow(QMainWindow):
         if self._loaded_count or self._cached_count:
             parts.append(f"loaded {self._loaded_count:,} · cached {self._cached_count:,}")
 
-        self._worker_status_lbl.setText("Worker: " + "  ·  ".join(parts) + extra)
+        text = "Worker: " + "  ·  ".join(parts) + extra
+        self._worker_status_lbl.setText("  ·  ".join(
+            filter(None, [text, getattr(self, "_freshness_error", None)])))
 
     def _acq_filter_line(self, queue_rows) -> str:
         """Warn when the ACQUISITION filter, not ours, is setting the bandwidth."""
@@ -2145,6 +2153,7 @@ class DashboardWindow(QMainWindow):
         self._prune_children()
         event_paths = None
         for win in self._children:
+            title = win.windowTitle()
             try:
                 if hasattr(win, "reload_paths"):
                     if event_paths is None:
@@ -2156,8 +2165,13 @@ class DashboardWindow(QMainWindow):
                     win.set_event_paths(event_paths)
                 elif hasattr(win, "refresh"):
                     win.refresh()
-            except Exception:
-                pass
+            except Exception as exc:
+                report_handled(self._scope_count_lbl.setText,
+                               f"Update {title}", exc)
+
+
+def _join_messages(messages) -> str:
+    return "  |  ".join(m for m in messages if m)
 
 
 def _fmt_cell(val, key: str = "") -> str:

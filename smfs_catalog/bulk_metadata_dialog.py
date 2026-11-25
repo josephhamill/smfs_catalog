@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from . import db as _db
 from . import style
+from . import crashlog
 from .qt_utils import fit_on_screen
 
 # (field key, form label)
@@ -130,8 +131,10 @@ class BulkMetadataDialog(QDialog):
         box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         try:
             existing = _db.get_distinct_values(key, table="files", db_path=self._db_path)
-        except Exception:
+        except Exception as exc:
             existing = []          # never block editing because a lookup failed
+            crashlog.log_handled(f"Loading existing {key} values", exc)
+            box.lineEdit().setPlaceholderText("(couldn't load existing values)")
         box.addItem("")            # blank first: ticking + leaving blank CLEARS
         box.addItems([v for v in existing if v])
         box.setCurrentIndex(0)

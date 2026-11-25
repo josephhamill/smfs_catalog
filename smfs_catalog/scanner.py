@@ -24,6 +24,7 @@ from datetime import datetime
 from igor2.binarywave import load as load_ibw
 
 from . import db
+from .file_filter import FileFilter
 from .curve_loader import (
     CURVE_TYPES, _hold_z_sensor, _note_key_pattern, _retract_velocity,
     _spring_constant, qualify_wave, retract_deflection_nm,
@@ -505,7 +506,7 @@ def scan_tree(
                 experimentalists.add(exp)
                 paths = [
                     r["path"] for r in
-                    db.list_files(db_path=db_path, directory=leaf)
+                    db.list_files(db_path, FileFilter(directory=leaf))
                 ]
                 if paths:
                     db.set_file_descriptors_bulk(paths, {"experimentalist": exp}, db_path)
@@ -589,7 +590,7 @@ def scan_directory(
     # Fetch existing records for this directory to check timestamps
     existing = {
         row["path"]: row
-        for row in db.list_files(db_path=db_path, directory=directory_path)
+        for row in db.list_files(db_path, FileFilter(directory=directory_path))
     }
 
     # One connection and one transaction per SCAN_BATCH_SIZE files, not one

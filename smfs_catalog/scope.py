@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from .file_filter import FileFilter
+
 
 def new_scope() -> dict:
     """Return an unconstrained scope: every file eligible for normal work."""
@@ -32,8 +34,8 @@ def new_scope() -> dict:
     }
 
 
-def scope_to_query(scope: dict) -> dict:
-    """Translate dashboard scope state into ``db.list_files`` arguments."""
+def scope_to_query(scope: dict) -> FileFilter:
+    """Translate dashboard scope state into the ``FileFilter`` ``db.list_files`` takes."""
     query = {}
     for key in ("users", "analytes", "solvents", "techniques", "substrates",
                 "sample_preps", "afm_units", "curve_types"):
@@ -45,7 +47,9 @@ def scope_to_query(scope: dict) -> dict:
 
     # A normal scope is work eligible for analysis. Set-aside files remain in
     # the catalog and each flag can invert its corresponding eligibility rule.
-    query["parse_ok"] = True
-    query["usable"] = not bool(scope.get("only_unusable"))
-    query["unique"] = not bool(scope.get("only_duplicates"))
-    return query
+    return FileFilter(
+        **query,
+        parse_ok=True,
+        usable=not bool(scope.get("only_unusable")),
+        unique=not bool(scope.get("only_duplicates")),
+    )

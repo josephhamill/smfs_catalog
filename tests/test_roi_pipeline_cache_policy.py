@@ -5,7 +5,7 @@ import pytest
 
 from smfs_catalog import roi_detection, roi_events, roi_pipeline, signal_processing
 from smfs_catalog.analysis_params import AnalysisParams
-from smfs_catalog.curve_analysis import CurveAnalysisError
+from smfs_catalog.curve_analysis import CacheContext, CurveAnalysisError
 
 
 def _arr():
@@ -57,7 +57,7 @@ def test_force_bypasses_event_document_and_persists_once(pipeline_stubs):
     curve, calls = pipeline_stubs
     roi_pipeline.compute_curve_events(
         curve, roi_pipeline.event_params_from(AnalysisParams()),
-        db_path="ignored", code_ver="method", file_id=1, force=True,
+        cache=CacheContext("ignored", "method", 1, None), force=True,
     )
     assert calls == {"build": 1, "fit": 1, "write": 1}
 
@@ -66,7 +66,7 @@ def test_normal_cache_hit_skips_build_fit_and_write(pipeline_stubs):
     curve, calls = pipeline_stubs
     roi_pipeline.compute_curve_events(
         curve, roi_pipeline.event_params_from(AnalysisParams()),
-        db_path="ignored", code_ver="method", file_id=1,
+        cache=CacheContext("ignored", "method", 1, None),
     )
     assert calls == {"build": 0, "fit": 0, "write": 0}
 

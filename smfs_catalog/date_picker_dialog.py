@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from . import db as _db
 from . import style
+from .scope import scope_to_query
 from .qt_utils import fit_on_screen
 
 
@@ -52,18 +53,7 @@ class DatePickerDialog(QDialog):
         # Dates available for the CURRENT scope (other dimensions), not the
         # whole DB.  Empty scope → every date.
         scope = scope or {}
-        date_counts = _db.get_distinct_dates(
-            db_path,
-            users=scope.get("users") or None,
-            analytes=scope.get("analytes") or None,
-            solvents=scope.get("solvents") or None,
-            techniques=scope.get("techniques") or None,
-            substrates=scope.get("substrates") or None,
-            sample_preps=scope.get("sample_preps") or None,
-            afm_units=scope.get("afm_units") or None,
-            curve_types=scope.get("curve_types") or None,
-            search=scope.get("search"),
-        )
+        date_counts = _db.get_distinct_dates(db_path, scope_to_query(scope))
         self._counts = {ds: n for ds, n in date_counts}
 
         layout = QVBoxLayout(self)

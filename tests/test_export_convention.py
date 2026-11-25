@@ -253,12 +253,12 @@ check("(c) malformed histogram geometry is rejected",
 # the spread — so exporting only the diagonal would let someone redraw the
 # figure with a visibly wrong band.
 from smfs_catalog.dist_fit_core import (                 # noqa: E402
-    CI_N_DRAWS, CI_PCT, CI_SEED, ci_manifest_fields, total_fit_ci,
+    CI_N_DRAWS, CI_PCT, CI_SEED, CiSettings, ci_manifest_fields, total_fit_ci,
 )
 import numpy as np                                       # noqa: E402
 
 cov = np.array([[0.04, 0.03], [0.03, 0.09]])             # strongly correlated
-fields = ci_manifest_fields(cov, True)
+fields = ci_manifest_fields(cov, True, CiSettings())
 check("(f) CI manifest carries the FULL covariance, not just its diagonal",
       fields["param_covariance"] == cov.tolist(), str(fields["param_covariance"]))
 check("(f) CI manifest records the Monte-Carlo settings needed to reproduce it",
@@ -268,17 +268,19 @@ check("(f) CI manifest says whether a band was actually drawn",
       fields["ci_band_drawn"] is True)
 
 # An unusable covariance yields no band and no fabricated matrix.
-bad = ci_manifest_fields(np.array([[np.inf, 0.0], [0.0, 1.0]]), False)
+bad = ci_manifest_fields(np.array([[np.inf, 0.0], [0.0, 1.0]]), False,
+                         CiSettings())
 check("(f) an unusable covariance exports None, never a fabricated interval",
       bad["param_covariance"] is None and bad["ci_band_drawn"] is False)
 check("(f) total_fit_ci itself returns None for an unusable covariance",
       total_fit_ci(lambda x, a, b: a * x + b, np.linspace(0, 1, 5),
-                   [1.0, 0.0], np.array([[np.inf, 0.0], [0.0, 1.0]])) is None)
+                   [1.0, 0.0], np.array([[np.inf, 0.0], [0.0, 1.0]]),
+                   CiSettings()) is None)
 
 # The seed really does make it reproducible — otherwise recording it is a lie.
 fn = lambda x, a, b: a * np.exp(-b * x)                   # noqa: E731
-band1 = total_fit_ci(fn, np.linspace(0, 2, 20), [1.0, 0.5], cov)
-band2 = total_fit_ci(fn, np.linspace(0, 2, 20), [1.0, 0.5], cov)
+band1 = total_fit_ci(fn, np.linspace(0, 2, 20), [1.0, 0.5], cov, CiSettings())
+band2 = total_fit_ci(fn, np.linspace(0, 2, 20), [1.0, 0.5], cov, CiSettings())
 check("(f) a seeded CI band is reproducible run to run",
       band1 is not None and np.allclose(band1[0], band2[0])
       and np.allclose(band1[1], band2[1]))
