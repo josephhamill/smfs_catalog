@@ -57,7 +57,6 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -66,7 +65,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .curve_loader import ForceCurve, LoadError, load_force_curve
+from .curve_loader import ForceCurve, load_force_curve
 from . import db as _db
 from . import quantities as _quant
 from .models import CHAIN_MODEL_BY_IDX, CHAIN_MODELS
@@ -81,9 +80,10 @@ from .roi_pipeline import (
 )
 from . import sample_marks
 from . import style
-from .qt_utils import _make_session_header, set_si_label, fit_on_screen
+from .qt_utils import _make_session_header, set_si_label, fit_on_screen, report_handled, signals_blocked
 from .widgets import FlowLayout, LabeledControl, SampleMarksToggle
 from .navigator_bar import WorkerNavBar
+from .curve_analysis import CacheContext
 from .provenance import cache_version
 
 
@@ -603,8 +603,9 @@ class ROIWindow(QWidget):
         self._sync_profile_owner(path)
         try:
             curve: ForceCurve = load_force_curve(path)
-        except (LoadError, Exception):
+        except Exception as exc:
             self._clear()
+            report_handled(self._status_label.setText, "Loading curve", exc)
             return
 
         self._last_curve = curve
@@ -690,19 +691,12 @@ class ROIWindow(QWidget):
             file_id = _db.get_file_id(self._last_path, self._db_path) if self._last_path else None
             res = compute_curve_events_coords(
                 curve, ep,
-                db_path=self._db_path, code_ver=cache_version(), file_id=file_id,
-                param_set=committed,
+                cache=CacheContext(
+                    self._db_path, cache_version(), file_id, None, param_set=committed),
             )
         except Exception as exc:
-            import sys
-            print(
-                f"[roi] computation failed — {type(exc).__name__}: {str(exc)[:160]}",
-                file=sys.stderr,
-            )
             self._clear()
-            self._status_label.setText(
-                f"ROI calculation failed: {type(exc).__name__}: {str(exc)[:120]}"
-            )
+            report_handled(self._status_label.setText, "ROI calculation", exc)
             return
 
         sigs, events, snapoff_idx = res.sigs, res.events, res.snapoff_idx
@@ -712,15 +706,12 @@ class ROIWindow(QWidget):
         self._d1_curve.setData(x=px.tolist(),   y=sigs.d1.tolist())
 
         # Keep draggable threshold lines in sync with stored values.
-        self._thresh_line_d1.blockSignals(True)
-        self._thresh_line_d1.setValue(self._threshold_nm_per_nm)
-        self._thresh_line_d1.blockSignals(False)
-        self._thresh_line_inner.blockSignals(True)
-        self._thresh_line_inner.setValue(self._inner_threshold_nm_per_nm)
-        self._thresh_line_inner.blockSignals(False)
-        self._thresh_line_onset.blockSignals(True)
-        self._thresh_line_onset.setValue(self._onset_threshold_nm)
-        self._thresh_line_onset.blockSignals(False)
+        with signals_blocked(self._thresh_line_d1):
+            self._thresh_line_d1.setValue(self._threshold_nm_per_nm)
+        with signals_blocked(self._thresh_line_inner):
+            self._thresh_line_inner.setValue(self._inner_threshold_nm_per_nm)
+        with signals_blocked(self._thresh_line_onset):
+            self._thresh_line_onset.setValue(self._onset_threshold_nm)
 
         self._frame_d1(sigs.d1)
 
@@ -1019,9 +1010,11 @@ class ROIWindow(QWidget):
         """
         try:
             owner = _db.active_param_owner(self._db_path)
-        except Exception:
+        except Exception as exc:
+            report_handled(self._params_label.setText, "Parameter owner lookup", exc)
             return
         if self._owner_synced and owner == self._experimentalist:
+            self._params_label.setText(f"Parameters: {owner}")
             return
         self._owner_synced = True
         self._experimentalist = owner
@@ -1095,23 +1088,18 @@ class ROIWindow(QWidget):
             (self._spin_wb_multiple, self._walk_back_noise_multiple),
             (self._spin_mg_multiplier, self._muggeo_fit_window_multiplier),
         ):
-            w.blockSignals(True)
-            w.setValue(val)
-            w.blockSignals(False)
-        self._combo_detector.blockSignals(True)
-        self._combo_detector.setCurrentIndex(idx)
-        self._combo_detector.blockSignals(False)
-        self._combo_chain.blockSignals(True)
-        self._combo_chain.setCurrentIndex(self._chain_model_idx)
-        self._combo_chain.blockSignals(False)
-        self._combo_rupture.blockSignals(True)
-        self._combo_rupture.setCurrentIndex(self._rupture_algorithm_idx)
-        self._combo_rupture.blockSignals(False)
+            with signals_blocked(w):
+                w.setValue(val)
+        with signals_blocked(self._combo_detector):
+            self._combo_detector.setCurrentIndex(idx)
+        with signals_blocked(self._combo_chain):
+            self._combo_chain.setCurrentIndex(self._chain_model_idx)
+        with signals_blocked(self._combo_rupture):
+            self._combo_rupture.setCurrentIndex(self._rupture_algorithm_idx)
         for combo, val in ((self._combo_mg_tolerance, self._muggeo_tolerance_idx),
                            (self._combo_mg_restarts, self._muggeo_restarts_idx)):
-            combo.blockSignals(True)
-            combo.setCurrentIndex(val)
-            combo.blockSignals(False)
+            with signals_blocked(combo):
+                combo.setCurrentIndex(val)
         self._enable_rupture_settings()
 
         # No mirror into the `settings` table. The parameter set lives in
@@ -1236,9 +1224,8 @@ class ROIWindow(QWidget):
         # Quantize the raw mouse position before display or persistence so the
         # spin box and database hold the same value.
         new_val = _quant.quantize("roi_inner_threshold_nm_per_nm", new_val)
-        self._spin_inner.blockSignals(True)
-        self._spin_inner.setValue(new_val)
-        self._spin_inner.blockSignals(False)
+        with signals_blocked(self._spin_inner):
+            self._spin_inner.setValue(new_val)
         self._preview_inner_threshold(new_val)
         self._commit_inner_threshold()
 
@@ -1374,9 +1361,8 @@ class ROIWindow(QWidget):
         # Quantize the raw mouse position before display or persistence so the
         # spin box and database hold the same value.
         new_val = _quant.quantize("roi_threshold_nm_per_nm", new_val)
-        self._spin_threshold.blockSignals(True)
-        self._spin_threshold.setValue(new_val)
-        self._spin_threshold.blockSignals(False)
+        with signals_blocked(self._spin_threshold):
+            self._spin_threshold.setValue(new_val)
         self._preview_threshold(new_val)
         self._commit_threshold()
 
@@ -1387,9 +1373,8 @@ class ROIWindow(QWidget):
         # Quantize the raw mouse position before display or persistence so the
         # spin box and database hold the same value.
         new_val = _quant.quantize("roi_onset_threshold_nm", new_val)
-        self._spin_onset.blockSignals(True)
-        self._spin_onset.setValue(new_val)
-        self._spin_onset.blockSignals(False)
+        with signals_blocked(self._spin_onset):
+            self._spin_onset.setValue(new_val)
         self._preview_onset(new_val)
         self._commit_onset()
 

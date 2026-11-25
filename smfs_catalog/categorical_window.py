@@ -40,7 +40,7 @@ from . import db as _db
 from . import export_utils as _export
 from .export_utils import slug as _slug
 from . import style
-from .qt_utils import _DateAxis, _make_session_header, fit_on_screen
+from .qt_utils import _DateAxis, _make_session_header, fit_on_screen, signals_blocked
 from .variable_window import (
     _date_to_ts, _ts_to_date, _LIST_QSS, _PEN_NONE, _PEN_SEL,
 )
@@ -293,11 +293,10 @@ class CategoricalStatsWindow(QMainWindow):
     # ── Side list + selection ─────────────────────────────────────────────────
 
     def _populate_list(self) -> None:
-        self._list.blockSignals(True)
-        self._list.clear()
-        for path in self._plot_paths:
-            self._list.addItem(QListWidgetItem(Path(path).name))
-        self._list.blockSignals(False)
+        with signals_blocked(self._list):
+            self._list.clear()
+            for path in self._plot_paths:
+                self._list.addItem(QListWidgetItem(Path(path).name))
         self._selected = None
         self._sel_marker.hide()
         self._sel_label.setText("")
@@ -319,9 +318,8 @@ class CategoricalStatsWindow(QMainWindow):
         idx = points[0].data()
         if idx is None:
             return
-        self._list.blockSignals(True)
-        self._list.setCurrentRow(int(idx))
-        self._list.blockSignals(False)
+        with signals_blocked(self._list):
+            self._list.setCurrentRow(int(idx))
         self._select(int(idx))
 
     def _on_list_row_changed(self, row: int) -> None:

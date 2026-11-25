@@ -1,6 +1,10 @@
+from types import SimpleNamespace
+
 import numpy as np
 
-from smfs_catalog.roi_events import build_curve_events, find_outer_events
+from smfs_catalog.roi_events import (
+    DetectorSettings, build_curve_events, find_outer_events,
+)
 from smfs_catalog.roi_pipeline import (
     event_geometry_identity,
     resolve_reported_segment,
@@ -17,14 +21,13 @@ def _signals():
     level[40:91] = -1.0
     d1[60:62] = 0.35
     d1[90:93] = 0.8
-    return d1, level, piezo
+    return SimpleNamespace(d1=d1, low=level, piezo=piezo)
 
 
 def test_outer_search_marks_event_without_deciding_its_segments():
-    d1, level, piezo = _signals()
+    sigs = _signals()
     boundaries = find_outer_events(
-        d1, level, piezo, lo=10, hi=110,
-        onset_thr=-0.2, outer_threshold=0.5,
+        sigs, (10, 110), -0.2, 0.5,
     )
     assert len(boundaries) == 1
     assert boundaries[0].onset_idx == 39
@@ -32,10 +35,10 @@ def test_outer_search_marks_event_without_deciding_its_segments():
 
 
 def test_inner_threshold_turns_one_outer_event_into_two_segments():
-    d1, level, piezo = _signals()
+    sigs = _signals()
     events = build_curve_events(
-        d1, level, piezo, lo=10, hi=110,
-        onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.2,
+        sigs, (10, 110),
+        DetectorSettings(onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.2),
     )
     assert events.n_rois == 1
     assert [r.idx for r in events.rois[0].ruptures] == [60, 90]
@@ -43,10 +46,10 @@ def test_inner_threshold_turns_one_outer_event_into_two_segments():
 
 
 def test_no_inner_crossing_still_produces_one_segment():
-    d1, level, piezo = _signals()
+    sigs = _signals()
     events = build_curve_events(
-        d1, level, piezo, lo=10, hi=110,
-        onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.5,
+        sigs, (10, 110),
+        DetectorSettings(onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.5),
     )
     assert events.n_rois == 1
     assert [r.idx for r in events.rois[0].ruptures] == [90]
@@ -54,11 +57,10 @@ def test_no_inner_crossing_still_produces_one_segment():
 
 
 def test_outer_crossing_without_baseline_return_is_rejected():
-    d1, level, piezo = _signals()
-    level[:93] = -1.0
+    sigs = _signals()
+    sigs.low[:93] = -1.0
     boundaries = find_outer_events(
-        d1, level, piezo, lo=10, hi=110,
-        onset_thr=-0.2, outer_threshold=0.5,
+        sigs, (10, 110), -0.2, 0.5,
     )
     assert boundaries == []
 
@@ -80,10 +82,10 @@ def test_unknown_reported_segment_policy_is_rejected():
 
 
 def test_manual_pick_survives_param_change_when_geometry_is_identical():
-    d1, level, piezo = _signals()
+    sigs = _signals()
     events = build_curve_events(
-        d1, level, piezo, lo=10, hi=110,
-        onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.2,
+        sigs, (10, 110),
+        DetectorSettings(onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.2),
     )
     identity = event_geometry_identity(events)
     override = {
@@ -97,14 +99,14 @@ def test_manual_pick_survives_param_change_when_geometry_is_identical():
 
 
 def test_changed_geometry_retains_visible_review_state():
-    d1, level, piezo = _signals()
+    sigs = _signals()
     original = build_curve_events(
-        d1, level, piezo, lo=10, hi=110,
-        onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.2,
+        sigs, (10, 110),
+        DetectorSettings(onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.2),
     )
     changed = build_curve_events(
-        d1, level, piezo, lo=10, hi=110,
-        onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.5,
+        sigs, (10, 110),
+        DetectorSettings(onset_thr=-0.2, outer_threshold=0.5, inner_threshold=0.5),
     )
     override = {
         "primary_segment_idx": 0,

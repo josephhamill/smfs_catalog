@@ -248,7 +248,7 @@ class Physical2DHWindow(_TwoDHWindowBase):
         label = desc if self._align_mode == "fstar" else f"{desc} (Δx=0)"
         try:
             self._vline.label.setFormat(label)
-        except Exception:
+        except AttributeError:
             pass
         self._hline.setVisible(self._align_mode == "fstar")
 

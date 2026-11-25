@@ -12,7 +12,9 @@ import numpy as np
 from smfs_catalog.muggeo_segmented import (
     FITTED, NO_FIT, WARNED, fit_window, muggeo_segmented,
 )
-from smfs_catalog.roi_events import CurveEvents, ROI, Rupture, Segment, fit_segments
+from smfs_catalog.roi_events import (
+    CurveEvents, FitSettings, ROI, Rupture, Segment, SegmentCalibration, fit_segments,
+)
 from smfs_catalog.rupture_algorithms import RUPTURE_ALGORITHMS, fit_deflection
 
 LAST_ON_RAMP = 300          # the last sample before the fall
@@ -76,8 +78,8 @@ def test_fit_segments_ends_the_segment_at_the_point() -> None:
                             spring_constant=1.0, sample_rate_hz=1000.0)
     smooth = np.convolve(raw, np.ones(31) / 31, mode="same")
     events = _events()
-    fit_segments(curve, events, 0.0, 1.0, 0.0, low_retr=smooth,
-                 rupture_algorithm="muggeo_segmented")
+    fit_segments(curve, events, SegmentCalibration(0.0, 1.0, 0.0, low_retr=smooth),
+                 FitSettings(rupture_algorithm="muggeo_segmented"))
     rup, seg = events.rois[0].ruptures[0], events.rois[0].segments[0]
     assert rup.force_idx == LAST_ON_RAMP and seg.right_idx == LAST_ON_RAMP
     assert rup.force_pN == raw[LAST_ON_RAMP], "the saved signal's value"
@@ -95,8 +97,10 @@ def test_no_fit_gives_no_force() -> None:
     events = CurveEvents(detector="test", rois=[ROI(
         onset_idx=1127, return_idx=1351, onset_piezo_nm=1127.0,
         return_piezo_nm=1351.0, ruptures=[rup], segments=[seg])])
-    fit_segments(curve, events, 0.0, 1.0, 0.0, low_retr=curve.defl_retr,
-                 rupture_algorithm="muggeo_segmented", muggeo_restarts=False)
+    fit_segments(curve, events,
+                 SegmentCalibration(0.0, 1.0, 0.0, low_retr=curve.defl_retr),
+                 FitSettings(rupture_algorithm="muggeo_segmented",
+                             muggeo_restarts=False))
     assert rup.point_status.startswith(NO_FIT)
     assert rup.force_pN is None
     assert seg.fit_status == "no_fit" and seg.fit_detail == "no force peak"

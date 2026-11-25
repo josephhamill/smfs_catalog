@@ -533,13 +533,18 @@ class OuterEventBoundary:
     terminal_run_hi: int
 
 
+def _terminal_run(d1: np.ndarray, i: int, lo: int, outer: float) -> tuple[int, int, int]:
+    """The d1 run above `outer` ending at i, and its peak: (run_lo, run_hi, terminal_idx)."""
+    j = i
+    while j >= lo and d1[j] > outer:
+        j -= 1
+    run_lo = j + 1
+    return run_lo, i, run_lo + int(np.argmax(d1[run_lo:i + 1]))
+
+
 def find_outer_events(
-    d1: np.ndarray,
-    level: np.ndarray,
-    piezo: np.ndarray,
-    *,
-    lo: int,
-    hi: int,
+    sigs,
+    band: tuple[int, int],
     onset_thr: float,
     outer_threshold: float,
 ) -> list[OuterEventBoundary]:
@@ -549,9 +554,10 @@ def find_outer_events(
     the curve verdict and the later finer segmentation. It makes no decision
     about how many segments an event contains.
     """
+    d1 = sigs.d1
     outer = float(outer_threshold)
-    lo = max(0, int(lo))
-    hi = min(len(d1), int(hi))
+    lo = max(0, int(band[0]))
+    hi = min(len(d1), int(band[1]))
     found: list[OuterEventBoundary] = []
 
     i = hi - 1
@@ -560,15 +566,9 @@ def find_outer_events(
             i -= 1
             continue
 
-        run_hi = i
-        j = i
-        while j >= lo and d1[j] > outer:
-            j -= 1
-        run_lo = j + 1
-        terminal_idx = run_lo + int(np.argmax(d1[run_lo:run_hi + 1]))
-
+        run_lo, run_hi, terminal_idx = _terminal_run(d1, i, lo, outer)
         onset_idx = find_onset(
-            level, piezo, terminal_idx, lo, onset_thr,
+            sigs.low, sigs.piezo, terminal_idx, lo, onset_thr,
         ).onset_idx
         if onset_idx < 0:
             i = run_lo - 1
@@ -586,27 +586,74 @@ def find_outer_events(
     return found
 
 
+@dataclass(frozen=True)
+class DetectorSettings:
+    """The detector arguments of build_curve_events, grouped."""
+    onset_thr:       float
+    detector:        str = "d1_threshold"
+    outer_threshold: float = 0.2
+    inner_threshold: float | None = None
+    prominence:      float = 0.1
+    distance_pts:    int   = 25
+
+
+def _roi_for_boundary(
+    sigs,
+    boundary: OuterEventBoundary,
+    hi: int,
+    inner: float,
+    settings: DetectorSettings,
+) -> ROI | None:
+    """The ROI for one outer boundary, or None when no rupture is detected in it."""
+    d1, piezo = sigs.d1, sigs.piezo
+    onset_idx = boundary.onset_idx
+
+    # Outer-ROI RIGHT edge = the terminal's OWN d1 excursion end.  Walk right
+    # from the outer run only while d1 stays above INNER, then stop at the gap.
+    # A feature further baseline-ward that never crosses OUTER (a weak post-
+    # event bump) is separated by a d1<inner gap, so it is NOT enclosed and
+    # cannot become an event — only an OUTER crossing opens/bounds an ROI.
+    # (level's baseline return can lag far past the terminal when the tip
+    # stays partially loaded, which is why it must NOT set this edge.)
+    return_idx = boundary.terminal_run_hi
+    while return_idx + 1 < hi and d1[return_idx + 1] > inner:
+        return_idx += 1
+
+    if settings.detector == "find_peaks":
+        ruptures = detect_ruptures_findpeaks(
+            d1, height=inner, prominence=settings.prominence,
+            distance_pts=settings.distance_pts, lo=onset_idx, hi=return_idx + 1,
+        )
+    else:
+        ruptures = detect_ruptures_threshold(
+            d1, threshold=inner, lo=onset_idx, hi=return_idx + 1,
+        )
+    if not ruptures:
+        return None
+    for r in ruptures:
+        r.piezo_nm = float(piezo[r.idx])
+    return ROI(
+        onset_idx=onset_idx, return_idx=return_idx,
+        onset_piezo_nm=float(piezo[onset_idx]),
+        return_piezo_nm=float(piezo[return_idx]),
+        ruptures=ruptures,
+        segments=_segments_from_ruptures(onset_idx, ruptures, piezo),
+    )
+
+
 def build_curve_events(
-    d1:              np.ndarray,
-    level:        np.ndarray,
-    piezo:           np.ndarray,
-    *,
-    lo:              int,
-    hi:              int,
-    onset_thr:       float,
-    detector:        str = "d1_threshold",
-    outer_threshold: float = 0.2,
-    inner_threshold: float | None = None,
-    prominence:      float = 0.1,
-    distance_pts:    int   = 25,
-    outer_events:    list[OuterEventBoundary] | None = None,
+    sigs,
+    band:         tuple[int, int],
+    settings:     DetectorSettings,
+    outer_events: list[OuterEventBoundary] | None = None,
 ) -> CurveEvents:
     """
     Assemble the full ROI/rupture/segment geometry for one curve.
 
-    [lo, hi) is the searchable band (post-snapoff mask → anchor), computed by the
-    caller exactly as find_rupture does today.  `detector` selects which d1
-    detector runs INSIDE each ROI ('d1_threshold' or 'find_peaks').
+    `sigs` is anything with .d1 .low .piezo.  `band` = (lo, hi) is the
+    searchable band [lo, hi) (post-snapoff mask → anchor), computed by the
+    caller exactly as find_rupture does today.  `settings.detector` selects
+    which d1 detector runs INSIDE each ROI ('d1_threshold' or 'find_peaks').
 
     Two-tier thresholds as a RIGHT→LEFT state machine — outer and inner never
     compete because they act in different states:
@@ -625,49 +672,20 @@ def build_curve_events(
     inner_threshold defaults to outer_threshold (single-tier) when None.
     Forces and WLC fits are left None — this is pure geometry.
     """
-    outer = float(outer_threshold)
-    inner = float(inner_threshold) if inner_threshold is not None else outer
-    events = CurveEvents(detector=detector)
-    lo = max(0, lo)
-    hi = min(len(d1), hi)
+    outer = float(settings.outer_threshold)
+    inner = (float(settings.inner_threshold)
+             if settings.inner_threshold is not None else outer)
+    events = CurveEvents(detector=settings.detector)
+    lo = max(0, band[0])
+    hi = min(len(sigs.d1), band[1])
 
     boundaries = outer_events if outer_events is not None else find_outer_events(
-        d1, level, piezo, lo=lo, hi=hi, onset_thr=onset_thr,
-        outer_threshold=outer,
+        sigs, (lo, hi), settings.onset_thr, outer,
     )
     for boundary in boundaries:
-        onset_idx = boundary.onset_idx
-
-        # Outer-ROI RIGHT edge = the terminal's OWN d1 excursion end.  Walk right
-        # from the outer run only while d1 stays above INNER, then stop at the gap.
-        # A feature further baseline-ward that never crosses OUTER (a weak post-
-        # event bump) is separated by a d1<inner gap, so it is NOT enclosed and
-        # cannot become an event — only an OUTER crossing opens/bounds an ROI.
-        # (level's baseline return can lag far past the terminal when the tip
-        # stays partially loaded, which is why it must NOT set this edge.)
-        return_idx = boundary.terminal_run_hi
-        while return_idx + 1 < hi and d1[return_idx + 1] > inner:
-            return_idx += 1
-
-        if detector == "find_peaks":
-            ruptures = detect_ruptures_findpeaks(
-                d1, height=inner, prominence=prominence,
-                distance_pts=distance_pts, lo=onset_idx, hi=return_idx + 1,
-            )
-        else:
-            ruptures = detect_ruptures_threshold(
-                d1, threshold=inner, lo=onset_idx, hi=return_idx + 1,
-            )
-        if ruptures:
-            for r in ruptures:
-                r.piezo_nm = float(piezo[r.idx])
-            events.rois.append(ROI(
-                onset_idx=onset_idx, return_idx=return_idx,
-                onset_piezo_nm=float(piezo[onset_idx]),
-                return_piezo_nm=float(piezo[return_idx]),
-                ruptures=ruptures,
-                segments=_segments_from_ruptures(onset_idx, ruptures, piezo),
-            ))
+        roi = _roi_for_boundary(sigs, boundary, hi, inner, settings)
+        if roi is not None:
+            events.rois.append(roi)
 
     return events
 
@@ -897,24 +915,274 @@ def ramp_loading_slopes(
     return rate, rate_err, stiffness, stiffness_err, float(tau)
 
 
+# Start values for the Marko-Siggia fit: persistence length and contour length
+# (nm).  No caller overrides them.
+GUESS_L_P = 2.0
+GUESS_L_C = 120.0
+
+
+@dataclass(frozen=True)
+class SegmentCalibration:
+    """What fit_segments needs to turn deflection and piezo into force and extension."""
+    offset_retr:      float
+    invols_slope:     float
+    snapoff_piezo_nm: float
+    low_retr:         Optional[np.ndarray] = None
+
+
+@dataclass(frozen=True)
+class FitSettings:
+    """
+    The fit settings fit_segments reads; defaults are the app's stock values.
+
+    `rupture_algorithm` (a rupture_algorithms.RUPTURE_ALGORITHMS key) says how
+    each ramp's rupture is located:
+      • "low_pass_max": ramp_force_peak, as fit_segments describes.
+      • "drawdown_walk_back": drawdown_walk_back on the RAW force, with
+        walk_back_fit_widths and walk_back_noise_multiple.  Its answer becomes
+        the segment's right edge and the end of the fit.  The rupture force
+        and extension are the raw signal's values there, and the chain fit
+        and the loading slopes run on the raw signal too, so the fit does not
+        take in the corner the filter rounds at the fall.  The isoforce
+        crossing and x_max are still read off the low-pass envelope.
+      • "muggeo_segmented": muggeo_segmented on the RAW force, with
+        muggeo_fit_window_multiplier, muggeo_tolerance and muggeo_restarts;
+        its window stops at the next rupture's left crossing anywhere on the
+        curve.  Its answer is used as the walk-back's is.
+    """
+    chain_model:                  str   = "wlc"
+    rupture_algorithm:            str   = "low_pass_max"
+    walk_back_fit_widths:         int   = 3
+    walk_back_noise_multiple:     float = 5.0
+    muggeo_fit_window_multiplier: int   = 3
+    muggeo_tolerance:             float = 1e-3
+    muggeo_restarts:              bool  = True
+
+
+@dataclass(frozen=True)
+class _FitContext:
+    """The shared arrays and settings every segment of one fit_segments call reads."""
+    force:           np.ndarray   # low-pass: isoforce crossing and x_max read these
+    extension:       np.ndarray
+    point_force:     np.ndarray   # the signal the rupture point is read from
+    point_ext:       np.ndarray
+    curve:           object
+    left_crossings:  list
+    settings:        FitSettings
+
+
+def _mark_invalid_calibration(events: CurveEvents, chain_model: str) -> None:
+    for roi in events.rois:
+        for seg in roi.segments:
+            seg.chain_model = chain_model
+            seg.fit_status = "no_fit"
+            seg.fit_detail = "invalid calibration"
+
+
+def _coordinates(curve, calib: SegmentCalibration, events: CurveEvents,
+                 settings: FitSettings) -> _FitContext:
+    inv = calib.invols_slope
+    defl      = curve.defl_retr if calib.low_retr is None else calib.low_retr
+    defl_corr = (defl - calib.offset_retr) / inv
+    force     = curve.spring_constant * defl_corr
+    extension = (curve.piezo_retr - calib.snapoff_piezo_nm) - defl_corr
+
+    algorithm = RUPTURE_ALGORITHMS[settings.rupture_algorithm]
+    # The signal the rupture force and extension are read from, and the chain
+    # fit and the loading slopes run on.
+    if algorithm.raw_signal:
+        raw_corr    = (curve.defl_retr - calib.offset_retr) / inv
+        point_force = curve.spring_constant * raw_corr
+        point_ext   = (curve.piezo_retr - calib.snapoff_piezo_nm) - raw_corr
+    else:
+        point_force, point_ext = force, extension
+    # Every rupture's left crossing on the curve, in order: where a Muggeo
+    # window must stop.
+    left_crossings = sorted(r.rise_idx if r.rise_idx is not None else r.idx
+                            for roi in events.rois for r in roi.ruptures)
+    return _FitContext(force, extension, point_force, point_ext,
+                       curve,
+                       left_crossings, settings)
+
+
+def _raw_signal_rupture(seg: Segment, rup: Rupture, ctx: _FitContext):
+    s = ctx.settings
+    a = seg.left_idx
+    rise = rup.rise_idx if rup.rise_idx is not None else rup.idx
+    fall = rup.fall_idx if rup.fall_idx is not None else rup.idx
+    if s.rupture_algorithm == "drawdown_walk_back":
+        return drawdown_walk_back(
+            ctx.point_force, a, rise, fall,
+            s.walk_back_fit_widths, s.walk_back_noise_multiple,
+        )
+    later = bisect_right(ctx.left_crossings, fall)
+    window_end = (ctx.left_crossings[later] if later < len(ctx.left_crossings)
+                  else len(ctx.point_force) - 1)
+    return muggeo_segmented(
+        ctx.point_force, a, rise, fall, window_end,
+        s.muggeo_fit_window_multiplier, s.muggeo_tolerance,
+        s.muggeo_restarts,
+    )
+
+
+def _locate_rupture(seg: Segment, rup: Rupture, ctx: _FitContext) -> Optional[int]:
+    """
+    Index of this ramp's rupture under the algorithm in force, or None.  The
+    segment IS the loading ramp — its bounds came from d1 crossings (previous
+    rupture's fall edge → this rupture's rise edge), so the previous rupture's
+    snap-back decay is already excluded and NO magnitude comparison between
+    sub-regions is done.  Fit from the ramp start (index 0) to where the
+    rupture algorithm in force puts the rupture; the force there is the
+    rupture force.
+    """
+    a, b = seg.left_idx, seg.right_idx
+    if ctx.settings.rupture_algorithm in ("drawdown_walk_back", "muggeo_segmented"):
+        found = _raw_signal_rupture(seg, rup, ctx)
+        rup.point_status = found.status
+        peak_abs = found.idx
+        if peak_abs is not None:
+            # The answer is where this segment ends.
+            seg.right_idx = peak_abs
+            seg.right_piezo_nm = float(ctx.curve.piezo_retr[peak_abs])
+            seg.n_pts = peak_abs - a + 1
+            seg.edge_pinned = False
+        return peak_abs
+    peak_abs = ramp_force_peak(ctx.force, a, b)
+    if peak_abs is not None:
+        # Diagnostic, recorded for every segment that gets this far.  Nothing
+        # acts on it — it is here so a user can SEE which fits stopped at the
+        # window edge and choose to exclude them.
+        seg.edge_pinned = ramp_peak_is_edge_pinned(peak_abs, a, b)
+    return peak_abs
+
+
+def _measure_rupture(rup: Rupture, ctx: _FitContext, peak_abs: int) -> None:
+    rup.force_pN     = float(ctx.point_force[peak_abs])
+    rup.force_idx    = peak_abs
+    rup.extension_nm = float(ctx.point_ext[peak_abs])
+
+
+def _loading_slopes(seg: Segment, ctx: _FitContext, a: int, peak_abs: int) -> None:
+    """
+    How fast this rupture was loaded.  Recorded before the WLC fit is
+    attempted, so a segment whose optimiser fails still reports its loading
+    rate — the rate is a property of the pull, not of the fit.  Raw piezo, not
+    the extension axis: the stiffness returned is the whole load path's, and on
+    the deflection-corrected axis it would be the molecule's alone.
+    """
+    rate_win = ramp_slope_window(ctx.point_force, a, peak_abs,
+                                 RAMP_SLOPE_FORCE_FRAC)
+    if rate_win is not None:
+        seg.rate_lo_idx, seg.rate_hi_idx = rate_win
+        (seg.loading_rate_pN_s, seg.loading_rate_err_pN_s,
+         seg.loading_stiffness_pN_nm,
+         seg.loading_stiffness_err_pN_nm,
+         seg.rate_tau) = ramp_loading_slopes(
+            ctx.point_force, ctx.curve.piezo_retr, seg.rate_lo_idx,
+            seg.rate_hi_idx, ctx.curve.sample_rate_hz,
+        )
+
+
+def _isoforce(seg: Segment, prev_rup: Optional[Rupture], ctx: _FitContext,
+              a: int, peak_abs: int) -> None:
+    """
+    Isoforce crossing (lab convention, not a fit output): where THIS segment's
+    rising ramp first climbs back through the PREVIOUS rupture's force.
+    Fit-independent by design — computed from the loading ramp directly, same
+    region fed to the WLC fit, so a bad/failed WLC fit never takes this down
+    with it.  Read off the low-pass envelope, as x_max is.
+    """
+    if prev_rup is not None and prev_rup.force_pN is not None:
+        seg.isoforce_x_nm = _isoforce_crossing_x(
+            ctx.force[a:peak_abs + 1], ctx.extension[a:peak_abs + 1],
+            prev_rup.force_pN,
+        )
+
+
+def _apply_chain_fit(seg: Segment, x_fit: np.ndarray, F_fit: np.ndarray,
+                     chain_model: str):
+    fit = _fit_wlc_window(x_fit, F_fit, GUESS_L_P, GUESS_L_C)
+    if chain_model != "wlc":
+        start = (fit[0], fit[1]) if fit is not None else (GUESS_L_P, GUESS_L_C)
+        fit = _fit_chain_model(CHAIN_MODELS[chain_model], x_fit, F_fit, *start)
+        for name, value in (fit or {}).items():
+            setattr(seg, name, value)
+    elif fit is not None:
+        (seg.l_p_nm, seg.l_c_nm,
+         seg.l_p_err, seg.l_c_err, seg.tau) = fit
+    return fit
+
+
+def _fit_ramp(seg: Segment, ctx: _FitContext, a: int, peak_abs: int) -> None:
+    x_fit = ctx.point_ext[a:peak_abs + 1]
+    F_fit = ctx.point_force[a:peak_abs + 1]
+    mask  = x_fit > 0
+    if int(mask.sum()) < 5:
+        seg.fit_status = "no_fit"
+        seg.fit_detail = "insufficient positive extension"
+        return
+    x_fit, F_fit = x_fit[mask], F_fit[mask]
+
+    # Recorded BEFORE the fit is attempted, so a segment whose optimiser fails
+    # still reports how far the pull got.  z_max needs l_c too and is therefore
+    # None for such a segment — but x_max is a property of the data, not of the
+    # fit, and shouldn't vanish with it.
+    seg.x_max_nm = float(np.max(ctx.extension[a:peak_abs + 1]))
+
+    fit = _apply_chain_fit(seg, x_fit, F_fit, ctx.settings.chain_model)
+    if fit is not None:
+        seg.n_pts = int(mask.sum())
+        seg.fit_lo_idx = a
+        seg.fit_hi_idx = peak_abs
+        seg.fit_status = "review" if seg.edge_pinned else "fit_available"
+        seg.fit_detail = "peak at segment boundary" if seg.edge_pinned else None
+    else:
+        seg.fit_status = "no_fit"
+        seg.fit_detail = "optimizer failed"
+
+
+def _fit_segment(seg: Segment, rup: Rupture, prev_rup: Optional[Rupture],
+                 ctx: _FitContext) -> Optional[Rupture]:
+    """
+    Fit one segment.  Returns the rupture the next segment of this ROI should
+    treat as its previous one: None on a skip, so a gap in the chain is never
+    silently bridged, and `rup` once the rupture force is known — including
+    when the fit itself is then refused.
+    """
+    seg.chain_model = ctx.settings.chain_model
+    a, b = seg.left_idx, seg.right_idx
+    # Where this segment starts, on the shared extension coordinate.  Recorded
+    # before every guard below: it is a property of the data, not of the fit,
+    # so a segment too short to fit still reports it.
+    if 0 <= a < len(ctx.extension):
+        seg.left_extension_nm = float(ctx.extension[a])
+    if b - a < 5:
+        seg.fit_status = "no_fit"
+        seg.fit_detail = "insufficient segment points"
+        return None
+
+    peak_abs = _locate_rupture(seg, rup, ctx)
+    if peak_abs is None:
+        seg.fit_status = "no_fit"
+        seg.fit_detail = "no force peak"
+        return None
+    if peak_abs - a < 4:
+        seg.fit_status = "no_fit"
+        seg.fit_detail = "insufficient loading ramp"
+        return None
+
+    _measure_rupture(rup, ctx, peak_abs)
+    _loading_slopes(seg, ctx, a, peak_abs)
+    _isoforce(seg, prev_rup, ctx, a, peak_abs)
+    _fit_ramp(seg, ctx, a, peak_abs)
+    return rup
+
+
 def fit_segments(
     curve,
-    events:       CurveEvents,
-    offset_retr:  float,
-    invols_slope: float,
-    snapoff_piezo_nm: float,
-    *,
-    low_retr:  Optional[np.ndarray] = None,
-    guess_l_p: float = 2.0,
-    guess_l_c: float = 120.0,
-    ramp_force_frac: float = RAMP_SLOPE_FORCE_FRAC,
-    chain_model: str = "wlc",
-    rupture_algorithm: str = "low_pass_max",
-    walk_back_fit_widths: int = 3,
-    walk_back_noise_multiple: float = 5.0,
-    muggeo_fit_window_multiplier: int = 3,
-    muggeo_tolerance: float = 1e-3,
-    muggeo_restarts: bool = True,
+    events:   CurveEvents,
+    calib:    SegmentCalibration,
+    settings: FitSettings = FitSettings(),
 ) -> None:
     """
     Fill each Segment's `chain_model` fit and each Rupture's force_pN IN PLACE.
@@ -937,20 +1205,8 @@ def fit_segments(
       • The fit starts at the segment's left edge (the ROI onset) and ENDS at the
         force peak (argmax) — that peak IS the rupture force of the segment.
 
-    `rupture_algorithm` (a rupture_algorithms.RUPTURE_ALGORITHMS key) says how
-    each ramp's rupture is located:
-      • "low_pass_max": ramp_force_peak, as described above.
-      • "drawdown_walk_back": drawdown_walk_back on the RAW force, with
-        walk_back_fit_widths and walk_back_noise_multiple.  Its answer becomes
-        the segment's right edge and the end of the fit.  The rupture force
-        and extension are the raw signal's values there, and the chain fit
-        and the loading slopes run on the raw signal too, so the fit does not
-        take in the corner the filter rounds at the fall.  The isoforce
-        crossing and x_max are still read off the low-pass envelope.
-      • "muggeo_segmented": muggeo_segmented on the RAW force, with
-        muggeo_fit_window_multiplier, muggeo_tolerance and muggeo_restarts;
-        its window stops at the next rupture's left crossing anywhere on the
-        curve.  Its answer is used as the walk-back's is.
+    How each ramp's rupture is located is `settings.rupture_algorithm`, described
+    on FitSettings.
     Whichever it is, the answer's own account of itself is kept on
     Rupture.point_status.
 
@@ -960,176 +1216,18 @@ def fit_segments(
     fit is then refused or whose optimiser fails keeps them with None fits.
     Mutates `events`; returns None.
     """
-    if not invols_slope or not np.isfinite(invols_slope):
-        for roi in events.rois:
-            for seg in roi.segments:
-                seg.chain_model = chain_model
-                seg.fit_status = "no_fit"
-                seg.fit_detail = "invalid calibration"
+    if not calib.invols_slope or not np.isfinite(calib.invols_slope):
+        _mark_invalid_calibration(events, settings.chain_model)
         return
-    inv = invols_slope
-    defl      = curve.defl_retr if low_retr is None else low_retr
-    defl_corr = (defl - offset_retr) / inv
-    force     = curve.spring_constant * defl_corr
-    extension = (curve.piezo_retr - snapoff_piezo_nm) - defl_corr
-
-    algorithm = RUPTURE_ALGORITHMS[rupture_algorithm]
-    # The signal the rupture force and extension are read from, and the chain
-    # fit and the loading slopes run on.
-    if algorithm.raw_signal:
-        raw_corr    = (curve.defl_retr - offset_retr) / inv
-        point_force = curve.spring_constant * raw_corr
-        point_ext   = (curve.piezo_retr - snapoff_piezo_nm) - raw_corr
-    else:
-        point_force, point_ext = force, extension
-    # Every rupture's left crossing on the curve, in order: where a Muggeo
-    # window must stop.
-    left_crossings = sorted(r.rise_idx if r.rise_idx is not None else r.idx
-                            for roi in events.rois for r in roi.ruptures)
+    ctx = _coordinates(curve, calib, events, settings)
 
     for roi in events.rois:
         # segments[i] ends on ruptures[i] (see _segments_from_ruptures).  Tracks
         # the previous rupture IN THIS ROI so each segment can look up "the
-        # force I need to climb back through" for its isoforce crossing; reset
-        # to None on any skip so a gap in the chain is never silently bridged.
+        # force I need to climb back through" for its isoforce crossing.
         prev_rup: Optional[Rupture] = None
         for seg, rup in zip(roi.segments, roi.ruptures):
-            seg.chain_model = chain_model
-            a, b = seg.left_idx, seg.right_idx
-            # Where this segment starts, on the shared extension coordinate.
-            # Recorded before every guard below: it is a property of the data,
-            # not of the fit, so a segment too short to fit still reports it.
-            if 0 <= a < len(extension):
-                seg.left_extension_nm = float(extension[a])
-            if b - a < 5:
-                seg.fit_status = "no_fit"
-                seg.fit_detail = "insufficient segment points"
-                prev_rup = None
-                continue
-
-            # The segment IS the loading ramp — its bounds came from d1 crossings
-            # (previous rupture's fall edge → this rupture's rise edge), so the
-            # previous rupture's snap-back decay is already excluded and NO
-            # magnitude comparison between sub-regions is done.  Fit from the ramp
-            # start (index 0) to where the rupture algorithm in force puts the
-            # rupture; the force there is the rupture force.
-            if rupture_algorithm in ("drawdown_walk_back", "muggeo_segmented"):
-                rise = rup.rise_idx if rup.rise_idx is not None else rup.idx
-                fall = rup.fall_idx if rup.fall_idx is not None else rup.idx
-                if rupture_algorithm == "drawdown_walk_back":
-                    found = drawdown_walk_back(
-                        point_force, a, rise, fall,
-                        walk_back_fit_widths, walk_back_noise_multiple,
-                    )
-                else:
-                    later = bisect_right(left_crossings, fall)
-                    window_end = (left_crossings[later] if later < len(left_crossings)
-                                  else len(point_force) - 1)
-                    found = muggeo_segmented(
-                        point_force, a, rise, fall, window_end,
-                        muggeo_fit_window_multiplier, muggeo_tolerance,
-                        muggeo_restarts,
-                    )
-                rup.point_status = found.status
-                peak_abs = found.idx
-                if peak_abs is not None:
-                    # The answer is where this segment ends.
-                    b = peak_abs
-                    seg.right_idx = b
-                    seg.right_piezo_nm = float(curve.piezo_retr[b])
-                    seg.n_pts = b - a + 1
-                    seg.edge_pinned = False
-            else:
-                peak_abs = ramp_force_peak(force, a, b)
-                if peak_abs is not None:
-                    # Diagnostic, recorded for every segment that gets this
-                    # far.  Nothing acts on it — it is here so a user can SEE
-                    # which fits stopped at the window edge and choose to
-                    # exclude them.
-                    seg.edge_pinned = ramp_peak_is_edge_pinned(peak_abs, a, b)
-            if peak_abs is None:
-                seg.fit_status = "no_fit"
-                seg.fit_detail = "no force peak"
-                prev_rup = None
-                continue
-
-            F_slice = force[a:b + 1]
-            x_slice = extension[a:b + 1]
-            peak_rel = peak_abs - a
-            if peak_rel < 4:
-                seg.fit_status = "no_fit"
-                seg.fit_detail = "insufficient loading ramp"
-                prev_rup = None
-                continue
-
-            rup.force_pN     = float(point_force[peak_abs])
-            rup.force_idx    = peak_abs
-            rup.extension_nm = float(point_ext[peak_abs])
-
-            # How fast this rupture was loaded.  Recorded before the WLC fit is
-            # attempted, so a segment whose optimiser fails still reports its
-            # loading rate — the rate is a property of the pull, not of the fit.
-            # Raw piezo, not the extension axis: the stiffness returned is the
-            # whole load path's, and on the deflection-corrected axis it would
-            # be the molecule's alone.
-            rate_win = ramp_slope_window(point_force, a, a + peak_rel,
-                                         ramp_force_frac)
-            if rate_win is not None:
-                seg.rate_lo_idx, seg.rate_hi_idx = rate_win
-                (seg.loading_rate_pN_s, seg.loading_rate_err_pN_s,
-                 seg.loading_stiffness_pN_nm,
-                 seg.loading_stiffness_err_pN_nm,
-                 seg.rate_tau) = ramp_loading_slopes(
-                    point_force, curve.piezo_retr, seg.rate_lo_idx,
-                    seg.rate_hi_idx, curve.sample_rate_hz,
-                )
-
-            # Isoforce crossing (lab convention, not a fit output): where THIS
-            # segment's rising ramp first climbs back through the PREVIOUS
-            # rupture's force.  Fit-independent by design — computed from the
-            # loading ramp directly, same region fed to the WLC fit below, so a
-            # bad/failed WLC fit never takes this down with it.
-            if prev_rup is not None and prev_rup.force_pN is not None:
-                seg.isoforce_x_nm = _isoforce_crossing_x(
-                    F_slice[:peak_rel + 1], x_slice[:peak_rel + 1], prev_rup.force_pN,
-                )
-
-            x_fit = point_ext[a:peak_abs + 1]
-            F_fit = point_force[a:peak_abs + 1]
-            mask  = x_fit > 0
-            if int(mask.sum()) < 5:
-                seg.fit_status = "no_fit"
-                seg.fit_detail = "insufficient positive extension"
-                prev_rup = rup
-                continue
-            x_fit, F_fit = x_fit[mask], F_fit[mask]
-
-            # Recorded BEFORE the fit is attempted, so a segment whose optimiser
-            # fails still reports how far the pull got.  z_max needs l_c
-            # too and is therefore None for such a segment — but x_max is a
-            # property of the data, not of the fit, and shouldn't vanish with it.
-            seg.x_max_nm = float(np.max(x_slice[:peak_rel + 1]))
-
-            fit = _fit_wlc_window(x_fit, F_fit, guess_l_p, guess_l_c)
-            if chain_model != "wlc":
-                start = (fit[0], fit[1]) if fit is not None else (guess_l_p, guess_l_c)
-                fit = _fit_chain_model(CHAIN_MODELS[chain_model], x_fit, F_fit, *start)
-                for name, value in (fit or {}).items():
-                    setattr(seg, name, value)
-            elif fit is not None:
-                (seg.l_p_nm, seg.l_c_nm,
-                 seg.l_p_err, seg.l_c_err, seg.tau) = fit
-            if fit is not None:
-                seg.n_pts = int(mask.sum())
-                seg.fit_lo_idx = a
-                seg.fit_hi_idx = a + peak_rel
-                seg.fit_status = "review" if seg.edge_pinned else "fit_available"
-                seg.fit_detail = "peak at segment boundary" if seg.edge_pinned else None
-            else:
-                seg.fit_status = "no_fit"
-                seg.fit_detail = "optimizer failed"
-
-            prev_rup = rup
+            prev_rup = _fit_segment(seg, rup, prev_rup, ctx)
 
 
 def _isoforce_crossing_x(
@@ -1280,7 +1378,7 @@ def _fit_wlc_window(
         popt, pcov = fit_model(
             wlc, x, F, p0=[guess_l_p, lc_guess], bounds=bounds
         )
-    except Exception:
+    except (RuntimeError, ValueError):
         return None
     perr = np.sqrt(np.diag(pcov))
     tau  = integrated_autocorr_time(F - wlc(x, *popt))
@@ -1331,7 +1429,7 @@ def _fit_chain_model(
 
     try:
         popt, pcov = fit_model(force, x, F, p0=np.clip(p0, lo, hi), bounds=(lo, hi))
-    except Exception:
+    except (RuntimeError, ValueError):
         return None
     resid = F - force(x, *popt)
     if not (np.all(np.isfinite(popt)) and np.all(np.isfinite(resid))):

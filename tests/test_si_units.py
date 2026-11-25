@@ -203,8 +203,6 @@ def test_typeset_constants_never_label_a_line_or_text_item():
     are correct for axis labels and titles and wrong here; the plain twins
     beside them are for this.
     """
-    from smfs_catalog import style
-
     typeset = {"L_P", "L_C", "F_STAR", "X_STAR", "X_TILDE",
                "DELTA_X", "DELTA_F", "FORCE", "EXTENSION"}
     bad = []

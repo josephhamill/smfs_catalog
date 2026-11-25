@@ -13,7 +13,6 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QSpinBox,
-    QHBoxLayout,
     QLabel,
     QSizePolicy,
     QSlider,
@@ -23,12 +22,8 @@ from PyQt6.QtWidgets import (
 
 from .curve_loader import ForceCurve, load_force_curve
 from . import db as _db
-from . import quantities as _quant
-# Top-level, unlike this module's other signal_processing uses: the verdict is a
-# pure comparison with no Qt or db dependency, and it is needed while building
-# the UI, before any curve has been loaded.
-from . import signal_processing as _sp
 from .bandwidth_warning import filter_bandwidth_warning
+from . import quantities as _quant
 from .quantities import format_value as _q   # ONE formatter: unit and
 # meaningful digits come from quantities.py, so the same measurement
 # cannot print as 166, 166.2 and 166.20 in three different windows.
@@ -41,8 +36,10 @@ from . import style
 from .qt_utils import (
     _make_session_header,
     fit_on_screen,
+    report_handled,
     set_si_label,
     shrinkable,
+    signals_blocked,
 )
 
 _COLOR_CONTACT = style.LM_CONTACT
@@ -86,9 +83,8 @@ def _seed_threshold_box(spin, key: str, stored_nm2: float) -> None:
     """
     shown = _to_shown(stored_nm2)
     _quant.configure_spinbox(spin, key, decimals=_quant.decimals_for(key, shown))
-    spin.blockSignals(True)
-    spin.setValue(shown)
-    spin.blockSignals(False)
+    with signals_blocked(spin):
+        spin.setValue(shown)
 
 
 # ── Decomposition window ──────────────────────────────────────────────────────
@@ -127,6 +123,7 @@ class DecompositionWindow(QWidget):
         # file's watched directory (see the profile section further down).
         self._experimentalist = experimentalist
         self._owner_synced = False   # force a profile load on the first curve
+        self._owner_error: str | None = None
         self._owner_dir_cache: dict[str, str | None] = {}
         self._worker       = worker
         self._nav          = None   # WorkerNavBar, built below in worker mode
@@ -562,15 +559,14 @@ class DecompositionWindow(QWidget):
         QSlider, not assumed — the test does the same.
         """
         def _set_reach(max_index: int, enabled: bool) -> None:
-            self._cutoff_slider.blockSignals(True)
-            self._cutoff_slider.setMaximum(max_index)
-            # Re-seat the handle under the value in force.  Qt has already
-            # clamped it if it had to; this makes the position derive from
-            # self._cutoff_hz as it does everywhere else, rather than from
-            # whatever the clamp happened to leave behind.
-            self._cutoff_slider.setValue(
-                min(self._cutoff_index(self._cutoff_hz), max_index))
-            self._cutoff_slider.blockSignals(False)
+            with signals_blocked(self._cutoff_slider):
+                self._cutoff_slider.setMaximum(max_index)
+                # Re-seat the handle under the value in force.  Qt has already
+                # clamped it if it had to; this makes the position derive from
+                # self._cutoff_hz as it does everywhere else, rather than from
+                # whatever the clamp happened to leave behind.
+                self._cutoff_slider.setValue(
+                    min(self._cutoff_index(self._cutoff_hz), max_index))
             self._cutoff_slider.setEnabled(enabled)
 
         curve = self._current_curve
@@ -708,9 +704,8 @@ class DecompositionWindow(QWidget):
         # raw mouse positions to the database.
         new_val = int(_quant.quantize('turnaround_trim_pts', new_val))
         # Block spinbox signal to avoid double-emit; set lines directly then emit once
-        self._trim_spinbox.blockSignals(True)
-        self._trim_spinbox.setValue(new_val)
-        self._trim_spinbox.blockSignals(False)
+        with signals_blocked(self._trim_spinbox):
+            self._trim_spinbox.setValue(new_val)
         self._trim_pts = new_val
         _db.update_analysis_param('turnaround_trim_pts', float(new_val), self._db_path)
         # Mirror the other line
@@ -781,9 +776,8 @@ class DecompositionWindow(QWidget):
             self._thresh_retr_val = new_thresh_nm2
         _db.update_analysis_param(key, new_thresh_nm2, self._db_path)
 
-        spinbox.blockSignals(True)
-        spinbox.setValue(new_thresh_shown)
-        spinbox.blockSignals(False)
+        with signals_blocked(spinbox):
+            spinbox.setValue(new_thresh_shown)
 
         self._save_user_profile()
         if self._current_curve is not None:
@@ -832,9 +826,8 @@ class DecompositionWindow(QWidget):
         anchor_nm   = max(1.0, anchor_nm)   # the box's whole-nanometre floor
 
         self._anchor_nm = anchor_nm
-        self._anchor_spinbox.blockSignals(True)
-        self._anchor_spinbox.setValue(int(round(anchor_nm)))
-        self._anchor_spinbox.blockSignals(False)
+        with signals_blocked(self._anchor_spinbox):
+            self._anchor_spinbox.setValue(int(round(anchor_nm)))
 
         # Snap line to the integer-rounded spinbox value
         frac     = min(self._anchor_nm / retr_range, 1.0) if retr_range > 0 else 0.15
@@ -872,8 +865,13 @@ class DecompositionWindow(QWidget):
         """
         try:
             owner = _db.active_param_owner(self._db_path)
-        except Exception:
+        except Exception as exc:
+            def show(text):
+                self._owner_error = text
+                self._context_label.setText(text)
+            report_handled(show, "Parameter owner lookup", exc)
             return
+        self._owner_error = None
         if self._owner_synced and owner == self._experimentalist:
             return
         self._owner_synced = True
@@ -912,9 +910,8 @@ class DecompositionWindow(QWidget):
         self._invols_offset_pts = int(_f("invols_offset_pts", self._invols_offset_pts))
         self._invols_window_pts = int(_f("invols_window_pts", self._invols_window_pts))
 
-        self._cutoff_slider.blockSignals(True)
-        self._cutoff_slider.setValue(self._cutoff_index(self._cutoff_hz))
-        self._cutoff_slider.blockSignals(False)
+        with signals_blocked(self._cutoff_slider):
+            self._cutoff_slider.setValue(self._cutoff_index(self._cutoff_hz))
         self._cutoff_label.setText(self._cutoff_text())
         self._refresh_tau_hint()
         for w, val in (
@@ -924,9 +921,8 @@ class DecompositionWindow(QWidget):
             (self._invols_offset_spinbox, self._invols_offset_pts),
             (self._invols_window_spinbox, self._invols_window_pts),
         ):
-            w.blockSignals(True)
-            w.setValue(val)
-            w.blockSignals(False)
+            with signals_blocked(w):
+                w.setValue(val)
 
         # The two thresholds are seeded separately: they need their box
         # widened to whatever the reloaded profile actually holds before the
@@ -987,8 +983,9 @@ class DecompositionWindow(QWidget):
         try:
             from .signal_processing import decompose_curve, _moving_variance, _ms_to_pts
             dc = decompose_curve(curve, cutoff_hz=float(self._cutoff_hz))
-        except Exception:
+        except Exception as exc:
             self._clear()
+            report_handled(self._context_label.setText, "Decomposition", exc)
             return
 
         n_appr        = len(dc.low_appr)
@@ -1026,7 +1023,7 @@ class DecompositionWindow(QWidget):
         # own, unconditionally, whenever it can identify the file.
         try:
             from dataclasses import replace
-            from .curve_analysis import analyse_curve, pipeline_params_from
+            from .curve_analysis import CacheContext, analyse_curve, pipeline_params_from
             snapshot = _db.load_analysis_params(self._db_path)
             preview = replace(
                 snapshot,
@@ -1043,10 +1040,11 @@ class DecompositionWindow(QWidget):
             file_id = _db.get_file_id(curve.path, self._db_path)
             result, stage1 = analyse_curve(
                 curve, live_params,
-                db_path=self._db_path, code_ver=cache_version(), file_id=file_id,
+                cache=CacheContext(self._db_path, cache_version(), file_id, None),
             )
-        except Exception:
+        except Exception as exc:
             result, stage1 = None, None
+            report_handled(self._context_label.setText, "Curve analysis", exc)
 
         # ── Contact detection — marker positions ───────────────────────────────
         if result is not None and not np.isnan(result.contact_z) and not np.isnan(result.snapoff_z):
@@ -1145,10 +1143,14 @@ class DecompositionWindow(QWidget):
         self._sync_profile_owner(path)
         try:
             curve = load_force_curve(path)
-        except Exception:
+        except Exception as exc:
             self._clear()
+            report_handled(self._context_label.setText, "Loading curve", exc)
             return
         self.update_curve(curve)
+        owner_error = getattr(self, "_owner_error", None)
+        if owner_error:
+            self._context_label.setText(owner_error)
 
     def _on_nav_curve_cleared(self) -> None:
         """The displayed curve left the queue — show nothing rather than it."""

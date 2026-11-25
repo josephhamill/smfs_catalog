@@ -91,7 +91,7 @@ from . import regression as _reg
 from . import variables as _vars
 from .roi_events import LOADING_SLOPE_NOTE
 from .widgets import ClusterColourBar, FlowLayout, LabeledControl, VariableCombo
-from .qt_utils import _DateAxis, _make_session_header, set_si_label, fit_on_screen
+from .qt_utils import _DateAxis, _make_session_header, set_si_label, fit_on_screen, report_handled, signals_blocked
 from .quantities import format_value as _q   # ONE formatter: unit and
 # meaningful digits come from quantities.py, so the same measurement
 # cannot print as 166, 166.2 and 166.20 in three different windows.
@@ -1156,18 +1156,17 @@ class EventSummaryWindow(QMainWindow):
         if self._selected_index is not None and 0 <= self._selected_index < len(self._results):
             prev_path = self._results[self._selected_index].get("path")
 
-        self._event_list.blockSignals(True)
-        self._event_list.clear()
-        restore_row = -1
-        for row, i in enumerate(idx_v):
-            path = self._results[int(i)].get("path") or ""
-            tag  = "hit" if self._hit_mask[int(i)] else "non-hit"
-            item = QListWidgetItem(f"{Path(path).name}  [{tag}]")
-            item.setData(Qt.ItemDataRole.UserRole, int(i))
-            self._event_list.addItem(item)
-            if path and path == prev_path:
-                restore_row = row
-        self._event_list.blockSignals(False)
+        with signals_blocked(self._event_list):
+            self._event_list.clear()
+            restore_row = -1
+            for row, i in enumerate(idx_v):
+                path = self._results[int(i)].get("path") or ""
+                tag  = "hit" if self._hit_mask[int(i)] else "non-hit"
+                item = QListWidgetItem(f"{Path(path).name}  [{tag}]")
+                item.setData(Qt.ItemDataRole.UserRole, int(i))
+                self._event_list.addItem(item)
+                if path and path == prev_path:
+                    restore_row = row
 
         if restore_row >= 0:
             self._event_list.setCurrentRow(restore_row)
@@ -1200,12 +1199,11 @@ class EventSummaryWindow(QMainWindow):
         self._update_sel_marker()
         self._update_sel_readout()
         if not from_list:
-            self._event_list.blockSignals(True)
-            for row in range(self._event_list.count()):
-                if self._event_list.item(row).data(Qt.ItemDataRole.UserRole) == i:
-                    self._event_list.setCurrentRow(row)
-                    break
-            self._event_list.blockSignals(False)
+            with signals_blocked(self._event_list):
+                for row in range(self._event_list.count()):
+                    if self._event_list.item(row).data(Qt.ItemDataRole.UserRole) == i:
+                        self._event_list.setCurrentRow(row)
+                        break
 
     def _update_sel_marker(self) -> None:
         i = self._selected_index
@@ -1791,8 +1789,9 @@ class EventSummaryWindow(QMainWindow):
                     continue
                 try:
                     who = _db.get_experimentalist_for_file(path, self._db_path)
-                except Exception:
+                except Exception as exc:
                     who = None
+                    report_handled(self._warn_label.setText, "Experimentalist lookup", exc)
                 if who:
                     self._experimentalist = who
                 break

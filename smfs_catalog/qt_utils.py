@@ -21,9 +21,11 @@ from PyQt6.QtWidgets import (
     QApplication, QLabel, QProgressDialog, QScrollArea, QSizePolicy, QWidget,
 )
 
+from contextlib import contextmanager
 import datetime
 import pyqtgraph as pg
 
+from . import crashlog
 from .style import (
     _COLOR_MUTED,
     FONT_CAPTION_PT,
@@ -32,6 +34,23 @@ from .style import (
 # ── Small UI constants ────────────────────────────────────────────────────────
 
 _SMALL_FONT_PT = FONT_CAPTION_PT
+
+
+def report_handled(show, context: str, exc: BaseException) -> None:
+    """Log a caught exception to the crash log, then show a one-line summary via `show`."""
+    crashlog.log_handled(context, exc)
+    show(f"{context} failed: {type(exc).__name__}: {str(exc)[:120]}")
+
+
+@contextmanager
+def signals_blocked(*widgets):
+    """Block signals on each widget for the `with` body and restore each one's previous state."""
+    prev = [w.blockSignals(True) for w in widgets]
+    try:
+        yield
+    finally:
+        for w, p in zip(widgets, prev):
+            w.blockSignals(p)
 
 
 class FixedDomainPlot(pg.PlotWidget):
@@ -357,6 +376,7 @@ class _DateAxis(pg.AxisItem):
         pass  # never rescale — timestamps are not physical quantities
 
     def tickStrings(self, values, scale, spacing):
+        """Return each timestamp tick as a date/time string, with the format coarsened as tick spacing grows."""
         # spacing is in the same units as values (seconds), regardless of scale
         if not values:
             return []

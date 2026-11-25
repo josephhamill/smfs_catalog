@@ -48,6 +48,7 @@ KEEP = [
 
 
 def main(old: str, new: str) -> None:
+    """Write a new database at `new` with `old`'s schema and only the source-of-truth tables' rows, reset each file's event and hit verdict to NULL, then VACUUM it."""
     if not os.path.exists(old):
         raise SystemExit(f"Source DB not found: {old}")
     if os.path.exists(new):

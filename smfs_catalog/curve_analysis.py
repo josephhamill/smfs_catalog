@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from types import SimpleNamespace
+from typing import NamedTuple
 
 import numpy as np
 
@@ -164,6 +164,16 @@ def pipeline_params_from(
 
 
 @dataclass(frozen=True)
+class CacheContext:
+    """Cache identity for analyse_curve / compute_curve_events; param_set only gates scalar-cache reads and writes."""
+    db_path: str | None
+    code_ver: str | None
+    file_id: int | None
+    conn: object
+    param_set: AnalysisParams | None = None
+
+
+@dataclass(frozen=True)
 class Stage1Search:
     """
     Intermediate ROI-search state from analyse_curve, returned alongside
@@ -244,14 +254,381 @@ class CurveResult:
         return "event" if self.event else "non_event"
 
 
+_NAN = float("nan")
+
+# baseline_r2 is deliberately absent. R² reads near 0 on a good flat,
+# undriven baseline because a flat anchor region has little variance for a
+# line to explain, so the usual "near 1 is good" reading is backwards.
+# baseline_rms is the real fit-quality signal.
+_BL_KEYS = ("offset_retr", "flatness_slope", "baseline_intercept",
+            "baseline_rms", "baseline_fit_lo_idx", "baseline_fit_hi_idx")
+# invols_r2 deliberately absent — same reason as baseline_r2.
+_IOL_KEYS = ("invols_slope", "invols_intercept",
+             "invols_rms", "invols_fit_lo_idx", "invols_fit_hi_idx")
+
+
+class _Baseline(NamedTuple):
+    offset: float
+    flatness: float
+    intercept: float
+    rms: float
+    fit_lo_idx: int
+    fit_hi_idx: int
+
+
+class _Invols(NamedTuple):
+    slope: float
+    intercept: float
+    rms: float
+    fit_lo_idx: int
+    fit_hi_idx: int
+    dc: object | None
+
+
+class _Contact(NamedTuple):
+    contact_z: float
+    snapoff_z: float
+    snap_idx: int | None
+    dc: object | None
+
+
+class _Roi(NamedTuple):
+    rupture_z: float
+    onset_z: float
+    rup_idx: int | None
+    ons_idx: int | None
+    sigs: object | None
+    mask_postsnap_idx: int | None
+    mask_anchor_idx: int | None
+    outer_events: object | None
+    dc: object | None
+
+
+# Cache write policy for analyse_curve (optional — only when the CacheContext
+# carries db_path, code_ver and file_id): each stage reads its values back and
+# writes whatever it computes fresh (see the stage helpers for what is gated
+# on an event verdict). There is no way for a caller to compute a value there
+# and have it silently not saved. If two legitimate analysis producers compute
+# the same value around the same time, the write is a replace rather than an
+# append, so a redundant write remains safe. Display-only windows must read
+# these results instead of becoming additional analysis producers.
+def can_use_cache(cache: CacheContext | None) -> bool:
+    """The one rule for when a CacheContext may be read or written: it exists and db_path, code_ver and file_id are all set."""
+    return (cache is not None and cache.db_path is not None
+            and cache.code_ver is not None and cache.file_id is not None)
+
+
+def cache_get(cache: CacheContext | None, atype: str, params: str):
+    """Read one stored scalar analysis result for the cache's file; returns None when can_use_cache is false."""
+    if not can_use_cache(cache):
+        return None
+    return _db.get_analysis_result(cache.file_id, atype, params, cache.code_ver,
+                                  cache.db_path, conn=cache.conn)
+
+
+def _cache_put(cache: CacheContext | None, atype: str, value: float, params: str) -> None:
+    if can_use_cache(cache):
+        _db.write_analysis_result(cache.file_id, atype, value, params, cache.code_ver,
+                                  cache.db_path, conn=cache.conn)
+
+
+def _cache_get_multi(cache: CacheContext | None, atypes, params: str) -> dict:
+    if not can_use_cache(cache):
+        return {}
+    return _db.get_analysis_results_multi(cache.file_id, atypes, params, cache.code_ver,
+                                         cache.db_path, conn=cache.conn)
+
+
+def cache_put_multi(cache: CacheContext | None, values: dict, params: str) -> None:
+    """Write several scalar analysis results for the cache's file in one call; does nothing when can_use_cache is false."""
+    if can_use_cache(cache):
+        _db.write_analysis_results_multi(cache.file_id, values, params, cache.code_ver,
+                                        cache.db_path, conn=cache.conn)
+
+
+def _non_event(offset=_NAN, flatness=_NAN, contact_z=_NAN, snapoff_z=_NAN,
+               invols_slope=_NAN) -> CurveResult:
+    # rupture/onset stay NaN — a non_event has no ROI landmarks by
+    # definition. invols_slope is NOT part of that gate: it's an
+    # approach-only calibration fit, known regardless of event status once
+    # we've reached this point, so it's passed through rather than blanked.
+    return CurveResult(
+        event=False, offset=offset, flatness=flatness,
+        contact_z=contact_z, snapoff_z=snapoff_z,
+        rupture_z=_NAN, onset_z=_NAN, invols_slope=invols_slope,
+    )
+
+
+def _attr(stage, name: str):
+    return getattr(stage, name) if stage is not None else None
+
+
+def _stage1_search(bl: _Baseline, iol, ct, roi, dc) -> Stage1Search:
+    """
+    Stage1Search from the final stage results; a stage the call never reached
+    is None and leaves its fields None. `dc` is whichever DecomposedCurve the
+    call last held (see _contact_stage for why it can be replaced).
+    """
+    slope = _attr(iol, "slope")
+    return Stage1Search(
+        dc=dc, offset=(bl.offset if not np.isnan(bl.offset) else None),
+        snapoff_idx=_attr(ct, "snap_idx"), sigs=_attr(roi, "sigs"),
+        mask_postsnap_idx=_attr(roi, "mask_postsnap_idx"),
+        mask_anchor_idx=_attr(roi, "mask_anchor_idx"),
+        rupture_idx=_attr(roi, "rup_idx"), onset_idx=_attr(roi, "ons_idx"),
+        invols_slope=(None if slope is None or np.isnan(slope) else slope),
+        outer_events=_attr(roi, "outer_events"),
+        invols_intercept=_attr(iol, "intercept"),
+        invols_rms=_attr(iol, "rms"),
+        baseline_intercept=bl.intercept,
+        baseline_rms=bl.rms,
+        baseline_fit_lo_idx=bl.fit_lo_idx,
+        baseline_fit_hi_idx=bl.fit_hi_idx,
+        invols_fit_lo_idx=_attr(iol, "fit_lo_idx"),
+        invols_fit_hi_idx=_attr(iol, "fit_hi_idx"),
+    )
+
+
+def _fit_baseline(curve, p) -> _Baseline:
+    try:
+        from .signal_processing import fit_retract_baseline
+        bl = fit_retract_baseline(curve, float(p.anchor_nm))
+        return _Baseline(bl.offset, bl.slope, bl.intercept, bl.rms,
+                         bl.fit_lo_idx, bl.fit_hi_idx)
+    except Exception as exc:
+        raise CurveAnalysisError("retract baseline", exc) from exc
+
+
+def _baseline_stage(curve, p, cache: CacheContext | None) -> _Baseline:
+    """
+    Retract baseline (params_bl): offset/flatness plus the QC diagnostics,
+    read from the cache or fitted and, when the offset is finite, written back.
+    Always read/written for every curve, event or not.
+    """
+    cached = _cache_get_multi(cache, _BL_KEYS, p.params_bl)   # one round-trip, not six
+    # Require ALL SIX rows, not just offset/flatness: a row holding only those
+    # two would register as a permanent cache hit and never backfill the
+    # diagnostic fields. Recomputing here is cheap — a small polyfit over the
+    # anchor window, not a curve reload/decompose.
+    if all(k in cached for k in _BL_KEYS):
+        return _Baseline(
+            float(cached["offset_retr"]), float(cached["flatness_slope"]),
+            float(cached["baseline_intercept"]), float(cached["baseline_rms"]),
+            int(cached["baseline_fit_lo_idx"]), int(cached["baseline_fit_hi_idx"]),
+        )
+    bl = _fit_baseline(curve, p)
+    if not np.isnan(bl.offset):
+        cache_put_multi(cache, {
+            "offset_retr":         bl.offset,
+            "flatness_slope":      bl.flatness,
+            "baseline_intercept":  float(bl.intercept),
+            "baseline_rms":        float(bl.rms),
+            "baseline_fit_lo_idx": float(bl.fit_lo_idx),
+            "baseline_fit_hi_idx": float(bl.fit_hi_idx),
+        }, p.params_bl)
+    return bl
+
+
+def _fit_invols(curve, p) -> _Invols:
+    from .signal_processing import decompose_curve, fit_approach_invols
+    try:
+        dc = decompose_curve(curve, cutoff_hz=float(p.cutoff_hz))
+        fit = fit_approach_invols(
+            dc.low_appr, curve.piezo_appr, p.invols_offset_pts, p.invols_window_pts,
+        )
+        out = _Invols(fit.slope, fit.intercept, fit.rms,
+                      fit.fit_lo_idx, fit.fit_hi_idx, dc)
+    except Exception as exc:
+        raise CurveAnalysisError("approach invOLS", exc) from exc
+    if np.isnan(out.slope):
+        raise CurveAnalysisError(
+            "approach invOLS",
+            ValueError("fit window is degenerate; no calibration slope was produced"),
+        )
+    return out
+
+
+def _invols_stage(curve, p, cache: CacheContext | None) -> _Invols:
+    """
+    invOLS fit (params_invols). Approach-only (curve.piezo_appr / the
+    decomposed low-frequency approach channel) — independent of the retract
+    baseline and of whether this curve turns out to hold a validated rupture.
+    Computed and stored for every curve that gets this far, event or not: it
+    is a calibration fit, unlike the event-only landmarks, which are gated on
+    a validated event. `dc` is set only when this call decomposed the curve.
+    """
+    cached = _cache_get_multi(cache, _IOL_KEYS, p.params_invols)   # one round-trip
+    # Same completeness requirement as the baseline: a bare invols_slope row
+    # cached before the diagnostic fields existed would otherwise be a
+    # permanent cache hit that never backfills them.
+    if all(k in cached for k in _IOL_KEYS):
+        return _Invols(
+            float(cached["invols_slope"]), float(cached["invols_intercept"]),
+            float(cached["invols_rms"]), int(cached["invols_fit_lo_idx"]),
+            int(cached["invols_fit_hi_idx"]), None,
+        )
+    iol = _fit_invols(curve, p)
+    cache_put_multi(cache, {
+        "invols_slope":      float(iol.slope),
+        "invols_intercept":  float(iol.intercept),
+        "invols_rms":        float(iol.rms),
+        "invols_fit_lo_idx": float(iol.fit_lo_idx),
+        "invols_fit_hi_idx": float(iol.fit_hi_idx),
+    }, p.params_invols)
+    return iol
+
+
+def _fit_contact(curve, p) -> _Contact:
+    from .signal_processing import (
+        decompose_curve, find_begin_in_contact, find_end_in_contact,
+    )
+    try:
+        dc = decompose_curve(curve, cutoff_hz=float(p.cutoff_hz))
+        ci, _ = find_begin_in_contact(
+            dc, var_window_ms=float(p.var_window_ms),
+            threshold=float(p.thresh_appr), trim_pts=p.trim_pts,
+        )
+        si, _ = find_end_in_contact(
+            dc, var_window_ms=float(p.var_window_ms),
+            threshold=float(p.thresh_retr), trim_pts=p.trim_pts,
+        )
+        return _Contact(float(curve.piezo_appr[ci]), float(curve.piezo_retr[si]), si, dc)
+    except Exception as exc:
+        raise CurveAnalysisError("contact/snap-off detection", exc) from exc
+
+
+def _contact_stage(curve, p, cache: CacheContext | None, dc) -> _Contact:
+    """
+    Contact/snap-off (params_cd), likewise always read/written. `dc` is the
+    DecomposedCurve the invOLS stage may already hold; it is passed through on
+    a cache hit.
+
+    A cache miss re-decomposes even when `dc` is already set, so the returned
+    DecomposedCurve is a new object (Stage1Search.dc identity changes). This
+    is long-standing behaviour and is deliberately preserved.
+    """
+    contact_z = cache_get(cache, "contact_piezo_nm", p.params_cd)
+    snapoff_z = cache_get(cache, "snapoff_piezo_nm", p.params_cd)
+    if contact_z is None or snapoff_z is None:
+        ct = _fit_contact(curve, p)
+        if not np.isnan(ct.contact_z):
+            _cache_put(cache, "contact_piezo_nm", ct.contact_z, p.params_cd)
+            _cache_put(cache, "snapoff_piezo_nm", ct.snapoff_z, p.params_cd)
+            if ct.snap_idx is not None:
+                _cache_put(cache, "snapoff_idx", float(ct.snap_idx), p.params_cd)
+        return ct
+    # Values hit cache, but the INDEX wasn't necessarily remembered from a
+    # prior pass — recover it so the ROI stage doesn't have to re-run
+    # find_end_in_contact just to get back an index we already have.
+    snap_idx = cache_get(cache, "snapoff_idx", p.params_cd)
+    return _Contact(float(contact_z), float(snapoff_z),
+                    None if snap_idx is None else int(snap_idx), dc)
+
+
+def _fresh_roi(curve, p, offset: float, snap_idx: int | None, dc) -> _Roi:
+    from .signal_processing import decompose_curve, find_end_in_contact
+    from .roi_detection import compute_detection_signals, rupture_search_bounds
+    from .roi_events import find_outer_events
+    try:
+        if dc is None:
+            dc = decompose_curve(curve, cutoff_hz=float(p.cutoff_hz))
+        if snap_idx is not None:
+            si_roi = snap_idx
+        else:
+            si_roi, _ = find_end_in_contact(
+                dc, var_window_ms=float(p.var_window_ms),
+                threshold=float(p.thresh_retr), trim_pts=p.trim_pts,
+            )
+        low_corr = dc.low_retr - offset
+        sigs = compute_detection_signals(
+            low_retr   = low_corr,
+            piezo_retr = curve.piezo_retr,
+            window_pts = p.roi_win_pts,
+        )
+        lo_band, hi_band = rupture_search_bounds(
+            sigs.piezo, si_roi, float(p.anchor_nm), p.roi_post_mask,
+        )
+        outer_events = find_outer_events(
+            sigs, (lo_band, hi_band), p.roi_onset_thr, p.roi_d1_thr,
+        )
+        rup_idx = ons_idx = None
+        rupture_z = onset_z = _NAN
+        # Scalar compatibility fields describe the right-most validated
+        # outer event. Inner segmentation later consumes this exact list.
+        if outer_events:
+            primary_outer = outer_events[-1]
+            rup_idx = primary_outer.terminal_idx
+            ons_idx = primary_outer.onset_idx
+            rupture_z = float(sigs.piezo[rup_idx])
+            onset_z = float(sigs.piezo[ons_idx])
+        return _Roi(rupture_z, onset_z, rup_idx, ons_idx, sigs,
+                    lo_band, hi_band, outer_events, dc)
+    except Exception as exc:
+        raise CurveAnalysisError("ROI landmark detection", exc) from exc
+
+
+def _roi_stage(curve, p, cache: CacheContext | None, offset: float, ct: _Contact) -> _Roi:
+    """
+    ROI search (params_roi): rupture/onset are read back to skip recompute, but
+    only WRITTEN for a validated event (see _landmark_stage). Fresh rupture/
+    onset are not persisted here; invOLS was persisted independently, and
+    force belongs to downstream per-segment characterization and is never
+    computed here.
+    """
+    rupture_z = cache_get(cache, "rupture_piezo_nm", p.params_roi)
+    onset_z   = cache_get(cache, "onset_piezo_nm",   p.params_roi)
+    if rupture_z is None or onset_z is None:
+        return _fresh_roi(curve, p, offset, ct.snap_idx, ct.dc)
+    # Same recovery as snap-off: the piezo-nm values hit cache, but pull the
+    # indices back too so same-pass multi-event characterization does not have
+    # to re-derive them from the curve.
+    rup_idx = cache_get(cache, "rupture_idx", p.params_roi)
+    ons_idx = cache_get(cache, "onset_idx",   p.params_roi)
+    return _Roi(float(rupture_z), float(onset_z),
+                None if rup_idx is None else int(rup_idx),
+                None if ons_idx is None else int(ons_idx),
+                None, None, None, None, ct.dc)
+
+
+def _landmarks_valid(roi: _Roi, snapoff_z: float) -> bool:
+    # Rupture and onset must both exist, and the rupture must lie after
+    # snap-off in piezo space.
+    return not (np.isnan(roi.rupture_z) or np.isnan(roi.onset_z)
+                or (roi.rupture_z - snapoff_z) <= 0)
+
+
+def _landmark_stage(curve, p, cache: CacheContext | None, roi: _Roi) -> _Roi:
+    """
+    Persist a validated event's landmarks and return `roi` with both indices
+    filled in. An event is defined by landmarks alone: baseline OK, snap-off
+    found, both ROI landmarks found, rupture after snap-off (_landmarks_valid);
+    there is no separate force condition. invols_slope is NOT written here — it
+    was already written by the invOLS stage, unconditionally, because it isn't
+    gated by event status.
+    """
+    # rup_idx/ons_idx may still be None if rupture_z/onset_z hit cache but
+    # their index counterparts predate index caching — recover them from the
+    # piezo-nm values so the backfill below still runs.
+    rup_idx, ons_idx = roi.rup_idx, roi.ons_idx
+    if rup_idx is None:
+        rup_idx = int(np.argmin(np.abs(curve.piezo_retr - roi.rupture_z)))
+    if ons_idx is None:
+        ons_idx = int(np.argmin(np.abs(curve.piezo_retr - roi.onset_z)))
+    _cache_put(cache, "rupture_piezo_nm", float(roi.rupture_z), p.params_roi)
+    _cache_put(cache, "onset_piezo_nm",   float(roi.onset_z),   p.params_roi)
+    # Indices alongside their piezo-nm counterparts, so a later pass (this
+    # curve's own multi-event enrichment, the ROI viewer, a batch backfill) can
+    # read the landmark position back without re-searching for it.
+    _cache_put(cache, "rupture_idx", float(rup_idx), p.params_roi)
+    _cache_put(cache, "onset_idx",   float(ons_idx), p.params_roi)
+    return roi._replace(rup_idx=rup_idx, ons_idx=ons_idx)
+
+
 def analyse_curve(
     curve,
-    p:        _PipelineParams,
+    p:     _PipelineParams,
     *,
-    db_path:  str | None = None,
-    code_ver: str | None = None,
-    file_id:  int | None = None,
-    conn=None,
+    cache: CacheContext | None = None,
 ) -> tuple[CurveResult, Stage1Search]:
     """
     THE single implementation of the landmark + verdict physics.
@@ -271,343 +648,29 @@ def analyse_curve(
     computed per segment downstream by the segmentation stage
     (roi_events.fit_segments, reached via _persist_multi_event_roi).
 
-    Caching (optional — only when db_path, code_ver and file_id are all given):
-      - offset/flatness (params_bl) and invols_slope (params_invols) are always
-        read/written for every curve that reaches this far, event or not.
-        invOLS is an approach-only calibration fit — independent of whether the
-        retract ever shows a validated rupture — so it's computed and stored
-        right alongside baseline rather than deferred until an event verdict.
-      - contact/snapoff (params_cd) are likewise always read/written.
-      - rupture/onset (params_roi) are read back to skip recompute, but only
-        WRITTEN for a validated event. invols_slope is not part of that gate —
-        it's a per-curve calibration number that exists whether or not this
-        curve turns out to hold an event.
-
-    Always writes whatever it computes fresh, whenever db_path/code_ver/file_id
-    are all given — there is no way for a caller to compute a value here and
-    have it silently not saved. If two legitimate analysis producers compute
-    the same value around the same time, the write is a replace rather than an
-    append, so a redundant write remains safe. Display-only windows must read
-    these results instead of becoming additional analysis producers.
+    Caching is optional and follows the write policy above can_use_cache.
     """
-    can_cache = db_path is not None and code_ver is not None and file_id is not None
-
-    def _get(atype: str, params: str):
-        if not can_cache:
-            return None
-        return _db.get_analysis_result(file_id, atype, params, code_ver, db_path,
-                                      conn=conn)
-
-    def _put(atype: str, value: float, params: str) -> None:
-        if can_cache:
-            _db.write_analysis_result(file_id, atype, value, params, code_ver,
-                                      db_path, conn=conn)
-
-    def _get_multi(atypes, params: str) -> dict:
-        if not can_cache:
-            return {}
-        return _db.get_analysis_results_multi(file_id, atypes, params, code_ver,
-                                             db_path, conn=conn)
-
-    def _put_multi(values: dict, params: str) -> None:
-        if can_cache:
-            _db.write_analysis_results_multi(file_id, values, params, code_ver,
-                                            db_path, conn=conn)
-
-    from .signal_processing import (
-        decompose_curve, find_begin_in_contact, find_end_in_contact,
-        fit_approach_invols,
-    )
-    from .roi_detection import compute_detection_signals, rupture_search_bounds
-    from .roi_events import find_outer_events
-
-    _nan = float("nan")
-
-    def _non_event(offset=_nan, flatness=_nan, contact_z=_nan, snapoff_z=_nan,
-                    invols_slope=_nan) -> CurveResult:
-        # rupture/onset stay NaN — a non_event has no ROI landmarks by
-        # definition. invols_slope is NOT part of that gate: it's an
-        # approach-only calibration fit, known regardless of event status once
-        # we've reached this point, so it's passed through rather than blanked.
-        return CurveResult(
-            event=False, offset=offset, flatness=flatness,
-            contact_z=contact_z, snapoff_z=snapoff_z,
-            rupture_z=_nan, onset_z=_nan, invols_slope=invols_slope,
-        )
-
-    # Populated as far as this call actually computes fresh; see Stage1Search.
-    _dc                = None
-    snap_idx_cached: int | None = None
-    sigs               = None
-    rsearch             = None
-    outer_events        = None
-    rup_idx: int | None = None
-    ons_idx: int | None = None
-    invols_slope_val:        float | None = None
-    invols_intercept_val:    float | None = None
-    invols_rms_val:          float | None = None
-    invols_fit_lo_idx_val:   int   | None = None
-    invols_fit_hi_idx_val:   int   | None = None
-    baseline_intercept_val:  float | None = None
-    baseline_rms_val:        float | None = None
-    baseline_fit_lo_idx_val: int   | None = None
-    baseline_fit_hi_idx_val: int   | None = None
-
-    def _stage1() -> Stage1Search:
-        return Stage1Search(
-            dc=_dc, offset=(offset if not np.isnan(offset) else None),
-            snapoff_idx=snap_idx_cached, sigs=sigs,
-            mask_postsnap_idx=(rsearch.mask_postsnap_idx if rsearch is not None else None),
-            mask_anchor_idx=(rsearch.mask_anchor_idx if rsearch is not None else None),
-            rupture_idx=rup_idx, onset_idx=ons_idx, invols_slope=invols_slope_val,
-            outer_events=outer_events,
-            invols_intercept=invols_intercept_val,
-            invols_rms=invols_rms_val,
-            baseline_intercept=baseline_intercept_val,
-            baseline_rms=baseline_rms_val,
-            baseline_fit_lo_idx=baseline_fit_lo_idx_val,
-            baseline_fit_hi_idx=baseline_fit_hi_idx_val,
-            invols_fit_lo_idx=invols_fit_lo_idx_val,
-            invols_fit_hi_idx=invols_fit_hi_idx_val,
-        )
-
-    # ── Baseline ─────────────────────────────────────────────────────────────
-    # baseline_r2 is deliberately absent. R² reads near 0 on a good flat,
-    # undriven baseline because a
-    # flat anchor region has little variance for a line to explain, so the
-    # usual "near 1 is good" reading is backwards.  baseline_rms is the real
-    # fit-quality signal.
-    _BL_KEYS = ("offset_retr", "flatness_slope", "baseline_intercept",
-                "baseline_rms", "baseline_fit_lo_idx",
-                "baseline_fit_hi_idx")
-    _bl_cached = _get_multi(_BL_KEYS, p.params_bl)   # one round-trip, not six
-    # Require ALL SIX rows, not just offset/flatness: a row holding only those
-    # two would register as a permanent cache hit and never backfill the
-    # diagnostic fields. Recomputing here is cheap — a small polyfit over the
-    # anchor window, not a curve reload/decompose.
-    if all(k in _bl_cached for k in _BL_KEYS):
-        offset, flatness        = float(_bl_cached["offset_retr"]), float(_bl_cached["flatness_slope"])
-        baseline_intercept_val  = float(_bl_cached["baseline_intercept"])
-        baseline_rms_val        = float(_bl_cached["baseline_rms"])
-        baseline_fit_lo_idx_val = int(_bl_cached["baseline_fit_lo_idx"])
-        baseline_fit_hi_idx_val = int(_bl_cached["baseline_fit_hi_idx"])
-    else:
-        try:
-            from .signal_processing import fit_retract_baseline
-            bl = fit_retract_baseline(curve, float(p.anchor_nm))
-            offset, flatness = bl.offset, bl.slope
-            baseline_intercept_val  = bl.intercept
-            baseline_rms_val        = bl.rms
-            baseline_fit_lo_idx_val = bl.fit_lo_idx
-            baseline_fit_hi_idx_val = bl.fit_hi_idx
-        except Exception as exc:
-            raise CurveAnalysisError("retract baseline", exc) from exc
-        if not np.isnan(offset):
-            _put_multi({
-                "offset_retr":         offset,
-                "flatness_slope":      flatness,
-                "baseline_intercept":  float(baseline_intercept_val),
-                "baseline_rms":        float(baseline_rms_val),
-                "baseline_fit_lo_idx": float(baseline_fit_lo_idx_val),
-                "baseline_fit_hi_idx": float(baseline_fit_hi_idx_val),
-            }, p.params_bl)
-    if np.isnan(offset):
-        return _non_event(), _stage1()
-
-    # ── invOLS fit ───────────────────────────────────────────────────────────
-    # Approach-only (curve.piezo_appr / the decomposed low-frequency approach
-    # channel) — independent of the retract baseline above and of whether this
-    # curve turns out to hold a validated rupture. Computed and stored for
-    # every curve that gets this far, event or not: it is a calibration fit,
-    # unlike the event-only landmarks below, which are gated on a validated
-    # event.
-    # invols_r2 deliberately absent — same reason as baseline_r2 above.
-    _IOL_KEYS = ("invols_slope", "invols_intercept",
-                 "invols_rms", "invols_fit_lo_idx", "invols_fit_hi_idx")
-    _iol_cached = _get_multi(_IOL_KEYS, p.params_invols)   # one round-trip, not six
-    # Same completeness requirement as the baseline block above: a bare
-    # invols_slope row cached before the diagnostic fields existed would
-    # otherwise be a permanent cache hit that never backfills them.
-    if all(k in _iol_cached for k in _IOL_KEYS):
-        invols_slope           = float(_iol_cached["invols_slope"])
-        invols_intercept_val   = float(_iol_cached["invols_intercept"])
-        invols_rms_val         = float(_iol_cached["invols_rms"])
-        invols_fit_lo_idx_val  = int(_iol_cached["invols_fit_lo_idx"])
-        invols_fit_hi_idx_val  = int(_iol_cached["invols_fit_hi_idx"])
-    else:
-        try:
-            if _dc is None:
-                _dc = decompose_curve(curve, cutoff_hz=float(p.cutoff_hz))
-            fit = fit_approach_invols(
-                _dc.low_appr, curve.piezo_appr, p.invols_offset_pts, p.invols_window_pts,
-            )
-            invols_slope = fit.slope
-            invols_intercept_val  = fit.intercept
-            invols_rms_val        = fit.rms
-            invols_fit_lo_idx_val = fit.fit_lo_idx
-            invols_fit_hi_idx_val = fit.fit_hi_idx
-        except Exception as exc:
-            raise CurveAnalysisError("approach invOLS", exc) from exc
-        if np.isnan(invols_slope):
-            raise CurveAnalysisError(
-                "approach invOLS",
-                ValueError("fit window is degenerate; no calibration slope was produced"),
-            )
-        if not np.isnan(invols_slope):
-            _put_multi({
-                "invols_slope":      float(invols_slope),
-                "invols_intercept":  float(invols_intercept_val),
-                "invols_rms":        float(invols_rms_val),
-                "invols_fit_lo_idx": float(invols_fit_lo_idx_val),
-                "invols_fit_hi_idx": float(invols_fit_hi_idx_val),
-            }, p.params_invols)
-    if not np.isnan(invols_slope):
-        invols_slope_val = invols_slope
-
-    # ── Contact detection ────────────────────────────────────────────────────
-    # NOTE: _dc is NOT reset here. It may already hold a real DecomposedCurve
-    # from the invOLS section above (a cache miss there computes it) — resetting
-    # it here would silently force a second, redundant decompose_curve() call.
-    # _dc starts as None (see the "Populated as far as..." block above) and is
-    # only ever set, never cleared, from this point through the rest of the
-    # function — every "if _dc is None: _dc = decompose_curve(...)" guard below
-    # still does the right thing whichever section reaches it first.
-
-    contact_z = _get("contact_piezo_nm", p.params_cd)
-    snapoff_z = _get("snapoff_piezo_nm", p.params_cd)
-    if contact_z is None or snapoff_z is None:
-        try:
-            _dc = decompose_curve(curve, cutoff_hz=float(p.cutoff_hz))
-            ci, _ = find_begin_in_contact(
-                _dc, var_window_ms=float(p.var_window_ms),
-                threshold=float(p.thresh_appr), trim_pts=p.trim_pts,
-            )
-            si, _ = find_end_in_contact(
-                _dc, var_window_ms=float(p.var_window_ms),
-                threshold=float(p.thresh_retr), trim_pts=p.trim_pts,
-            )
-            snap_idx_cached = si
-            contact_z = float(curve.piezo_appr[ci])
-            snapoff_z = float(curve.piezo_retr[si])
-        except Exception as exc:
-            raise CurveAnalysisError("contact/snap-off detection", exc) from exc
-        if not np.isnan(contact_z):
-            _put("contact_piezo_nm", contact_z, p.params_cd)
-            _put("snapoff_piezo_nm", snapoff_z, p.params_cd)
-            if snap_idx_cached is not None:
-                _put("snapoff_idx", float(snap_idx_cached), p.params_cd)
-    else:
-        contact_z, snapoff_z = float(contact_z), float(snapoff_z)
-        # Values hit cache, but the INDEX wasn't necessarily remembered from a
-        # prior pass — recover it so the ROI section below doesn't have to
-        # re-run find_end_in_contact just to get back an index we already have.
-        _cached_snap_idx = _get("snapoff_idx", p.params_cd)
-        if _cached_snap_idx is not None:
-            snap_idx_cached = int(_cached_snap_idx)
-
-    if np.isnan(snapoff_z):
-        return _non_event(offset, flatness, contact_z, snapoff_z, invols_slope), _stage1()
-
-    # ── ROI search ───────────────────────────────────────────────────────────
-    rupture_z = _get("rupture_piezo_nm", p.params_roi)
-    onset_z   = _get("onset_piezo_nm",   p.params_roi)
-    if rupture_z is None or onset_z is None:
-        try:
-            if _dc is None:
-                _dc = decompose_curve(curve, cutoff_hz=float(p.cutoff_hz))
-            if snap_idx_cached is not None:
-                si_roi = snap_idx_cached
-            else:
-                si_roi, _ = find_end_in_contact(
-                    _dc, var_window_ms=float(p.var_window_ms),
-                    threshold=float(p.thresh_retr), trim_pts=p.trim_pts,
-                )
-            low_corr = _dc.low_retr - offset
-            sigs = compute_detection_signals(
-                low_retr   = low_corr,
-                piezo_retr = curve.piezo_retr,
-                window_pts = p.roi_win_pts,
-            )
-            lo_band, hi_band = rupture_search_bounds(
-                sigs.piezo, si_roi, float(p.anchor_nm), p.roi_post_mask,
-            )
-            outer_events = find_outer_events(
-                sigs.d1, sigs.low, sigs.piezo,
-                lo=lo_band, hi=hi_band, onset_thr=p.roi_onset_thr,
-                outer_threshold=p.roi_d1_thr,
-            )
-            # Scalar compatibility fields describe the right-most validated
-            # outer event. Inner segmentation later consumes this exact list.
-            if outer_events:
-                primary_outer = outer_events[-1]
-                rup_idx = primary_outer.terminal_idx
-                ons_idx = primary_outer.onset_idx
-                rupture_z = float(sigs.piezo[rup_idx])
-                onset_z = float(sigs.piezo[ons_idx])
-            else:
-                rupture_z = onset_z = _nan
-
-            rsearch = SimpleNamespace(
-                mask_postsnap_idx=lo_band, mask_anchor_idx=hi_band,
-            )
-        except Exception as exc:
-            raise CurveAnalysisError("ROI landmark detection", exc) from exc
-        # Rupture/onset are not persisted until the landmark validity gate below.
-        # invOLS was persisted independently above; force belongs to downstream
-        # per-segment characterization and is never computed here.
-    else:
-        rupture_z, onset_z = float(rupture_z), float(onset_z)
-        # Same recovery as snap-off above: the piezo-nm values hit cache, but
-        # pull the indices back too so same-pass multi-event characterization
-        # does not have to re-derive them from the curve.
-        _cached_rup_idx = _get("rupture_idx", p.params_roi)
-        _cached_ons_idx = _get("onset_idx",   p.params_roi)
-        if _cached_rup_idx is not None:
-            rup_idx = int(_cached_rup_idx)
-        if _cached_ons_idx is not None:
-            ons_idx = int(_cached_ons_idx)
-
-    # Validate the event landmarks: rupture and onset must both exist, and the
-    # rupture must lie after snap-off in piezo space. invOLS was resolved above
-    # independently of the verdict; rupture force is not computed in this module.
-    if np.isnan(rupture_z) or np.isnan(onset_z) or (rupture_z - snapoff_z) <= 0:
-        return _non_event(offset, flatness, contact_z, snapoff_z, invols_slope), _stage1()
-
-    # invOLS is already resolved above (computed alongside baseline, before the
-    # event gate) — nothing to compute here, just use it.
-
-    # ── Verdict ──────────────────────────────────────────────────────────────
-    # Event is defined by landmarks alone (see the gate above): baseline OK,
-    # snap-off found, both ROI landmarks found, rupture after snap-off. All of
-    # that is already guaranteed true by the time we reach here — no separate
-    # force condition. Rupture force is NOT computed in this module; it's a
-    # characterization quantity owned by the segmentation stage downstream.
-
-    # rup_idx/ons_idx may still be None here if rupture_z/onset_z hit cache but
-    # their index counterparts predate index caching — recover them from the
-    # piezo-nm values so the backfill below still runs.
-    if rup_idx is None:
-        rup_idx = int(np.argmin(np.abs(curve.piezo_retr - rupture_z)))
-    if ons_idx is None:
-        ons_idx = int(np.argmin(np.abs(curve.piezo_retr - onset_z)))
-
-    # ── Persist validated event landmarks ────────────────
-    # invols_slope is NOT written here — it's already been written above,
-    # unconditionally, alongside baseline (it isn't gated by event status).
-    _put("rupture_piezo_nm", float(rupture_z), p.params_roi)
-    _put("onset_piezo_nm",   float(onset_z),   p.params_roi)
-    # Indices alongside their piezo-nm counterparts, so a later pass (this
-    # curve's own multi-event enrichment, the ROI viewer, a batch backfill) can
-    # read the landmark position back without re-searching for it.
-    _put("rupture_idx", float(rup_idx), p.params_roi)
-    _put("onset_idx",   float(ons_idx), p.params_roi)
-
+    # Only p.anchor_nm / p.params_bl are read before the baseline (checked by
+    # test_curve_analysis_contract).
+    bl = _baseline_stage(curve, p, cache)
+    if np.isnan(bl.offset):
+        return _non_event(), _stage1_search(bl, None, None, None, None)
+    iol = _invols_stage(curve, p, cache)
+    ct = _contact_stage(curve, p, cache, iol.dc)
+    if np.isnan(ct.snapoff_z):
+        return (_non_event(bl.offset, bl.flatness, ct.contact_z, ct.snapoff_z, iol.slope),
+                _stage1_search(bl, iol, ct, None, ct.dc))
+    roi = _roi_stage(curve, p, cache, bl.offset, ct)
+    if not _landmarks_valid(roi, ct.snapoff_z):
+        return (_non_event(bl.offset, bl.flatness, ct.contact_z, ct.snapoff_z, iol.slope),
+                _stage1_search(bl, iol, ct, roi, roi.dc))
+    roi = _landmark_stage(curve, p, cache, roi)
     return CurveResult(
-        event=True, offset=offset, flatness=flatness,
-        contact_z=contact_z, snapoff_z=snapoff_z,
-        rupture_z=float(rupture_z), onset_z=float(onset_z),
-        invols_slope=float(invols_slope),
-    ), _stage1()
+        event=True, offset=bl.offset, flatness=bl.flatness,
+        contact_z=ct.contact_z, snapoff_z=ct.snapoff_z,
+        rupture_z=float(roi.rupture_z), onset_z=float(roi.onset_z),
+        invols_slope=float(iol.slope),
+    ), _stage1_search(bl, iol, ct, roi, roi.dc)
 
 
 def current_signature(db_path: str) -> tuple[str, str | None]:
@@ -706,7 +769,7 @@ def _lane_force_extension(
         return "unavailable", False
 
     result, stage1 = analyse_curve(
-        curve, p, db_path=db_path, code_ver=code_ver, file_id=file_id, conn=conn,
+        curve, p, cache=CacheContext(db_path, code_ver, file_id, conn),
     )
 
     # A UI edit is immediately visible to new work, but never injected into a
@@ -818,8 +881,9 @@ def _persist_multi_event_roi(
 
         ep = event_params_from(param_set)
         compute_curve_events_coords(
-            curve, ep, db_path=db_path, code_ver=code_ver, file_id=file_id,
-            stage1=stage1, param_set=param_set,
+            curve, ep,
+            cache=CacheContext(db_path, code_ver, file_id, None, param_set=param_set),
+            stage1=stage1,
         )
     except CurveAnalysisError:
         raise

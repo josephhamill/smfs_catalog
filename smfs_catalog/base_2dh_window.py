@@ -592,6 +592,7 @@ class _TwoDHWindowBase(QMainWindow):
     # ── Incremental update (one new event) ──────────────────────────────────────
 
     def add_event(self, path: str) -> None:
+        """Add one event's histogram to the plot, if it has a usable stored segment fit; otherwise do nothing."""
         stored = self._stored_segment_fit(path)
         if stored is None:
             return
@@ -606,6 +607,7 @@ class _TwoDHWindowBase(QMainWindow):
     # ── Full rebuild ──────────────────────────────────────────────────────────
 
     def sync_from_event_summary(self, event_summary_win) -> None:
+        """Rebuild every event's histogram from the event summary's kept population, reusing held grids that are unchanged."""
         self._event_summary_win = event_summary_win
         self._rebuild_btn.setEnabled(False)
         self._stats_label.setText("Building…")
@@ -1017,7 +1019,7 @@ class _TwoDHWindowBase(QMainWindow):
     def _run_pca(self) -> None:
         try:
             self._run_pca_impl()
-        except Exception:
+        except Exception:  # noqa: BLE001  user sees the full traceback via QMessageBox
             import traceback
             QMessageBox.critical(
                 self, "Run PCA failed",

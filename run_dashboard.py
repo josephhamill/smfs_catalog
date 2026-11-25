@@ -288,6 +288,7 @@ def _refuse_dialog(text: str) -> None:
 
 
 def main(db_path: str = _db.DEFAULT_DB_PATH) -> None:
+    """Start the dashboard on the catalog at `db_path`: open or upgrade it, then show the window and run the event loop."""
     # First of everything, so a fault in initialise()'s migrations or in
     # QApplication's own startup is still written down.  A silent death is
     # indistinguishable from a finished overnight batch without this.

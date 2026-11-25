@@ -133,6 +133,57 @@ check("(g) the new log starts fresh",
       path.exists() and path.stat().st_size < crashlog.MAX_BYTES)
 
 
+# -- (h) log_handled: a caught exception is recorded --------------------------
+db_hand = _db_path("handled")
+text = _run_child(
+    db_hand,
+    "def _raise_it():\n"
+    "    raise KeyError('boom-handled-marker')\n"
+    "try:\n"
+    "    _raise_it()\n"
+    "except KeyError as exc:\n"
+    "    crashlog.log_handled('loading widget-ctx', exc)\n"
+    "crashlog.mark_clean_exit()\n",
+)
+_hdr = [ln for ln in text.splitlines() if ln.startswith("=== HANDLED EXCEPTION")]
+check("(h) a handled exception writes a HANDLED EXCEPTION header", len(_hdr) == 1)
+_h = _hdr[0] if _hdr else ""
+# Only what follows the HANDLED header counts, so another entry's traceback
+# (e.g. the child dying on a missing function) cannot satisfy these checks.
+_entry = text.split("=== HANDLED EXCEPTION", 1)[1] if _hdr else ""
+_entry = _entry.split("=== UNHANDLED EXCEPTION", 1)[0].split("=== CLEAN EXIT", 1)[0]
+check("(h) the header carries the pid", " pid=" in _h)
+check("(h) the header carries the thread name", " thread=MainThread" in _h)
+check("(h) the header carries the context string", "loading widget-ctx" in _h)
+check("(h) the traceback is in the log",
+      "Traceback (most recent call last)" in _entry and "KeyError" in _entry)
+check("(h) the exception message is in the log", "boom-handled-marker" in _entry)
+check("(h) the raising frame is in the log", "in _raise_it" in _entry)
+check("(h) the handled entry follows SESSION START",
+      "=== SESSION START" in text
+      and "=== HANDLED EXCEPTION" in text
+      and text.index("=== SESSION START") < text.index("=== HANDLED EXCEPTION"))
+check("(h) a handled exception does not disturb CLEAN EXIT",
+      "=== HANDLED EXCEPTION" in text
+      and text.count("=== SESSION START") == 1 and text.count("=== CLEAN EXIT") == 1)
+check("(h) a handled exception is not logged as UNHANDLED",
+      "=== HANDLED EXCEPTION" in text and "=== UNHANDLED EXCEPTION" not in text)
+
+# -- (i) log_handled without an installed log is a silent no-op ---------------
+_noop = subprocess.run(
+    [sys.executable, "-c",
+     f"import sys; sys.path.insert(0, {_ROOT!r})\n"
+     "from smfs_catalog import crashlog\n"
+     "try:\n"
+     "    raise ValueError('x')\n"
+     "except ValueError as exc:\n"
+     "    crashlog.log_handled('ctx', exc)\n"
+     "print('survived')\n"],
+    capture_output=True, text=True)
+check("(i) log_handled with no log installed does not raise",
+      _noop.returncode == 0 and "survived" in _noop.stdout)
+
+
 # Every check above becomes its own named pytest case.  Must be last:
 # pytest_cases reads what the module body recorded.
 test_check = checkstyle.pytest_cases(check)

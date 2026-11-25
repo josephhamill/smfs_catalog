@@ -37,7 +37,9 @@ lab-default mechanism nobody asked to lose.
 from __future__ import annotations
 
 import json
+import sqlite3
 
+from . import crashlog
 from . import db as _db
 
 
@@ -87,7 +89,9 @@ def _owners(conn) -> set[str]:
         try:
             rows = conn.execute(
                 f"SELECT DISTINCT experimentalist FROM {table}").fetchall()
-        except Exception:
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
             continue
         found.update(r[0] for r in rows if r[0])
     return found
@@ -239,7 +243,11 @@ def _strip_ticks(conn, owners: set[str]) -> None:
             "experimentalist = ?", (owner,)).fetchone()
         if row is None or not row[0]:
             continue
-        params = json.loads(row[0])
+        try:
+            params = json.loads(row[0])
+        except (json.JSONDecodeError, TypeError) as exc:
+            crashlog.log_handled("Strip legacy criteria ticks", exc)
+            continue
         kept = {k: v for k, v in params.items()
                 if not k.startswith(_LEGACY_PREFIX)}
         if len(kept) != len(params):

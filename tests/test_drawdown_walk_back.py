@@ -13,7 +13,9 @@ from smfs_catalog.drawdown_walk_back import (
     AT_TOP, DID_NOT_MOVE, FIT_CUT_SHORT, FOUND, NO_NOISE, TOP_ON_EDGE,
     drawdown_walk_back, largest_fall,
 )
-from smfs_catalog.roi_events import CurveEvents, ROI, Rupture, Segment, fit_segments
+from smfs_catalog.roi_events import (
+    CurveEvents, FitSettings, ROI, Rupture, Segment, SegmentCalibration, fit_segments,
+)
 from smfs_catalog.rupture_algorithms import (
     RUPTURE_ALGORITHM_BY_IDX, RUPTURE_ALGORITHMS, fit_deflection,
 )
@@ -106,15 +108,16 @@ def test_fit_segments_uses_the_algorithm_in_force() -> None:
     smooth = np.convolve(raw, np.ones(31) / 31, mode="same")
 
     walk = _events()
-    fit_segments(curve, walk, 0.0, 1.0, 0.0, low_retr=smooth,
-                 rupture_algorithm="drawdown_walk_back")
+    fit_segments(curve, walk, SegmentCalibration(0.0, 1.0, 0.0, low_retr=smooth),
+                 FitSettings(rupture_algorithm="drawdown_walk_back"))
     rup, seg = walk.rois[0].ruptures[0], walk.rois[0].segments[0]
     assert rup.force_idx == LAST_ON_RAMP and seg.right_idx == LAST_ON_RAMP
     assert rup.force_pN == raw[LAST_ON_RAMP], "the saved signal's value"
     assert rup.point_status == FOUND
 
     old = _events()
-    fit_segments(curve, old, 0.0, 1.0, 0.0, low_retr=smooth)
+    fit_segments(curve, old, SegmentCalibration(0.0, 1.0, 0.0, low_retr=smooth),
+                 FitSettings())
     rup, seg = old.rois[0].ruptures[0], old.rois[0].segments[0]
     assert rup.force_idx <= LEFT and seg.right_idx == LEFT
     assert rup.force_pN == smooth[rup.force_idx]
@@ -130,8 +133,8 @@ def test_under_the_walk_back_the_fit_and_the_slopes_ignore_the_low_pass_signal()
     got = []
     for smooth in (np.convolve(raw, np.ones(31) / 31, mode="same"), raw * 0.5):
         events = _events()
-        fit_segments(curve, events, 0.0, 1.0, 0.0, low_retr=smooth,
-                     rupture_algorithm="drawdown_walk_back")
+        fit_segments(curve, events, SegmentCalibration(0.0, 1.0, 0.0, low_retr=smooth),
+                     FitSettings(rupture_algorithm="drawdown_walk_back"))
         seg, rup = events.rois[0].segments[0], events.rois[0].ruptures[0]
         got.append((rup.force_pN, rup.extension_nm, seg.loading_rate_pN_s,
                     seg.loading_stiffness_pN_nm, seg.rate_lo_idx, seg.l_p_nm,
