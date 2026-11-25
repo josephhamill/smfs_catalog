@@ -54,7 +54,7 @@ from . import sample_marks
 from . import style
 from .widgets import SampleMarksToggle
 from .navigation import build_go_to_row
-from .qt_utils import _make_session_header, set_si_label, fit_on_screen
+from .qt_utils import _make_session_header, set_si_label, fit_on_screen, signals_blocked
 from . import quantities as _quant
 # This window drives its OWN QTimer over its own curve list — it is not the
 # analysis worker's playhead, so it shares navigator_bar's slider maths but
@@ -356,12 +356,11 @@ class WlcViewWindow(QMainWindow):
         else:
             self._index = min(self._index, len(event_paths) - 1)
 
-        self._track_list.blockSignals(True)
-        self._track_list.clear()
-        for p in event_paths:
-            self._track_list.addItem(Path(p).name)
-        self._track_list.setCurrentRow(self._index)
-        self._track_list.blockSignals(False)
+        with signals_blocked(self._track_list):
+            self._track_list.clear()
+            for p in event_paths:
+                self._track_list.addItem(Path(p).name)
+            self._track_list.setCurrentRow(self._index)
 
         n = len(event_paths)
         self._counter.setText(f"{self._index + 1} / {n}")
@@ -498,9 +497,8 @@ class WlcViewWindow(QMainWindow):
         self._prev_btn.setEnabled(self._index > 0)
         self._next_btn.setEnabled(self._index < n - 1)
 
-        self._track_list.blockSignals(True)
-        self._track_list.setCurrentRow(self._index)
-        self._track_list.blockSignals(False)
+        with signals_blocked(self._track_list):
+            self._track_list.setCurrentRow(self._index)
         self._track_list.scrollTo(self._track_list.currentIndex())
 
         path = self._event_paths[self._index]
@@ -621,9 +619,8 @@ class WlcViewWindow(QMainWindow):
             # ended up built from two people's numbers.
             param_set = _db.load_analysis_params(self._db_path)
             # The ROI window may have changed the model since this one drew.
-            self._chain_combo.blockSignals(True)
-            self._chain_combo.setCurrentIndex(param_set.chain_model_idx)
-            self._chain_combo.blockSignals(False)
+            with signals_blocked(self._chain_combo):
+                self._chain_combo.setCurrentIndex(param_set.chain_model_idx)
             ep = event_params_from(param_set)
             file_id = _db.get_file_id(file_path, self._db_path)
             res = compute_curve_events_coords(

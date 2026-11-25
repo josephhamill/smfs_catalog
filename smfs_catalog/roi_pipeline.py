@@ -39,15 +39,13 @@ from .muggeo_segmented import TOLERANCES as MUGGEO_TOLERANCES
 from .rupture_algorithms import RUPTURE_ALGORITHM_BY_IDX
 from .provenance import cache_version
 from .roi_selection import (
-    ReportedSegmentChoice,
-    SegmentOverrideResolution,
     event_geometry_identity,
-    read_segment_select,
+    read_segment_select,  # noqa: F401  re-export
     resolve_reported_segment,
     resolve_isoforce_pair,
     resolve_segment_override,
-    resolve_segment_override_state,
-    write_segment_select,
+    resolve_segment_override_state,  # noqa: F401  re-export
+    write_segment_select,  # noqa: F401  re-export
 )
 
 

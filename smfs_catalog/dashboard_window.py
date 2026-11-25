@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import html
 import os
-import sqlite3
 import time
 from collections import deque
-from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import (
@@ -43,9 +41,9 @@ from .widgets import CollapsibleSection, FlowLayout, LabeledControl
 from .analysis_worker import AnalysisWorker
 from .navigator_bar import NavigatorBar
 from .roi_pipeline import (
-    read_segment_select, write_segment_select, segment_summary_bulk,
+    read_segment_select, write_segment_select,
 )
-from .qt_utils import fit_on_screen
+from .qt_utils import fit_on_screen, signals_blocked
 
 
 _SELECTION_QSS = style.TABLE_QSS
@@ -1172,18 +1170,17 @@ class DashboardWindow(QMainWindow):
             checked = set(scope.get(key) or [])
             counts = {v: n for v, n in facets.get(key, [])}
             values = sorted(set(counts) | checked, key=lambda s: str(s).lower())
-            lst.blockSignals(True)
-            lst.clear()
-            for v in values:
-                n = counts.get(v, 0)
-                item = QListWidgetItem(f"{v}  ({n:,})")
-                item.setData(Qt.ItemDataRole.UserRole, v)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(
-                    Qt.CheckState.Checked if v in checked else Qt.CheckState.Unchecked
-                )
-                lst.addItem(item)
-            lst.blockSignals(False)
+            with signals_blocked(lst):
+                lst.clear()
+                for v in values:
+                    n = counts.get(v, 0)
+                    item = QListWidgetItem(f"{v}  ({n:,})")
+                    item.setData(Qt.ItemDataRole.UserRole, v)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(
+                        Qt.CheckState.Checked if v in checked else Qt.CheckState.Unchecked
+                    )
+                    lst.addItem(item)
 
     def _current_scope(self) -> dict:
         out = new_scope()
@@ -1226,10 +1223,9 @@ class DashboardWindow(QMainWindow):
 
     def _clear_filters(self) -> None:
         for lst in self._lists.values():
-            lst.blockSignals(True)
-            for i in range(lst.count()):
-                lst.item(i).setCheckState(Qt.CheckState.Unchecked)
-            lst.blockSignals(False)
+            with signals_blocked(lst):
+                for i in range(lst.count()):
+                    lst.item(i).setCheckState(Qt.CheckState.Unchecked)
         self._date_from_chk.setChecked(False)
         self._date_to_chk.setChecked(False)
         self._search.clear()
@@ -1304,9 +1300,8 @@ class DashboardWindow(QMainWindow):
         n_fixed = len(_QUEUE_COLUMNS_FIXED)
         by_visual = sorted(range(hdr.count()), key=hdr.visualIndex)
         moved = [self._queue_derived_cols[c - n_fixed][0] for c in by_visual if c >= n_fixed]
-        hdr.blockSignals(True)
-        hdr.moveSection(new_visual, old_visual)
-        hdr.blockSignals(False)
+        with signals_blocked(hdr):
+            hdr.moveSection(new_visual, old_visual)
         # The table's columns take back their own slots in the full order, so
         # variables not in this queue keep their places.
         in_table, refill = set(moved), iter(moved)

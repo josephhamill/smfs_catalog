@@ -234,6 +234,7 @@ class AnalysisWorker(QThread):
     # ── Thread body ──────────────────────────────────────────────────────────
 
     def run(self) -> None:
+        """Thread body: open this thread's database connection, run the queue loop until stopped, report a fatal error, and close the connection."""
         # Open one connection on THIS (worker) thread and reuse it for every
         # per-file status/lookup/event write.  Closed on exit.
         try:
@@ -363,23 +364,13 @@ class AnalysisWorker(QThread):
             # No pipeline for this modality.  The file is intact and stays in
             # the queue to be navigated to and plotted; there is just no
             # analysis to record, so files.event is left alone.
-            try:
-                _db.set_queue_status(file_id, "done", self._db_path, conn=self._conn)
-            except Exception as exc:
-                return self._fail(file_id, f"saving completion status failed: {exc!r}")
-            self.file_done.emit(file_id, event, was_cached)
-            return "done"
+            return self._settle_done(file_id, event, was_cached)
 
         if event == "unusable":
             # The pipeline stored the reason and the verdict on the file, and
             # left the row in the queue.  Settle the row rather than repeating
             # those writes.
-            try:
-                _db.set_queue_status(file_id, "done", self._db_path, conn=self._conn)
-            except Exception as exc:
-                return self._fail(file_id, f"saving completion status failed: {exc!r}")
-            self.file_done.emit(file_id, event, was_cached)
-            return "done"
+            return self._settle_done(file_id, event, was_cached)
 
         if event == "unavailable":
             # Environmental, not scientific: do not write files.event and do
@@ -401,6 +392,10 @@ class AnalysisWorker(QThread):
         except Exception as exc:
             return self._fail(file_id, f"saving classification failed: {exc!r}")
 
+        return self._settle_done(file_id, event, was_cached)
+
+    def _settle_done(self, file_id: int, event: str, was_cached: bool) -> str:
+        """Mark the row done, emit file_done and return "done", or return the `_fail` outcome if the status write fails."""
         try:
             _db.set_queue_status(file_id, "done", self._db_path, conn=self._conn)
         except Exception as exc:

@@ -80,7 +80,7 @@ def offered(tmp_path_factory):
     """Every variable the app would offer on an axis, against an empty DB."""
     db_path = str(tmp_path_factory.mktemp("desc") / "t.db")
     _db.initialise(db_path)
-    return _vars.available(db_path)
+    return _vars.available([], db_path=db_path)
 
 
 # ── (a)/(b) coverage and substance ───────────────────────────────────────────

@@ -28,6 +28,7 @@ from .qt_utils import (
     fit_on_screen,
     _make_session_header,
     set_si_label,
+    signals_blocked,
 )
 from .curve_loader import ForceCurve
 
@@ -329,12 +330,9 @@ class FftWindow(QWidget):
             if new_r0 >= new_r1:           # degenerate — fall back to full
                 new_r0, new_r1 = 0, n_total
 
-        self._roi_defl.blockSignals(True)
-        self._roi_piezo.blockSignals(True)
-        self._roi_defl.setRegion((new_r0, new_r1))
-        self._roi_piezo.setRegion((new_r0, new_r1))
-        self._roi_defl.blockSignals(False)
-        self._roi_piezo.blockSignals(False)
+        with signals_blocked(self._roi_defl, self._roi_piezo):
+            self._roi_defl.setRegion((new_r0, new_r1))
+            self._roi_piezo.setRegion((new_r0, new_r1))
 
         self._update_fft()
 

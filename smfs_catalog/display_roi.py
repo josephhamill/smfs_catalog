@@ -57,7 +57,6 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -81,7 +80,7 @@ from .roi_pipeline import (
 )
 from . import sample_marks
 from . import style
-from .qt_utils import _make_session_header, set_si_label, fit_on_screen
+from .qt_utils import _make_session_header, set_si_label, fit_on_screen, signals_blocked
 from .widgets import FlowLayout, LabeledControl, SampleMarksToggle
 from .navigator_bar import WorkerNavBar
 from .provenance import cache_version
@@ -712,15 +711,12 @@ class ROIWindow(QWidget):
         self._d1_curve.setData(x=px.tolist(),   y=sigs.d1.tolist())
 
         # Keep draggable threshold lines in sync with stored values.
-        self._thresh_line_d1.blockSignals(True)
-        self._thresh_line_d1.setValue(self._threshold_nm_per_nm)
-        self._thresh_line_d1.blockSignals(False)
-        self._thresh_line_inner.blockSignals(True)
-        self._thresh_line_inner.setValue(self._inner_threshold_nm_per_nm)
-        self._thresh_line_inner.blockSignals(False)
-        self._thresh_line_onset.blockSignals(True)
-        self._thresh_line_onset.setValue(self._onset_threshold_nm)
-        self._thresh_line_onset.blockSignals(False)
+        with signals_blocked(self._thresh_line_d1):
+            self._thresh_line_d1.setValue(self._threshold_nm_per_nm)
+        with signals_blocked(self._thresh_line_inner):
+            self._thresh_line_inner.setValue(self._inner_threshold_nm_per_nm)
+        with signals_blocked(self._thresh_line_onset):
+            self._thresh_line_onset.setValue(self._onset_threshold_nm)
 
         self._frame_d1(sigs.d1)
 
@@ -1095,23 +1091,18 @@ class ROIWindow(QWidget):
             (self._spin_wb_multiple, self._walk_back_noise_multiple),
             (self._spin_mg_multiplier, self._muggeo_fit_window_multiplier),
         ):
-            w.blockSignals(True)
-            w.setValue(val)
-            w.blockSignals(False)
-        self._combo_detector.blockSignals(True)
-        self._combo_detector.setCurrentIndex(idx)
-        self._combo_detector.blockSignals(False)
-        self._combo_chain.blockSignals(True)
-        self._combo_chain.setCurrentIndex(self._chain_model_idx)
-        self._combo_chain.blockSignals(False)
-        self._combo_rupture.blockSignals(True)
-        self._combo_rupture.setCurrentIndex(self._rupture_algorithm_idx)
-        self._combo_rupture.blockSignals(False)
+            with signals_blocked(w):
+                w.setValue(val)
+        with signals_blocked(self._combo_detector):
+            self._combo_detector.setCurrentIndex(idx)
+        with signals_blocked(self._combo_chain):
+            self._combo_chain.setCurrentIndex(self._chain_model_idx)
+        with signals_blocked(self._combo_rupture):
+            self._combo_rupture.setCurrentIndex(self._rupture_algorithm_idx)
         for combo, val in ((self._combo_mg_tolerance, self._muggeo_tolerance_idx),
                            (self._combo_mg_restarts, self._muggeo_restarts_idx)):
-            combo.blockSignals(True)
-            combo.setCurrentIndex(val)
-            combo.blockSignals(False)
+            with signals_blocked(combo):
+                combo.setCurrentIndex(val)
         self._enable_rupture_settings()
 
         # No mirror into the `settings` table. The parameter set lives in
@@ -1236,9 +1227,8 @@ class ROIWindow(QWidget):
         # Quantize the raw mouse position before display or persistence so the
         # spin box and database hold the same value.
         new_val = _quant.quantize("roi_inner_threshold_nm_per_nm", new_val)
-        self._spin_inner.blockSignals(True)
-        self._spin_inner.setValue(new_val)
-        self._spin_inner.blockSignals(False)
+        with signals_blocked(self._spin_inner):
+            self._spin_inner.setValue(new_val)
         self._preview_inner_threshold(new_val)
         self._commit_inner_threshold()
 
@@ -1374,9 +1364,8 @@ class ROIWindow(QWidget):
         # Quantize the raw mouse position before display or persistence so the
         # spin box and database hold the same value.
         new_val = _quant.quantize("roi_threshold_nm_per_nm", new_val)
-        self._spin_threshold.blockSignals(True)
-        self._spin_threshold.setValue(new_val)
-        self._spin_threshold.blockSignals(False)
+        with signals_blocked(self._spin_threshold):
+            self._spin_threshold.setValue(new_val)
         self._preview_threshold(new_val)
         self._commit_threshold()
 
@@ -1387,9 +1376,8 @@ class ROIWindow(QWidget):
         # Quantize the raw mouse position before display or persistence so the
         # spin box and database hold the same value.
         new_val = _quant.quantize("roi_onset_threshold_nm", new_val)
-        self._spin_onset.blockSignals(True)
-        self._spin_onset.setValue(new_val)
-        self._spin_onset.blockSignals(False)
+        with signals_blocked(self._spin_onset):
+            self._spin_onset.setValue(new_val)
         self._preview_onset(new_val)
         self._commit_onset()
 

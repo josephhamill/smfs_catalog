@@ -69,7 +69,7 @@ from .dist_fit_core import (
     flatten_constraints,
 )
 from . import dist_fit_core as _dfc
-from .qt_utils import CancelableProgress, set_plot_title, set_si_label, fit_on_screen
+from .qt_utils import CancelableProgress, set_plot_title, set_si_label, fit_on_screen, signals_blocked
 
 
 PEAK_COLORS = list(style.SERIES_LABELED)
@@ -229,9 +229,8 @@ class PeakRow(QFrame):
         return None if value == self.AUTO else value
 
     def set_start(self, value: float | None) -> None:
-        self._start.blockSignals(True)
-        self._start.setValue(self.AUTO if value is None else float(value))
-        self._start.blockSignals(False)
+        with signals_blocked(self._start):
+            self._start.setValue(self.AUTO if value is None else float(value))
 
     def _refresh_bounds_btn(self) -> None:
         """The button says whether this component is bounded, because a limit
@@ -473,6 +472,7 @@ class _PlotPane(QWidget):
 
     def show_fit(self, x_fine, y_total, y_components, colors, labels,
                  y_fit_at_bins, ci_band=None):
+        """Draw the fitted components, total curve and optional 95% band over the histogram, with the residual panel below."""
         # Remembered so toggling the CI checkbox can redraw without
         # re-running the fit (the fit is unchanged; only its rendering is).
         self._last_fit = (x_fine, y_total, y_components, colors, labels,
@@ -590,9 +590,8 @@ class _PlotPane(QWidget):
         if not auto and self._edges is not None:
             for spin, v in ((self._range_lo_spin, float(self._edges[0])),
                             (self._range_hi_spin, float(self._edges[-1]))):
-                spin.blockSignals(True)
-                spin.setValue(v)
-                spin.blockSignals(False)
+                with signals_blocked(spin):
+                    spin.setValue(v)
         self._replot()
 
     def _replot(self):
