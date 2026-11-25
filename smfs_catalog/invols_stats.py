@@ -31,6 +31,14 @@ class DisplayRange:
     side: tuple[int, ...]
 
 
+def pick(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many
+
+
+def plural(n: int, one: str, many: str) -> str:
+    return f"{n} {pick(n, one, many)}"
+
+
 def is_finite(value: float | None) -> bool:
     return value is not None and math.isfinite(value)
 

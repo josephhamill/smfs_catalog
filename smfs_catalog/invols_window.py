@@ -28,7 +28,8 @@ from .invols_fit_controls import InvolsFitControls
 from .invols_plot import InvolsPlot
 from .invols_stats import (
     AVERAGES, TRANSFORM_KEY, Summary, applied_value, box_cut_count,
-    in_time_span, is_drawn, points_in_box, summarise, usable_instrument,
+    in_time_span, is_drawn, pick, plural, points_in_box, summarise,
+    usable_instrument,
 )
 from .qt_utils import fit_on_screen
 from .scope import scope_paths
@@ -74,14 +75,6 @@ class ReadoutInput:
     n_old_settings: int
 
 
-def _pick(n: int, one: str, many: str) -> str:
-    return one if n == 1 else many
-
-
-def _plural(n: int, one: str, many: str) -> str:
-    return f"{n} {_pick(n, one, many)}"
-
-
 def _instrument_text(values: Sequence[float | None]) -> str:
     shown = [v for v in values if v is not None]
     if not shown:
@@ -108,17 +101,17 @@ def _spread_lines(summary: Summary) -> list[str]:
 
 def _cut_line(n_cut: int) -> str:
     unit = quantities.get(TRANSFORM_KEY).shown_unit
-    return (f"{_plural(n_cut, 'trace', 'traces')} inside the box's time span "
-            f"{_pick(n_cut, 'lies', 'lie')} outside its {unit} limits; the "
+    return (f"{plural(n_cut, 'trace', 'traces')} inside the box's time span "
+            f"{pick(n_cut, 'lies', 'lie')} outside its {unit} limits; the "
             "standard deviation and standard error describe only the traces "
             "inside the limits")
 
 
 def _old_settings_line(n_old: int) -> str:
-    return (f"{_plural(n_old, 'trace', 'traces')} "
-            f"{_pick(n_old, 'has', 'have')} an own fit made under earlier fit "
-            f"settings (drawn hollow); {_pick(n_old, 'it is', 'they are')} "
-            f"left out until the queue visits {_pick(n_old, 'it', 'them')}")
+    return (f"{plural(n_old, 'trace', 'traces')} "
+            f"{pick(n_old, 'has', 'have')} an own fit made under earlier fit "
+            f"settings (drawn hollow); {pick(n_old, 'it is', 'they are')} "
+            f"left out until the queue visits {pick(n_old, 'it', 'them')}")
 
 
 def readout_text(info: ReadoutInput) -> str:
@@ -178,18 +171,18 @@ def _select(rows: Sequence[store.TraceRow], method: str,
 def _no_instrument_text(n: int) -> str:
     if n == 0:
         return ""
-    return (f"{_plural(n, 'trace', 'traces')} {_pick(n, 'has', 'have')} no "
-            f"instrument InvOLS in {_pick(n, 'its', 'their')} file: "
-            f"{_pick(n, 'it keeps its', 'they keep their')} own fit and "
+    return (f"{plural(n, 'trace', 'traces')} {pick(n, 'has', 'have')} no "
+            f"instrument InvOLS in {pick(n, 'its', 'their')} file: "
+            f"{pick(n, 'it keeps its', 'they keep their')} own fit and "
             "cannot take an ensemble value.")
 
 
 def _no_time_text(n: int) -> str:
     if n == 0:
         return ""
-    return (f"{_plural(n, 'trace', 'traces')} {_pick(n, 'has', 'have')} no "
-            f"acquisition time: {_pick(n, 'it is', 'they are')} not drawn and "
-            f"not part of the mean, but {_pick(n, 'it receives', 'they receive')} "
+    return (f"{plural(n, 'trace', 'traces')} {pick(n, 'has', 'have')} no "
+            f"acquisition time: {pick(n, 'it is', 'they are')} not drawn and "
+            f"not part of the mean, but {pick(n, 'it receives', 'they receive')} "
             "the applied value.")
 
 
@@ -211,8 +204,8 @@ def _stale_group_text(group_ids: Sequence[int]) -> str:
         return ""
     n = len(group_ids)
     named = ", ".join(f"#{i}" for i in group_ids)
-    return (f"Warning: {_pick(n, 'group', 'groups')} {named} "
-            f"{_pick(n, 'was', 'were')} applied under different fit settings "
+    return (f"Warning: {pick(n, 'group', 'groups')} {named} "
+            f"{pick(n, 'was', 'were')} applied under different fit settings "
             "than those in force now.")
 
 
@@ -342,8 +335,10 @@ class InvolsWindow(QMainWindow):
     # -- the public contract ---------------------------------------------
 
     def apply_scope(self, scope: dict) -> None:
-        self._paths = scope_paths(scope, self._db)
-        self._plot.clear_box()
+        paths = scope_paths(scope, self._db)
+        if paths != self._paths:
+            self._plot.clear_box()
+        self._paths = paths
         self._reload()
 
     def refresh_params(self) -> None:
@@ -383,7 +378,7 @@ class InvolsWindow(QMainWindow):
         self._rows = store.trace_rows(self._paths, self._db)
         self._plot.set_traces(self._rows)
         self.setWindowTitle(
-            f"InvOLS — {_plural(len(self._rows), 'trace', 'traces')}")
+            f"InvOLS — {plural(len(self._rows), 'trace', 'traces')}")
         self._owner_label.setText(
             f"Parameters: {_db.active_param_owner(self._db)}'s set")
         self._stale_label.setText(_stale_group_text(
@@ -449,7 +444,7 @@ class InvolsWindow(QMainWindow):
         if selection is None:
             return "Draw a box on the plot first: click and drag over the traces to include."
         if self._applied:
-            return "Already applied. Change the method, average, box or scope to apply again."
+            return "Already applied. Change the method, average, box, scope or fit settings to apply again."
         if selection.summary.n:
             return None
         if selection.n_old:
@@ -459,7 +454,7 @@ class InvolsWindow(QMainWindow):
 
     def _update_apply(self, selection: _Selection | None) -> None:
         reason = self._block_reason(selection)
-        count = _plural(len(self._targets()), "trace", "traces")
+        count = plural(len(self._targets()), "trace", "traces")
         self._apply_button.setText(f"Apply to all {count} in the window")
         self._apply_button.setEnabled(reason is None)
         self._apply_button.setToolTip(
@@ -480,14 +475,14 @@ class InvolsWindow(QMainWindow):
         target_ids = tuple(r.file_id for r in self._targets())
         if self._method == "own":
             written = store.apply_own(target_ids, self._db)
-            return None, f"{_plural(written, 'trace', 'traces')} returned to their own fits.", written
+            return None, f"{plural(written, 'trace', 'traces')} returned to their own fits.", written
         selection = self._current_selection()
         box = self._plot.box() if self._method == "box" else None
         result = store.apply_ensemble(store.EnsembleRequest(
             selection.member_ids, target_ids, self._method, box,
             store.fit_settings_now(self._db), self._average), self._db)
         value = store.nm_v(applied_value(result.summary, self._average))
-        message = f"Applied {value} to {_plural(result.n_written, 'trace', 'traces')}."
+        message = f"Applied {value} to {plural(result.n_written, 'trace', 'traces')}."
         return result.summary, message, result.n_written
 
     # -- selecting and opening a trace -----------------------------------

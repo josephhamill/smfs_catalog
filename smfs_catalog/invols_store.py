@@ -13,7 +13,7 @@ from . import db, quantities, variables
 from .curve_analysis import pipeline_params_from
 from .invols_stats import (
     AVERAGES, TRANSFORM_KEY, Summary, applied_value, is_finite,
-    own_transform_nm_v, summarise, usable_instrument,
+    own_transform_nm_v, plural, summarise, usable_instrument,
 )
 from .provenance import cache_version
 
@@ -188,10 +188,14 @@ def set_average(average: str, db_path: str) -> None:
     db.set_app_setting(_AVERAGE_SETTING, average, db_path)
 
 
+def _ensemble_text(group: _Group) -> str:
+    return f"ensemble of {plural(group.n, 'trace', 'traces')}"
+
+
 def _group_label(group: _Group | None) -> str:
     if group is None:
         return "own fit"
-    return f"ensemble of {group.n} traces, {group.created_at[:10]}"
+    return f"{_ensemble_text(group)}, {group.created_at[:10]}"
 
 
 def source_labels(file_ids: Sequence[int], db_path: str) -> dict[int, str]:
@@ -237,7 +241,7 @@ def curve_label(path: str, own_slope: float | None,
     if group is None:
         parts = [f"{name} {nm_v(own)} (own fit)"]
     else:
-        parts = [f"{name} {nm_v(group.value)} (ensemble of {group.n} traces)",
+        parts = [f"{name} {nm_v(group.value)} ({_ensemble_text(group)})",
                  f"own fit {nm_v(own)}"]
     if is_finite(own_slope):
         parts.append("slope=" + quantities.format_value("invols_slope", own_slope))
